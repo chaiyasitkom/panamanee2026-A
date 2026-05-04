@@ -187,7 +187,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId'];
+      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();

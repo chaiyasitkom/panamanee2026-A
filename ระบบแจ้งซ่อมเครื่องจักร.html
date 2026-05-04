@@ -470,7 +470,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId'];
+      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();
@@ -1013,13 +1013,16 @@ function Repairs({user}){
     });
   },[rows,q,status,cat,user]);
 
+  const [assessFor, setAssessFor] = React.useState(null);
+
   const quickAction = async (r, next, actionLabel) => {
+    if(next==="assess"){ setDetail(null); setAssessFor(r); return; }
     let cost = r.cost;
-    if(next==="assess" || next==="progress"){
+    if(next==="progress"){
       const { value, isConfirmed } = await Swal.fire({
-        title: next==="assess"?"ประเมินราคา":"อนุมัติซ่อม",
+        title:"อนุมัติซ่อม",
         input:"number",inputLabel:"ค่าใช้จ่ายโดยประมาณ (บาท)",inputValue:cost||"",inputPlaceholder:"เช่น 5000",
-        showCancelButton:true,confirmButtonText:next==="assess"?"บันทึกการประเมิน":"อนุมัติและเริ่มซ่อม",cancelButtonText:"ยกเลิก",confirmButtonColor:"#1E40AF"
+        showCancelButton:true,confirmButtonText:"อนุมัติและเริ่มซ่อม",cancelButtonText:"ยกเลิก",confirmButtonColor:"#1E40AF"
       });
       if(!isConfirmed) return;
       cost = Number(value)||cost;
@@ -1040,6 +1043,18 @@ function Repairs({user}){
       setLoading(false);
       Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
     }
+  };
+
+  const saveAssess = async (r, {parts, laborCost, cost}) => {
+    setLoading(true);
+    try{
+      await window.api("updateRepairStatus",{id:r.id,status:"assess",by:user.name,note:"เริ่มประเมินราคา",cost,patch:{parts,laborCost}});
+      const updated={...r,status:"assess",cost,parts,laborCost,timeline:[...r.timeline,{status:"assess",when:new Date(),by:user.name,note:"เริ่มประเมินราคา"}]};
+      const newRows=rows.map(x=>x.id===r.id?updated:x);
+      setRows(newRows); window.__DATA.repairs=newRows;
+      setAssessFor(null); setLoading(false);
+      Swal.fire({icon:"success",title:"บันทึกการประเมินแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ setLoading(false); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
 
   const saveEdit = async (r, patch) => {
@@ -1112,6 +1127,7 @@ function Repairs({user}){
       {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={user.role==="Admin"?(r)=>{setDetail(null);setEditFor(r);}:null} />}
       {statusFor && <StatusMenu r={statusFor} onClose={()=>setStatusFor(null)} onPick={(next,label)=>{setStatusFor(null);quickAction(statusFor,next,label);}} />}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
+      {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
     </>
   );
 }
@@ -1137,9 +1153,34 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
         <div><div className="k">หมวดหมู่</div><div className="v"><CategoryChip categoryId={r.categoryId}/></div></div>
         <div><div className="k">ผู้แจ้ง</div><div className="v"><Avatar name={r.reporterName}/>{r.reporterName}</div></div>
         <div><div className="k">ผู้รับผิดชอบ</div><div className="v">{r.assignedId ? <><Avatar name={window.getUser(r.assignedId)?.name}/>{window.getUser(r.assignedId)?.name}</> : <span style={{color:"var(--muted)"}}>ยังไม่มอบหมาย</span>}</div></div>
-        <div><div className="k">ค่าใช้จ่าย</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{r.cost.toLocaleString()} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
+        <div><div className="k">ค่าใช้จ่ายรวม</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{Number(r.cost).toLocaleString()} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
         <div><div className="k">สถานะปัจจุบัน</div><div className="v"><Badge status={r.status}/></div></div>
       </div>
+
+      {(r.parts && r.parts.length>0) && <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+        <div style={{padding:"12px 16px",background:"#FAFBFC",borderBottom:"1px solid var(--line)",fontWeight:500,fontSize:13,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่ ({r.parts.length} รายการ)</span>
+          <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString()}</span>
+        </div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead><tr style={{background:"#F8FAFC"}}><th style={{padding:"8px 14px",textAlign:"left",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)"}}>รายการ</th><th style={{padding:"8px 10px",textAlign:"center",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)",width:70}}>จำนวน</th><th style={{padding:"8px 14px",textAlign:"right",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)",width:110}}>ราคา/หน่วย</th><th style={{padding:"8px 14px",textAlign:"right",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)",width:110}}>รวม</th></tr></thead>
+          <tbody>
+            {r.parts.map((p,i)=>(
+              <tr key={i} style={{borderBottom:i<r.parts.length-1?"1px solid var(--line-soft)":""}}>
+                <td style={{padding:"9px 14px"}}>{p.name}</td>
+                <td style={{padding:"9px 10px",textAlign:"center",color:"var(--muted)"}}>{p.qty}</td>
+                <td style={{padding:"9px 14px",textAlign:"right",color:"var(--muted)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.unitPrice||0).toLocaleString()}</td>
+                <td style={{padding:"9px 14px",textAlign:"right",fontWeight:500,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.total||0).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {r.laborCost>0 && <div style={{padding:"10px 14px",borderTop:"1px solid var(--line-soft)",display:"flex",justifyContent:"space-between",fontSize:13,background:"#FFFBF0"}}>
+          <span style={{color:"var(--muted)"}}><i className="fa-solid fa-person-digging" style={{marginRight:6}}></i>ค่าแรงช่างซ่อม</span>
+          <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString()}</span>
+        </div>}
+      </div>}
+
       <div style={{marginTop:22}}>
         <div className="k" style={{color:"var(--muted)",fontSize:12,marginBottom:8}}>รูปภาพ "ก่อนซ่อม"</div>
         <div className="photo-grid">{r.photos.map((p,i)=>(<PhotoPlaceholder key={i} label={p} idx={i}/>))}</div>
@@ -1224,6 +1265,109 @@ function EditRepairModal({r,onClose,onSave}){
     </Modal>
   );
 }
+function AssessModal({r, onClose, onSave}){
+  const initParts = (r.parts && r.parts.length>0)
+    ? r.parts.map(p=>({name:p.name||"",qty:p.qty||1,unitPrice:p.unitPrice||0}))
+    : [{name:"",qty:1,unitPrice:0}];
+  const [parts,setParts] = React.useState(initParts);
+  const [laborCost,setLaborCost] = React.useState(r.laborCost||"");
+
+  const addPart = () => setParts(p=>[...p,{name:"",qty:1,unitPrice:0}]);
+  const removePart = (i) => setParts(p=>p.filter((_,idx)=>idx!==i));
+  const upPart = (i,k,v) => setParts(p=>{ const a=[...p]; a[i]={...a[i],[k]:v}; return a; });
+
+  const partsTotal = parts.reduce((s,p)=>s+(Number(p.qty)||0)*(Number(p.unitPrice)||0),0);
+  const total = partsTotal + (Number(laborCost)||0);
+  const fmt = (n) => Math.round(Number(n)||0).toLocaleString();
+
+  const inStyle = {width:"100%",padding:"7px 10px",border:"1px solid var(--line)",borderRadius:7,fontFamily:"Kanit",fontSize:13,outline:"none",background:"#fff"};
+
+  const submit = () => {
+    const cleanParts = parts.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(),qty:Number(p.qty)||1,unitPrice:Number(p.unitPrice)||0,total:(Number(p.qty)||1)*(Number(p.unitPrice)||0)}));
+    onSave(r,{parts:cleanParts,laborCost:Number(laborCost)||0,cost:total});
+  };
+
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className="fa-solid fa-magnifying-glass-dollar" style={{color:"#8B5CF6",marginRight:8}}></i>ประเมินราคา · <span className="ticket-id" style={{marginLeft:4}}>{r.running}</span></>}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึกการประเมิน</button>
+      </>}>
+
+      {/* Parts */}
+      <div style={{marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontWeight:600,fontSize:14}}><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่</div>
+          <button className="btn btn-ghost btn-sm" onClick={addPart}><i className="fa-solid fa-plus"></i> เพิ่มรายการ</button>
+        </div>
+        <div style={{border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead>
+              <tr style={{background:"#FAFBFC"}}>
+                <th style={{padding:"9px 12px",textAlign:"left",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)"}}>ชื่ออะไหล่ / รายการ</th>
+                <th style={{padding:"9px 8px",textAlign:"center",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:80}}>จำนวน</th>
+                <th style={{padding:"9px 10px",textAlign:"right",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:140}}>ราคา/หน่วย (฿)</th>
+                <th style={{padding:"9px 12px",textAlign:"right",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:110}}>รวม (฿)</th>
+                <th style={{width:36,borderBottom:"1px solid var(--line)"}}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {parts.map((p,i)=>(
+                <tr key={i} style={{borderBottom:i<parts.length-1?"1px solid var(--line-soft)":""}}>
+                  <td style={{padding:"7px 10px"}}>
+                    <input value={p.name} onChange={e=>upPart(i,"name",e.target.value)} placeholder="เช่น สายพาน, น้ำมันไฮดรอลิก..." style={inStyle}/>
+                  </td>
+                  <td style={{padding:"7px 6px"}}>
+                    <input type="number" min="1" value={p.qty} onChange={e=>upPart(i,"qty",e.target.value)} style={{...inStyle,textAlign:"center"}}/>
+                  </td>
+                  <td style={{padding:"7px 6px"}}>
+                    <input type="number" min="0" value={p.unitPrice} onChange={e=>upPart(i,"unitPrice",e.target.value)} style={{...inStyle,textAlign:"right"}}/>
+                  </td>
+                  <td style={{padding:"7px 12px",textAlign:"right",fontWeight:600,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>
+                    {fmt((Number(p.qty)||0)*(Number(p.unitPrice)||0))}
+                  </td>
+                  <td style={{padding:"4px 6px 4px 0"}}>
+                    {parts.length>1 && <button className="ia danger" onClick={()=>removePart(i)} title="ลบ"><i className="fa-solid fa-xmark"></i></button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Labor cost */}
+      <div style={{marginBottom:20}}>
+        <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-person-digging" style={{color:"var(--warning)",marginRight:6}}></i>ค่าแรงช่างซ่อม</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
+          <span style={{color:"var(--muted)",fontSize:13}}>บาท</span>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div style={{background:"linear-gradient(135deg,rgba(30,64,175,.06),rgba(139,92,246,.06))",border:"1px solid rgba(30,64,175,.18)",borderRadius:12,padding:"16px 20px"}}>
+        <div style={{fontWeight:600,fontSize:14,color:"var(--primary)",marginBottom:12}}><i className="fa-solid fa-calculator" style={{marginRight:6}}></i>สรุปค่าใช้จ่าย</div>
+        <div style={{display:"grid",gap:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+            <span style={{color:"var(--muted)"}}>ค่าอะไหล่รวม ({parts.filter(p=>p.name.trim()).length} รายการ)</span>
+            <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>฿{fmt(partsTotal)}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13}}>
+            <span style={{color:"var(--muted)"}}>ค่าแรงช่างซ่อม</span>
+            <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>฿{fmt(laborCost)}</span>
+          </div>
+          <div style={{borderTop:"1px solid rgba(30,64,175,.2)",marginTop:4,paddingTop:10,display:"flex",justifyContent:"space-between",fontSize:17,fontWeight:700}}>
+            <span>รวมทั้งสิ้น</span>
+            <span style={{color:"var(--primary)"}}>฿{fmt(total)}</span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 window.Repairs = Repairs;
 </script>
 
