@@ -52,6 +52,7 @@ async function api(action, payload = {}) {
     }
 
     case 'bootstrap': {
+      await _seedIfEmpty();
       const [usersSnap, catSnap, machSnap, repSnap] = await Promise.all([
         _db.ref('/users').get(),
         _db.ref('/categories').get(),
@@ -204,6 +205,43 @@ async function api(action, payload = {}) {
       throw new Error('Unknown action: ' + action);
   }
 }
+
+// ===== SEED DATA (รันครั้งเดียวเมื่อ database ว่าง) =====
+
+async function _seedIfEmpty() {
+  const snap = await _db.ref('/users').get();
+  if (snap.val()) return; // มีข้อมูลแล้ว ไม่ต้อง seed
+
+  const now = new Date().toISOString();
+
+  // Admin user — กำหนดโดยผู้ดูแลระบบ
+  await _db.ref('/users/U001').set({
+    id: 'U001', username: 'admin', password: 'komdevil99',
+    name: 'ผู้ดูแลระบบ', role: 'Admin', dept: 'ฝ่ายไอที',
+    email: 'admin@company.co.th', projects: [], createdAt: now,
+  });
+
+  // Default categories
+  const cats = [
+    { id:'C01', name:'ไฟฟ้า',              color:'#F59E0B', icon:'fa-bolt' },
+    { id:'C02', name:'เครื่องจักรกล',      color:'#3B82F6', icon:'fa-gears' },
+    { id:'C03', name:'ระบบลม/ไฮดรอลิก',    color:'#0EA5E9', icon:'fa-wind' },
+    { id:'C04', name:'ระบบน้ำ',             color:'#06B6D4', icon:'fa-droplet' },
+    { id:'C05', name:'คอมพิวเตอร์/IT',      color:'#8B5CF6', icon:'fa-desktop' },
+    { id:'C06', name:'อาคาร/สาธารณูปโภค',  color:'#10B981', icon:'fa-building' },
+    { id:'C07', name:'ยานพาหนะ',            color:'#EF4444', icon:'fa-truck' },
+    { id:'C08', name:'อื่นๆ',               color:'#64748B', icon:'fa-wrench' },
+  ];
+  for (const c of cats) await _db.ref('/categories/' + c.id).set(c);
+}
+
+// เรียก window.setupDatabase() จาก Console เพื่อ reset และ seed ใหม่
+window.setupDatabase = async function() {
+  await _db.ref('/users').remove();
+  await _db.ref('/categories').remove();
+  await _seedIfEmpty();
+  console.log('✅ Database seeded. Admin: admin / komdevil99');
+};
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
