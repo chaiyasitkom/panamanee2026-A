@@ -234,7 +234,7 @@ function MachineForm({initial,mode,onClose,onSave}){
               </button>}
               <div style={{fontSize:12,color:"var(--muted)",marginTop:8,lineHeight:1.5}}>
                 รองรับ JPG, PNG, WEBP · ไม่เกิน 5MB<br/>
-                รูปจะถูกอัพโหลดเข้า Google Drive โฟลเดอร์ <span className="mono">Machine-{f.code||"[รหัส]"}</span>
+                รูปจะถูกอัพโหลดเข้า Firebase Storage โฟลเดอร์ <span className="mono">machines/{f.code||"[รหัส]"}</span>
               </div>
             </div>
           </div>

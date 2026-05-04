@@ -40,10 +40,10 @@ function Login({onLogin}){
         </div>
         <div className="login-hero">
           <h1>จัดการงานซ่อมบำรุง<br/>ครบในที่เดียว</h1>
-          <p>แจ้งซ่อม ติดตามสถานะ และวิเคราะห์งานบำรุงรักษาเครื่องจักร เชื่อมต่อ Google Sheets และ Google Drive โดยตรง</p>
+          <p>แจ้งซ่อม ติดตามสถานะ และวิเคราะห์งานบำรุงรักษาเครื่องจักร เชื่อมต่อ Firebase Realtime Database โดยตรง</p>
           <div className="chips">
             <span className="chip"><i className="fa-solid fa-bolt" style={{marginRight:6}}></i>Real-time</span>
-            <span className="chip"><i className="fa-brands fa-google-drive" style={{marginRight:6}}></i>Cloud Sync</span>
+            <span className="chip"><i className="fa-solid fa-database" style={{marginRight:6}}></i>Cloud Sync</span>
             <span className="chip"><i className="fa-solid fa-chart-line" style={{marginRight:6}}></i>Analytics</span>
           </div>
         </div>

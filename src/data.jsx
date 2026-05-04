@@ -1,4 +1,4 @@
-// Data layer — connects to Google Apps Script backend
+// Data layer — connects to Firebase Realtime Database
 // Keeps the same window.__DATA shape + helpers so existing UI works unchanged.
 
 const STATUSES = [

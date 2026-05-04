@@ -79,7 +79,7 @@ function App(){
       localStorage.setItem("rms_user",JSON.stringify(u));
       setPage(["Admin","Officer","Director"].includes(u.role) ? "dashboard" : u.role==="Technician" ? "dashboard" : "r-dashboard");
     } else {
-      Swal.fire({icon:"warning",title:"ไม่พบบัญชี",text:`ไม่พบ username "${username}" ใน Google Sheet · ลอง run setupSheets ใน Apps Script`});
+      Swal.fire({icon:"warning",title:"ไม่พบบัญชี",text:`ไม่พบ username "${username}" ใน Firebase`});
     }
   };
 
@@ -87,7 +87,7 @@ function App(){
 
   if(booting) return <div style={{display:"grid",placeItems:"center",minHeight:"100vh",gap:14,background:"var(--bg)",fontFamily:"Kanit"}}>
     <div className="spinner" style={{width:40,height:40,borderWidth:4}}></div>
-    <div style={{color:"var(--muted)"}}>กำลังเชื่อมต่อ Google Sheets...</div>
+    <div style={{color:"var(--muted)"}}>กำลังเชื่อมต่อ Firebase...</div>
   </div>;
   if(bootErr) return <div style={{display:"grid",placeItems:"center",minHeight:"100vh",padding:20,background:"var(--bg)"}}>
     <div className="card" style={{maxWidth:520,padding:28,textAlign:"center"}}>
@@ -96,9 +96,9 @@ function App(){
       <div style={{color:"var(--muted)",fontSize:13,marginBottom:14,wordBreak:"break-word"}}>{bootErr}</div>
       <div style={{color:"var(--muted)",fontSize:12.5,textAlign:"left",background:"#FAFBFC",border:"1px solid var(--line)",borderRadius:10,padding:14}}>
         <div style={{fontWeight:500,color:"var(--text)",marginBottom:6}}>ตรวจสอบ:</div>
-        1. รัน <span className="mono">setupSheets</span> ใน Apps Script แล้วหรือยัง?<br/>
-        2. Deploy เป็น Web App และตั้ง <strong>"Anyone"</strong> access แล้วหรือยัง?<br/>
-        3. URL ใน <span className="mono">src/config.jsx</span> ถูกต้องหรือยัง?
+        1. Firebase Realtime Database Rules อนุญาต read/write แล้วหรือยัง?<br/>
+        2. Firebase config ใน <span className="mono">src/config.jsx</span> ถูกต้องหรือยัง?<br/>
+        3. เชื่อมต่ออินเตอร์เน็ตอยู่หรือไม่?
       </div>
       <button className="btn btn-primary" style={{marginTop:14}} onClick={()=>location.reload()}><i className="fa-solid fa-rotate"></i> ลองใหม่</button>
     </div>
@@ -110,7 +110,7 @@ function App(){
     "repairs":{t:"รายการแจ้งซ่อม",c:"จัดการและติดตามงานซ่อมทั้งหมด"},
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
-    "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Google Drive"},
+    "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
     "r-dashboard":{t:"แดชบอร์ด",c:"สรุปงานแจ้งซ่อมของฉัน"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},

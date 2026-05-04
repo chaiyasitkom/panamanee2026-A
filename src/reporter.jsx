@@ -282,7 +282,7 @@ function NewRequest({user,goTo}){
           </div>
 
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
-            <label>รูปภาพ "ก่อนซ่อม" (บันทึกลง Google Drive)</label>
+            <label>รูปภาพ "ก่อนซ่อม" (บันทึกลง Firebase Storage)</label>
             <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10}}>
               <button className="btn btn-ghost" type="button" onClick={()=>fileRef.current?.click()}>
                 <i className="fa-solid fa-paperclip"></i> เลือกไฟล์
