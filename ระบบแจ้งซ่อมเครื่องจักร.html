@@ -145,7 +145,8 @@ a{color:inherit;text-decoration:none}
   .modal-b{padding:16px;overflow-x:hidden}
   .modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .modal-h{padding:14px 16px}
-  .modal-f{padding:12px 16px}
+  .modal-f{padding:12px 16px;flex-wrap:wrap;gap:8px}
+  .modal-f .btn{flex:1;min-width:0;justify-content:center}
   .form-grid{grid-template-columns:1fr !important}
   .form-grid .full{grid-column:1/-1}
   .detail-grid{grid-template-columns:1fr !important}
@@ -884,13 +885,13 @@ function Projects({user}){
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
-            <th style={{width:44}}>#</th>
-            <th style={{width:100}}>รหัส</th>
+            <th style={{width:44}} className="hide-on-mobile">#</th>
+            <th style={{width:100}} className="hide-on-mobile">รหัส</th>
             <th>ชื่อโครงการ</th>
-            <th>รายละเอียด</th>
+            <th className="hide-on-mobile">รายละเอียด</th>
             <th style={{width:100}}>สถานะ</th>
-            <th style={{width:80}}>เครื่องจักร</th>
-            <th style={{width:80}}>แจ้งซ่อม</th>
+            <th style={{width:80}} className="hide-on-mobile">เครื่องจักร</th>
+            <th style={{width:80}} className="hide-on-mobile">แจ้งซ่อม</th>
             <th style={{width:90}}>จัดการ</th>
           </tr></thead>
           <tbody>
@@ -900,18 +901,18 @@ function Projects({user}){
               const sc=STATUS_COLOR[p.status]||"#94A3B8";
               return (
                 <tr key={p.id}>
-                  <td style={{color:"var(--muted)",fontSize:12}}>{i+1}</td>
-                  <td><span className="mono" style={{fontSize:12,fontWeight:500,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 8px",borderRadius:6}}>{p.code||"—"}</span></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12}}>{i+1}</td>
+                  <td className="hide-on-mobile"><span className="mono" style={{fontSize:12,fontWeight:500,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 8px",borderRadius:6}}>{p.code||"—"}</span></td>
                   <td>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <span style={{width:10,height:10,borderRadius:"50%",background:p.color||"#3B82F6",flexShrink:0,display:"inline-block"}}></span>
                       <span style={{fontWeight:500}}>{p.name}</span>
                     </div>
                   </td>
-                  <td style={{color:"var(--muted)",fontSize:13,maxWidth:260}}><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.desc||"—"}</div></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13,maxWidth:260}}><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.desc||"—"}</div></td>
                   <td><span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,padding:"3px 10px",borderRadius:999,background:sc+"22",color:sc}}><span style={{width:6,height:6,borderRadius:"50%",background:sc}}></span>{STATUS_LABEL[p.status]||p.status}</span></td>
-                  <td style={{textAlign:"center"}}><strong>{mCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
-                  <td style={{textAlign:"center"}}><strong>{rCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
+                  <td className="hide-on-mobile" style={{textAlign:"center"}}><strong>{mCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
+                  <td className="hide-on-mobile" style={{textAlign:"center"}}><strong>{rCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
                   <td>
                     <div className="row-actions">
                       {["Admin","Officer"].includes(user.role) && <>
@@ -1334,18 +1335,18 @@ function Repairs({user}){
         </div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th>เลขที่ไซต์งาน</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th>โครงการ/หน่วยงาน</th><th>หมวดหมู่</th><th>สถานะ</th><th>ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">เลขที่ไซต์งาน</th><th className="hide-on-mobile">วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">โครงการ/หน่วยงาน</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {filtered.map(r=>(
                 <tr key={r.id}>
                   <td><span className="ticket-id">{r.running}</span></td>
-                  <td><span className="site-id">{r.siteId||"—"}</span></td>
-                  <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                  <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td style={{fontSize:13}}>{r.project}</td>
-                  <td><CategoryChip categoryId={r.categoryId}/></td>
+                  <td className="hide-on-mobile" style={{fontSize:13}}>{r.project}</td>
+                  <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
-                  <td><Avatar name={r.reporterName}/>{r.reporterName}</td>
+                  <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
@@ -1400,7 +1401,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
           <span><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่ ({r.parts.length} รายการ)</span>
           <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString()}</span>
         </div>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <div className="table-scroll" style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",minWidth:480,borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#F8FAFC"}}>
             <th style={{padding:"8px 14px",textAlign:"left",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)"}}>รายการ</th>
             <th style={{padding:"8px 12px",textAlign:"left",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)",width:130}}>แหล่งซื้อ</th>
@@ -1420,6 +1422,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
             ))}
           </tbody>
         </table>
+        </div>{/* table-scroll */}
         {r.laborCost>0 && <div style={{padding:"10px 14px",borderTop:"1px solid var(--line-soft)",display:"flex",justifyContent:"space-between",fontSize:13,background:"#FFFBF0"}}>
           <span style={{color:"var(--muted)"}}><i className="fa-solid fa-person-digging" style={{marginRight:6}}></i>ค่าแรงช่างซ่อม</span>
           <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString()}</span>
@@ -1586,7 +1589,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
       <div style={{marginBottom:20}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-person-digging" style={{color:"var(--warning)",marginRight:6}}></i>ค่าแรงช่างซ่อม</div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
+          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:"100%",maxWidth:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
           <span style={{color:"var(--muted)",fontSize:13}}>บาท</span>
         </div>
       </div>
@@ -1676,16 +1679,16 @@ function Users({user}){
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>หน่วยงาน</th><th>สิทธิ์เข้าถึงโครงการ</th><th>อีเมล</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th className="hide-on-mobile">ตำแหน่ง</th><th className="hide-on-mobile">หน่วยงาน</th><th className="hide-on-mobile">สิทธิ์เข้าถึงโครงการ</th><th className="hide-on-mobile">อีเมล</th><th>จัดการ</th></tr></thead>
           <tbody>
             {filtered.map(u=>(
               <tr key={u.id}>
                 <td><span className="mono" style={{background:"var(--line-soft)",padding:"2px 7px",borderRadius:6,fontSize:12.5}}>{u.username}</span></td>
                 <td><Avatar name={u.name}/>{u.name}</td>
-                <td><span className="badge" style={{background:roleColors[u.role]+"22",color:roleColors[u.role]}}><span className="dot"></span>{u.role}</span></td>
-                <td>{u.dept}</td>
-                <td>{renderProjectAccess(u)}</td>
-                <td style={{color:"var(--muted)",fontSize:13}}>{u.email}</td>
+                <td className="hide-on-mobile"><span className="badge" style={{background:roleColors[u.role]+"22",color:roleColors[u.role]}}><span className="dot"></span>{u.role}</span></td>
+                <td className="hide-on-mobile">{u.dept}</td>
+                <td className="hide-on-mobile">{renderProjectAccess(u)}</td>
+                <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13}}>{u.email}</td>
                 <td><div className="row-actions"><button className="ia" title="แก้ไข" onClick={()=>setEdit({...u,projects:Array.isArray(u.projects)?u.projects:[]})}><i className="fa-solid fa-pen"></i></button><button className="ia danger" title="ลบ" onClick={()=>del(u)}><i className="fa-solid fa-trash"></i></button></div></td>
               </tr>
             ))}
@@ -1801,17 +1804,17 @@ function Categories({user}){
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th style={{width:80}}>สี</th><th style={{width:80}}>ไอคอน</th><th>ชื่อหมวดหมู่</th><th>FontAwesome Class</th><th>จำนวนงาน</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th style={{width:80}} className="hide-on-mobile">สี</th><th style={{width:80}}>ไอคอน</th><th>ชื่อหมวดหมู่</th><th className="hide-on-mobile">FontAwesome Class</th><th className="hide-on-mobile">จำนวนงาน</th><th>จัดการ</th></tr></thead>
           <tbody>
             {rows.map(c=>{
               const cnt = window.__DATA.repairs.filter(r=>r.categoryId===c.id).length;
               return (
                 <tr key={c.id}>
-                  <td><span className="color-swatch" style={{background:c.color}}></span> <span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.color}</span></td>
+                  <td className="hide-on-mobile"><span className="color-swatch" style={{background:c.color}}></span> <span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.color}</span></td>
                   <td><div style={{width:36,height:36,borderRadius:8,background:c.color+"22",color:c.color,display:"grid",placeItems:"center",fontSize:16}}><i className={`fa-solid ${c.icon}`}></i></div></td>
                   <td style={{fontWeight:500}}>{c.name}</td>
-                  <td><span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.icon}</span></td>
-                  <td><strong>{cnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>งาน</span></td>
+                  <td className="hide-on-mobile"><span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.icon}</span></td>
+                  <td className="hide-on-mobile"><strong>{cnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>งาน</span></td>
                   <td><div className="row-actions"><button className="ia" onClick={()=>setEdit(c)}><i className="fa-solid fa-pen"></i></button><button className="ia danger" onClick={()=>del(c)}><i className="fa-solid fa-trash"></i></button></div></td>
                 </tr>
               );
@@ -2211,11 +2214,11 @@ function MyRepairs({user}){
         <div className="filters"><div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>คำร้องแจ้งซ่อมของฉัน ({rows.length} รายการ)</div></div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th>หมวดหมู่</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">อัปเดตล่าสุด</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.map(r=>{
                 const last=r.timeline[r.timeline.length-1];
-                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
+                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
               })}
               {rows.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีคำร้อง</div><div>คลิก "แจ้งซ่อมใหม่" ในเมนูด้านซ้ายเพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
