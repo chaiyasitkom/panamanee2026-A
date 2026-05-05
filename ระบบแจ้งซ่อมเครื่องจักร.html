@@ -49,7 +49,8 @@
   --row-h:52px;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:"Kanit",system-ui,sans-serif;font-weight:400;-webkit-font-smoothing:antialiased}
+html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:"Kanit",system-ui,sans-serif;font-weight:400;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html{scroll-behavior:smooth}
 button{font-family:inherit;cursor:pointer;border:0;background:transparent;color:inherit}
 input,select,textarea{font-family:inherit;font-size:14px;color:var(--text)}
 a{color:inherit;text-decoration:none}
@@ -78,7 +79,7 @@ a{color:inherit;text-decoration:none}
 .login-btn{width:100%;padding:13px;border-radius:10px;background:var(--primary);color:#fff;font-weight:500;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s,transform .05s}
 .login-btn:hover{background:var(--primary-dark)}
 .login-btn:active{transform:translateY(1px)}
-@media (max-width:900px){.login-wrap{grid-template-columns:1fr}.login-brand{padding:32px;min-height:240px}.login-hero h1{font-size:30px}}
+@media (max-width:900px){.login-wrap{grid-template-columns:1fr}.login-brand{padding:32px;min-height:200px}.login-hero h1{font-size:28px}.login-hero p{font-size:15px}}
 .shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh;min-height:100dvh}
 .sidebar{background:linear-gradient(180deg,#1E3A8A 0%,#172554 100%);color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:20;}
 .sidebar .brand{padding:22px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.08)}
@@ -101,10 +102,87 @@ a{color:inherit;text-decoration:none}
 .sidebar .me .logout:hover{background:rgba(255,255,255,.08);color:#fff}
 .sidebar-toggle{display:none;position:fixed;top:14px;left:14px;z-index:30;width:44px;height:44px;border-radius:12px;background:#fff;box-shadow:var(--shadow);color:var(--text);place-items:center;font-size:16px}
 .sidebar-scrim{display:none}
-@media (max-width:1024px){.shell{grid-template-columns:1fr}.sidebar{position:fixed;left:0;top:0;width:280px;transform:translateX(-100%);transition:transform .22s ease-out;height:100dvh}.sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}.sidebar-toggle{display:grid}.sidebar-scrim.show{display:block;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:19;backdrop-filter:blur(2px)}.main{padding:70px 20px 80px !important}.topbar{margin-bottom:18px}.topbar .actions{width:100%;order:2}.search-input input{width:100%}.role-quick{flex:1}.charts-grid{grid-template-columns:1fr}.stat-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}}
-@media (max-width:640px){.main{padding:64px 14px 60px !important}.topbar{flex-direction:column;align-items:stretch}.topbar .title h1{font-size:20px}.topbar .actions{flex-wrap:wrap}.topbar .actions .btn-primary{flex:1;justify-content:center}.search-input input{width:100%}.stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}.stat{padding:14px}.stat .val{font-size:22px}.stat .ic{width:34px;height:34px;margin-bottom:10px}.card-h{padding:14px 16px}.card-body{padding:16px}.filters{flex-direction:column;align-items:stretch;padding:12px}.filters .search-input input,.filters select{width:100%}.filters .spacer{display:none}table.data{font-size:12.5px}table.data th,table.data td{padding:10px 10px}.cell-title{max-width:180px}.modal{max-height:92dvh;border-radius:14px 14px 0 0;align-self:end}.modal-scrim{padding:0;align-items:flex-end}.modal.lg{max-width:100%}.modal-b{padding:18px}.form-grid{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}.tweaks-panel{bottom:12px;right:12px;left:12px;width:auto}.login-wrap{grid-template-columns:1fr}.login-brand{padding:24px;min-height:auto}.login-hero h1{font-size:26px}.login-hero p{font-size:14px}.login-card-wrap{padding:24px 20px}.sidebar-toggle{top:10px;left:10px}.ticket-id{font-size:11px;padding:2px 6px}.badge{font-size:11px;padding:2px 8px}.cat-chip{font-size:11px}.row-actions{gap:2px}.ia{width:28px;height:28px}}
-@media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:40px;min-height:40px}.btn-sm{min-height:38px}input,select,textarea{font-size:16px !important}table.data td{padding:14px 12px}}
-@media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}}
+@media (max-width:1024px){
+  .shell{grid-template-columns:1fr}
+  .sidebar{position:fixed;left:0;top:0;width:280px;transform:translateX(-100%);transition:transform .22s ease-out;height:100dvh;z-index:25}
+  .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}
+  .sidebar-toggle{display:grid}
+  .sidebar-scrim.show{display:block;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:19;backdrop-filter:blur(2px)}
+  .main{padding:70px 18px 80px !important}
+  .topbar{margin-bottom:16px;flex-wrap:wrap}
+  .topbar .actions{width:100%;order:2;flex-wrap:wrap}
+  .topbar .actions .search-input{display:none}
+  .search-input input{width:100%}
+  .role-quick{flex:1}
+  .charts-grid{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .filters .search-input input{width:100%}
+}
+@media (max-width:640px){
+  .main{padding:62px 12px 60px !important}
+  .topbar{flex-direction:column;align-items:stretch;gap:10px}
+  .topbar .title h1{font-size:19px}
+  .topbar .title .crumb{font-size:12px}
+  .topbar .actions{flex-wrap:wrap;gap:8px}
+  .topbar .actions .btn-primary{flex:1;justify-content:center}
+  .topbar .actions .search-input{display:none}
+  .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{padding:13px}
+  .stat .val{font-size:22px}
+  .stat .ic{width:34px;height:34px;margin-bottom:10px}
+  .card-h{padding:13px 14px}
+  .card-body{padding:14px}
+  .filters{flex-direction:column;align-items:stretch;padding:10px;gap:8px}
+  .filters .search-input input,.filters select{width:100%;min-width:0}
+  .filters .spacer{display:none}
+  table.data{font-size:12.5px}
+  table.data th,table.data td{padding:9px 10px}
+  .cell-title{max-width:160px}
+  .modal{max-height:94dvh;border-radius:16px 16px 0 0;align-self:end}
+  .modal-scrim{padding:0;align-items:flex-end}
+  .modal.lg,.modal.xl{max-width:100%}
+  .modal-b{padding:16px;overflow-x:hidden}
+  .modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .modal-h{padding:14px 16px}
+  .modal-f{padding:12px 16px}
+  .form-grid{grid-template-columns:1fr !important}
+  .form-grid .full{grid-column:1/-1}
+  .detail-grid{grid-template-columns:1fr !important}
+  .detail-header{grid-template-columns:1fr !important}
+  .kpi-line{grid-template-columns:1fr !important}
+  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+  .status-actions{gap:4px}
+  .quick-action{flex:1;justify-content:center;font-size:11.5px;padding:6px 8px}
+  .tweaks-panel{bottom:12px;right:8px;left:8px;width:auto}
+  .login-wrap{grid-template-columns:1fr}
+  .login-brand{padding:22px;min-height:auto}
+  .login-hero h1{font-size:24px}
+  .login-hero p{font-size:13.5px}
+  .login-card-wrap{padding:22px 18px}
+  .sidebar-toggle{top:10px;left:10px;width:40px;height:40px}
+  .ticket-id{font-size:11px;padding:2px 6px}
+  .badge{font-size:11px;padding:2px 8px}
+  .cat-chip{font-size:11px;padding:2px 7px}
+  .row-actions{gap:2px}
+  .ia{width:28px;height:28px}
+  .hide-on-mobile{display:none !important}
+}
+@media (max-width:420px){
+  .main{padding:58px 10px 56px !important}
+  .topbar .title h1{font-size:17px}
+  .stat-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat{padding:11px}
+  .stat .val{font-size:20px}
+  .stat .ic{width:30px;height:30px;font-size:14px;margin-bottom:8px}
+  .machines-grid{grid-template-columns:1fr}
+  .btn{padding:8px 12px;font-size:13px}
+  .login-hero h1{font-size:20px}
+  .login-card h2{font-size:22px}
+  .modal-h h3{font-size:15px}
+}
+@media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:40px;min-height:40px}.btn-sm{min-height:36px}input,select,textarea{font-size:16px !important}table.data td{padding:13px 12px}}
+@media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}}
 .main{padding:28px 32px 80px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px;flex-wrap:wrap}
 .topbar .title h1{font-size:24px;margin:0 0 4px;font-weight:600;letter-spacing:-.01em}
@@ -183,7 +261,8 @@ body.density-compact table.data th{padding:8px 14px}
 .modal-h h3{margin:0;font-size:17px;font-weight:600}
 .modal-h .close{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
 .modal-h .close:hover{background:var(--line-soft);color:var(--text)}
-.modal-b{padding:22px;overflow-y:auto;flex:1}
+.modal-b{padding:22px;overflow-y:auto;overflow-x:hidden;flex:1;-webkit-overflow-scrolling:touch}
+.modal-b .table-wrap,.modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px}
 .modal-f{padding:14px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;background:#FAFBFC}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
@@ -1462,7 +1541,8 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
           <button className="btn btn-ghost btn-sm" onClick={addPart}><i className="fa-solid fa-plus"></i> เพิ่มรายการ</button>
         </div>
         <div style={{border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <div className="table-scroll">
+          <table style={{width:"100%",minWidth:520,borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr style={{background:"#FAFBFC"}}>
                 <th style={{padding:"9px 12px",textAlign:"left",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)"}}>ชื่ออะไหล่ / รายการ</th>
@@ -1498,6 +1578,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
               ))}
             </tbody>
           </table>
+          </div>{/* table-scroll */}
         </div>
       </div>
 
