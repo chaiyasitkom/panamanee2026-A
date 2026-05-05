@@ -27,15 +27,14 @@ function Machines({user}){
 
   const statusColor = (s) => ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[s] || "#64748B";
 
-  const save = async (form, photoUpload) => {
+  const save = async (form) => {
     try{
       if(form.id){
-        const res = await window.api("updateMachine",{id:form.id, patch:form, photoUpload});
-        const finalForm = res?.photo ? {...form, photo:res.photo} : form;
-        const upd = rows.map(x=>x.id===form.id?finalForm:x);
+        await window.api("updateMachine",{id:form.id, patch:form});
+        const upd = rows.map(x=>x.id===form.id?form:x);
         setRows(upd); window.__DATA.machines = upd;
       } else {
-        const nu = await window.api("createMachine",{m:form, photoUpload});
+        const nu = await window.api("createMachine",{m:form});
         const upd = [...rows, nu];
         setRows(upd); window.__DATA.machines = upd;
       }
@@ -85,7 +84,7 @@ function Machines({user}){
         </select>
         <div className="spacer"></div>
         {["Admin","Officer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",photo:"",driveId:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears"}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -98,14 +97,7 @@ function Machines({user}){
         return (
         <div className="machine-card" key={m.id} onClick={()=>setDetail(m)}>
           <div className="machine-thumb">
-            {m.photo ? (
-              <img src={m.photo} alt={m.name} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} />
-            ) : (
-              <>
-                <div className="pattern"></div>
-                <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
-              </>
-            )}
+            {<><div className="pattern"></div><div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div></>}
             {m.categoryId && <div className="drive-tag" style={{background:cat.color,color:"#fff"}}><i className={`fa-solid ${cat.icon}`}></i> {cat.name}</div>}
             <div className="status-dot" style={{background:statusColor(m.status)}}>
               <span style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}></span>{m.status}
@@ -142,38 +134,8 @@ function Machines({user}){
 function MachineForm({initial,mode,onClose,onSave}){
   const [f,setF] = React.useState(initial);
   const [busy,setBusy] = React.useState(false);
-  const [photoFile,setPhotoFile] = React.useState(null);
-  const [photoPreview,setPhotoPreview] = React.useState(initial.photo||"");
-  const existingProjects = React.useMemo(()=>(
-    Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort()
-  ),[]);
-  const [projectMode,setProjectMode] = React.useState(()=>{
-    if(!initial.project) return "pick";
-    return existingProjects.includes(initial.project) ? "pick" : "custom";
-  });
-  const fileRef = React.useRef(null);
-  const customProjRef = React.useRef(null);
+  const projects = React.useMemo(()=>(window.__DATA.projects||[]).filter(p=>p.status!=="inactive"),[]);
   const up = (k,v) => setF(p=>({...p,[k]:v}));
-
-  const onPickPhoto = (e) => {
-    const file = e.target.files?.[0];
-    if(!file) return;
-    if(file.size > 5*1024*1024){
-      Swal.fire({icon:"warning",title:"ไฟล์ใหญ่เกินไป",text:"ขนาดรูปต้องไม่เกิน 5MB"});
-      return;
-    }
-    setPhotoFile(file);
-    const reader = new FileReader();
-    reader.onload = () => setPhotoPreview(reader.result);
-    reader.readAsDataURL(file);
-  };
-
-  const removePhoto = () => {
-    setPhotoFile(null);
-    setPhotoPreview("");
-    up("photo","");
-    if(fileRef.current) fileRef.current.value = "";
-  };
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -182,13 +144,7 @@ function MachineForm({initial,mode,onClose,onSave}){
       return;
     }
     setBusy(true);
-    try{
-      let photoUpload = null;
-      if(photoFile){ photoUpload = await window.fileToBase64(photoFile); }
-      await onSave({...f, hours:Number(f.hours)||0}, photoUpload);
-    } finally {
-      setBusy(false);
-    }
+    try{ await onSave({...f, hours:Number(f.hours)||0}); } finally { setBusy(false); }
   };
 
   const icons = ["fa-gears","fa-industry","fa-wind","fa-droplet","fa-snowflake","fa-bolt","fa-truck","fa-boxes-packing","fa-fan","fa-plug","fa-screwdriver-wrench","fa-gauge","fa-tractor","fa-helmet-safety"];
@@ -203,70 +159,31 @@ function MachineForm({initial,mode,onClose,onSave}){
         </button>
       </>}>
       <form onSubmit={submit}>
-
-        {/* Photo uploader */}
-        <div className="form-field" style={{marginBottom:18}}>
-          <label>รูปภาพเครื่องจักร</label>
-          <div style={{display:"flex",gap:14,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{width:160,height:160,borderRadius:12,border:"2px dashed var(--line)",background:"var(--bg)",overflow:"hidden",position:"relative",display:"grid",placeItems:"center",flexShrink:0}}>
-              {photoPreview ? (
-                <>
-                  <img src={photoPreview} alt="preview" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-                  <button type="button" onClick={removePhoto} title="ลบรูป"
-                    style={{position:"absolute",top:6,right:6,width:28,height:28,borderRadius:"50%",border:"none",background:"rgba(239,68,68,.95)",color:"#fff",cursor:"pointer",display:"grid",placeItems:"center"}}>
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </>
-              ) : (
-                <div style={{textAlign:"center",color:"var(--muted)",fontSize:12}}>
-                  <i className="fa-solid fa-image" style={{fontSize:28,display:"block",marginBottom:6}}></i>
-                  ยังไม่มีรูป
-                </div>
-              )}
-            </div>
-            <div style={{flex:1,minWidth:220}}>
-              <input ref={fileRef} type="file" accept="image/*" onChange={onPickPhoto} style={{display:"none"}} />
-              <button type="button" className="btn btn-accent" onClick={()=>fileRef.current?.click()}>
-                <i className="fa-solid fa-cloud-arrow-up"></i> {photoPreview?"เปลี่ยนรูป":"อัพโหลดรูป"}
-              </button>
-              {photoPreview && <button type="button" className="btn btn-ghost" onClick={removePhoto} style={{marginLeft:8}}>
-                <i className="fa-solid fa-trash"></i> ลบรูป
-              </button>}
-              <div style={{fontSize:12,color:"var(--muted)",marginTop:8,lineHeight:1.5}}>
-                รองรับ JPG, PNG, WEBP · ไม่เกิน 5MB<br/>
-                รูปจะถูกอัพโหลดเข้า Firebase Storage โฟลเดอร์ <span className="mono">machines/{f.code||"[รหัส]"}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div className="form-grid">
           <div className="form-field">
             <label>โครงการ</label>
-            <select
-              value={projectMode==="custom" ? "__other__" : (f.project||"")}
-              onChange={e=>{
-                const v = e.target.value;
-                if(v==="__other__"){
-                  setProjectMode("custom");
-                  up("project","");
-                  setTimeout(()=>customProjRef.current?.focus(),50);
-                } else {
-                  setProjectMode("pick");
-                  up("project",v);
-                }
-              }}>
-              <option value="">— เลือกโครงการ —</option>
-              {existingProjects.map(p=>(<option key={p} value={p}>{p}</option>))}
-              <option value="__other__">+ เพิ่มโครงการใหม่...</option>
-            </select>
-            {projectMode==="custom" && (
-              <input
-                ref={customProjRef}
-                value={f.project||""}
-                onChange={e=>up("project",e.target.value)}
-                placeholder="พิมพ์ชื่อโครงการใหม่"
-                style={{marginTop:6}} />
+            {projects.length===0 ? (
+              <div style={{padding:"10px 12px",borderRadius:8,border:"1px dashed var(--line)",background:"#FFFBEB",fontSize:13,color:"#92400E"}}>
+                <i className="fa-solid fa-triangle-exclamation" style={{marginRight:6}}></i>
+                ยังไม่มีโครงการในระบบ — กรุณาเพิ่มโครงการในเมนู <strong>โครงการ</strong> ก่อน
+              </div>
+            ) : (
+              <>
+                <select value={f.project||""} onChange={e=>up("project",e.target.value)}>
+                  <option value="">— เลือกโครงการ —</option>
+                  {projects.map(p=>(<option key={p.id} value={p.name}>{p.code ? `[${p.code}] ` : ""}{p.name}</option>))}
+                </select>
+                {f.project && (()=>{
+                  const proj = projects.find(p=>p.name===f.project);
+                  return proj ? (
+                    <div style={{marginTop:6,display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:999,background:(proj.color||"#3B82F6")+"22",color:proj.color||"#3B82F6",fontSize:12,fontWeight:500}}>
+                      <span style={{width:8,height:8,borderRadius:"50%",background:proj.color||"#3B82F6"}}></span>
+                      {proj.code && <span className="mono">{proj.code}</span>}
+                      {proj.name}
+                    </div>
+                  ) : null;
+                })()}
+              </>
             )}
           </div>
           <div className="form-field">
@@ -362,14 +279,10 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
       </>}>
       <div className="detail-header" style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:22,marginBottom:18}}>
         <div style={{borderRadius:12,overflow:"hidden",aspectRatio:"1",background:"var(--bg)",position:"relative"}}>
-          {m.photo ? (
-            <img src={m.photo} alt={m.name} style={{width:"100%",height:"100%",objectFit:"cover"}} />
-          ) : (
-            <div className="machine-thumb" style={{position:"absolute",inset:0,borderRadius:0}}>
-              <div className="pattern"></div>
-              <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
-            </div>
-          )}
+          <div className="machine-thumb" style={{position:"absolute",inset:0,borderRadius:0}}>
+            <div className="pattern"></div>
+            <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
+          </div>
         </div>
         <div>
           <div style={{fontSize:20,fontWeight:600,marginBottom:4}}>{m.name}</div>
@@ -395,7 +308,6 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
             <div><div className="k">สถานที่ติดตั้ง</div><div className="v">{m.location||"—"}</div></div>
             <div><div className="k">ซ่อมบำรุงล่าสุด</div><div className="v">{m.lastService||"—"}</div></div>
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
-            <div><div className="k">Drive ID</div><div className="v mono" style={{fontSize:12}}>{m.driveId||"—"}</div></div>
           </div>
           {m.note && <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}>
             <div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div>

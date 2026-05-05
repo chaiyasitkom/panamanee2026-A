@@ -89,7 +89,7 @@ function Categories({user}){
 function CatForm({init,onClose,onSave}){
   const [f,setF] = React.useState(init);
   const palette = ["#3B82F6","#8B5CF6","#EF4444","#10B981","#F59E0B","#06B6D4","#EC4899","#6366F1","#F97316","#14B8A6","#A855F7","#0EA5E9","#DC2626","#16A34A","#D97706","#64748B"];
-  const icons = ["fa-bolt","fa-gears","fa-wind","fa-droplet","fa-desktop","fa-building","fa-truck","fa-wrench","fa-screwdriver","fa-hammer","fa-fan","fa-temperature-high","fa-car-battery","fa-plug","fa-fire","fa-snowflake"];
+  const icons = ["fa-bolt","fa-solid fa-tractor","fa-wind","fa-droplet","fa-desktop","fa-building","fa-truck","fa-wrench","fa-screwdriver","fa-hammer","fa-fan","fa-temperature-high","fa-car-battery","fa-plug","fa-fire","fa-snowflake"];
 
   return (
     <Modal open={true} onClose={onClose} title={init.id?"แก้ไขหมวดหมู่":"เพิ่มหมวดหมู่ใหม่"}

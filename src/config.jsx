@@ -1,4 +1,4 @@
-// Firebase API client — เชื่อมต่อ Firebase Realtime Database และ Storage
+// Firebase API client — เชื่อมต่อ Firebase Realtime Database
 
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
@@ -14,7 +14,6 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 
 const _db = firebase.database();
-const _storage = firebase.storage();
 
 async function _nextId(collection, prefix, pad) {
   const snap = await _db.ref('/' + collection).get();
@@ -25,15 +24,6 @@ async function _nextId(collection, prefix, pad) {
     if (m) max = Math.max(max, parseInt(m[0], 10));
   });
   return prefix + String(max + 1).padStart(pad, '0');
-}
-
-async function _uploadPhoto(path, upload) {
-  const byteStr = atob(upload.data);
-  const bytes = new Uint8Array(byteStr.length);
-  for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
-  const ref = _storage.ref(path);
-  await ref.put(new Blob([bytes], { type: upload.mimeType }));
-  return await ref.getDownloadURL();
 }
 
 async function api(action, payload = {}) {
@@ -53,11 +43,12 @@ async function api(action, payload = {}) {
 
     case 'bootstrap': {
       await _seedIfEmpty();
-      const [usersSnap, catSnap, machSnap, repSnap] = await Promise.all([
+      const [usersSnap, catSnap, machSnap, repSnap, projSnap] = await Promise.all([
         _db.ref('/users').get(),
         _db.ref('/categories').get(),
         _db.ref('/machines').get(),
         _db.ref('/repairs').get(),
+        _db.ref('/projects').get(),
       ]);
       const users = Object.values(usersSnap.val() || {}).map(u => {
         const x = { ...u }; delete x.password; return x;
@@ -68,7 +59,28 @@ async function api(action, payload = {}) {
         ...r,
         timeline: r.timeline ? Object.values(r.timeline) : [],
       }));
-      return { users, categories, machines, repairs };
+      const projects = Object.values(projSnap.val() || {});
+      return { users, categories, machines, repairs, projects };
+    }
+
+    case 'createProject': {
+      const { project } = payload;
+      if (!project.id) project.id = await _nextId('projects', 'PJ', 3);
+      project.createdAt = new Date().toISOString();
+      await _db.ref('/projects/' + project.id).set(project);
+      return project;
+    }
+
+    case 'updateProject': {
+      const { id, patch } = payload;
+      await _db.ref('/projects/' + id).update(patch);
+      return { updated: true };
+    }
+
+    case 'deleteProject': {
+      const { id } = payload;
+      await _db.ref('/projects/' + id).remove();
+      return { deleted: true };
     }
 
     case 'createUser': {
@@ -115,28 +127,16 @@ async function api(action, payload = {}) {
     }
 
     case 'createMachine': {
-      const { m, photoUpload } = payload;
+      const { m } = payload;
       if (!m.id) m.id = await _nextId('machines', 'M', 3);
-      if (photoUpload && photoUpload.data) {
-        m.photo = await _uploadPhoto(
-          'machines/' + (m.code || m.id) + '/' + photoUpload.name,
-          photoUpload
-        );
-      }
       await _db.ref('/machines/' + m.id).set(m);
       return m;
     }
 
     case 'updateMachine': {
-      const { id, patch, photoUpload } = payload;
-      if (photoUpload && photoUpload.data) {
-        patch.photo = await _uploadPhoto(
-          'machines/' + (patch.code || id) + '/' + photoUpload.name,
-          photoUpload
-        );
-      }
+      const { id, patch } = payload;
       await _db.ref('/machines/' + id).update(patch);
-      return { updated: true, photo: patch.photo };
+      return { updated: true };
     }
 
     case 'deleteMachine': {
@@ -146,7 +146,7 @@ async function api(action, payload = {}) {
     }
 
     case 'createRepair': {
-      const { repair, uploads } = payload;
+      const { repair } = payload;
       if (!repair.id) repair.id = await _nextId('repairs', 'R', 4);
       if (!repair.running) {
         const snap = await _db.ref('/repairs').get();
@@ -156,14 +156,7 @@ async function api(action, payload = {}) {
       repair.createdAt = repair.createdAt || new Date().toISOString();
       repair.updatedAt = new Date().toISOString();
       repair.status = repair.status || 'new';
-      const photoUrls = [];
-      if (uploads && uploads.length) {
-        for (const u of uploads) {
-          photoUrls.push(await _uploadPhoto('repairs/' + repair.running + '/' + u.name, u));
-        }
-      }
-      repair.photos = photoUrls;
-      repair.afterPhotos = [];
+      repair.photos = [];
       const tlKey = _db.ref('/repairs/' + repair.id + '/timeline').push().key;
       repair.timeline = {
         [tlKey]: { id: tlKey, status: 'new', when: new Date().toISOString(), by: repair.reporterName || '', note: 'แจ้งเข้าระบบ' }
@@ -233,28 +226,23 @@ async function _seedIfEmpty() {
     { id:'C08', name:'อื่นๆ',               color:'#64748B', icon:'fa-wrench' },
   ];
   for (const c of cats) await _db.ref('/categories/' + c.id).set(c);
+
+  const projects = [
+    { id:'PJ001', name:'โรงงาน A - สายการผลิต 1', code:'PRJ-A1', desc:'', status:'active', color:'#3B82F6', createdAt:now },
+    { id:'PJ002', name:'โรงงาน A - สายการผลิต 2', code:'PRJ-A2', desc:'', status:'active', color:'#8B5CF6', createdAt:now },
+    { id:'PJ003', name:'โรงงาน B - ห้องบรรจุ',    code:'PRJ-B1', desc:'', status:'active', color:'#10B981', createdAt:now },
+    { id:'PJ004', name:'โรงงาน B - คลังสินค้า',   code:'PRJ-B2', desc:'', status:'active', color:'#F59E0B', createdAt:now },
+  ];
+  for (const p of projects) await _db.ref('/projects/' + p.id).set(p);
 }
 
 // เรียก window.setupDatabase() จาก Console เพื่อ reset และ seed ใหม่
 window.setupDatabase = async function() {
   await _db.ref('/users').remove();
   await _db.ref('/categories').remove();
+  await _db.ref('/projects').remove();
   await _seedIfEmpty();
   console.log('✅ Database seeded. Admin: admin / komdevil99');
 };
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => {
-      const s = fr.result;
-      const i = s.indexOf(',');
-      resolve({ name: file.name, mimeType: file.type, data: s.slice(i + 1) });
-    };
-    fr.onerror = reject;
-    fr.readAsDataURL(file);
-  });
-}
-
 window.api = api;
-window.fileToBase64 = fileToBase64;

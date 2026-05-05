@@ -67,16 +67,4 @@ function simulate(ms=500){
   return new Promise(r=>setTimeout(r,ms));
 }
 
-function PhotoPlaceholder({label,idx=1}){
-  const hues = ["#475569","#64748B","#334155","#1E293B"];
-  return (
-    <div className="photo" style={{background:`linear-gradient(135deg,${hues[idx%hues.length]},#0F172A)`}}>
-      <div style={{position:"absolute",inset:0,display:"grid",placeItems:"center",color:"rgba(255,255,255,.7)"}}>
-        <i className="fa-regular fa-image" style={{fontSize:24}}></i>
-      </div>
-      <div className="ph-label">{label}</div>
-    </div>
-  );
-}
-
-Object.assign(window, { Badge, CategoryChip, Avatar, Modal, Loading, simulate, PhotoPlaceholder });
+Object.assign(window, { Badge, CategoryChip, Avatar, Modal, Loading, simulate });

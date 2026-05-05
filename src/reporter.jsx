@@ -89,11 +89,8 @@ function NewRequest({user,goTo}){
   },[user]);
 
   const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:"",machineCode:"",siteId:""});
-  const [files,setFiles] = React.useState([]);
   const [loading,setLoading] = React.useState(false);
-  const fileRef = React.useRef(null);
 
-  // เครื่องจักร: กรองตามโครงการ + หมวดหมู่
   const projectMachines = React.useMemo(()=>{
     if(!f.project) return [];
     return (window.__DATA.machines||[]).filter(m=>m.project===f.project);
@@ -104,30 +101,14 @@ function NewRequest({user,goTo}){
     return projectMachines.filter(m=>m.categoryId===f.categoryId);
   },[projectMachines, f.categoryId]);
 
-  // หมวดหมู่: ดึงเฉพาะหมวดที่มีในเครื่องจักรของโครงการที่เลือก
   const projectCategories = React.useMemo(()=>{
     const ids = new Set(projectMachines.map(m=>m.categoryId).filter(Boolean));
     return (window.__DATA.categories||[]).filter(c=>ids.has(c.id));
   },[projectMachines]);
 
-  // เมื่อเปลี่ยนโครงการ ให้เคลียร์หมวดหมู่ + เครื่องจักรที่เลือก
-  const onProjectChange = (p) => {
-    setF(prev => ({...prev, project:p, categoryId:"", machineCode:""}));
-  };
-
-  const onCategoryChange = (cid) => {
-    setF(prev => ({...prev, categoryId:cid, machineCode:""}));
-  };
-
-  const onMachineChange = (code) => {
-    setF(prev => ({...prev, machineCode: code}));
-  };
-
-  const onFiles = (e) => {
-    const list = Array.from(e.target.files||[]);
-    setFiles([...files,...list.map(x=>({name:x.name,size:x.size,file:x,status:"ready"}))]);
-  };
-  const removeFile = (i) => setFiles(files.filter((_,idx)=>idx!==i));
+  const onProjectChange = (p) => setF(prev => ({...prev, project:p, categoryId:"", machineCode:""}));
+  const onCategoryChange = (cid) => setF(prev => ({...prev, categoryId:cid, machineCode:""}));
+  const onMachineChange = (code) => setF(prev => ({...prev, machineCode: code}));
 
   const submit = async () => {
     if(!f.project){
@@ -144,7 +125,6 @@ function NewRequest({user,goTo}){
     }
     setLoading(true);
     try{
-      const uploads = await Promise.all(files.map(x => window.fileToBase64(x.file)));
       const repair = {
         siteId:f.siteId,
         title:f.title, desc:f.desc,
@@ -152,11 +132,9 @@ function NewRequest({user,goTo}){
         status:"new", reporterId:user.id, reporterName:user.name,
         assignedId:"", cost:"", machineCode:f.machineCode,
       };
-      const saved = await window.api("createRepair", { repair, uploads });
+      const saved = await window.api("createRepair", { repair });
       saved.createdAt = new Date(saved.createdAt);
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
-      if(!Array.isArray(saved.photos)) saved.photos = [];
-      if(!Array.isArray(saved.afterPhotos)) saved.afterPhotos = [];
       window.__DATA.repairs = [saved, ...window.__DATA.repairs];
       setLoading(false);
       Swal.fire({
@@ -173,7 +151,7 @@ function NewRequest({user,goTo}){
 
   return (
     <>
-    <Loading show={loading} text="กำลังบันทึก และอัพโหลดไฟล์..."/>
+    <Loading show={loading} text="กำลังบันทึก..."/>
     <div className="card">
       <div className="card-h">
         <div>
@@ -281,30 +259,6 @@ function NewRequest({user,goTo}){
             <textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="อธิบายอาการ ลักษณะปัญหา ช่วงเวลาที่เกิด ผลกระทบต่อการผลิต..." />
           </div>
 
-          <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
-            <label>รูปภาพ "ก่อนซ่อม" (บันทึกลง Firebase Storage)</label>
-            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10}}>
-              <button className="btn btn-ghost" type="button" onClick={()=>fileRef.current?.click()}>
-                <i className="fa-solid fa-paperclip"></i> เลือกไฟล์
-              </button>
-              <input ref={fileRef} type="file" multiple accept="image/*" style={{display:"none"}} onChange={onFiles}/>
-              <span style={{fontSize:12,color:"var(--muted)"}}>รองรับหลายไฟล์ · สูงสุด 10MB/ไฟล์</span>
-            </div>
-            {files.length>0 && (
-              <div style={{border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
-                {files.map((x,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderBottom:i<files.length-1?"1px solid var(--line-soft)":""}}>
-                    <i className="fa-regular fa-image" style={{color:"var(--primary)"}}></i>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{x.name}</div>
-                      <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{(x.size/1024).toFixed(1)} KB · จะอัพโหลดเมื่อกดส่ง</div>
-                    </div>
-                    <button className="ia danger" onClick={()=>removeFile(i)}><i className="fa-solid fa-xmark"></i></button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       </div>
       <div style={{padding:"14px 22px",borderTop:"1px solid var(--line)",display:"flex",justifyContent:"flex-end",gap:10,background:"#FAFBFC"}}>

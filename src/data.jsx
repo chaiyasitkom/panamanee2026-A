@@ -35,8 +35,6 @@ window.__DATA.bootstrap = async function(){
   // normalize
   (d.repairs||[]).forEach(r=>{
     r.createdAt = r.createdAt ? new Date(r.createdAt) : new Date();
-    if (!Array.isArray(r.photos)) r.photos = [];
-    if (!Array.isArray(r.afterPhotos)) r.afterPhotos = [];
     if (!Array.isArray(r.timeline)) r.timeline = [];
     r.timeline.forEach(t => { if(t.when) t.when = new Date(t.when); });
     r.timeline.sort((a,b) => (a.when||0) - (b.when||0));
