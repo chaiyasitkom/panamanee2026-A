@@ -557,7 +557,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
+      const ALLOW = ['title','desc','repairNote','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();
@@ -767,7 +767,7 @@ window.Login = Login;
 <script type="text/babel">
 function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
-  const isTech = user.role==="Technician";
+  const isTech = ["Technician","Engineer"].includes(user.role);
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
@@ -1035,7 +1035,18 @@ function Dashboard({user,goTo}){
     const byProj = Object.entries(byProjMap).map(([name,v],i)=>({
       name, color:projColors[i%projColors.length], ...v
     })).sort((a,b)=>b.cost-a.cost);
-    return {total,done,pending,avg,byCat,byProj};
+    const byMachMap = {};
+    repairs.forEach(r=>{
+      const mc = r.machineCode||"ไม่ระบุ";
+      if(!byMachMap[mc]) byMachMap[mc]={count:0,cost:0};
+      byMachMap[mc].count++;
+      byMachMap[mc].cost += Number(r.cost)||0;
+    });
+    const machColors = ["#0EA5E9","#10B981","#F59E0B","#EF4444","#8B5CF6","#1E40AF","#EC4899","#6366F1","#14B8A6","#F97316"];
+    const byMach = Object.entries(byMachMap).map(([name,v],i)=>({
+      name, color:machColors[i%machColors.length], ...v
+    })).sort((a,b)=>b.cost-a.cost);
+    return {total,done,pending,avg,byCat,byProj,byMach};
   },[repairs]);
 
   const fmtBaht = (n) => "฿" + Math.round(Number(n)||0).toLocaleString();
@@ -1096,7 +1107,7 @@ function Dashboard({user,goTo}){
     if(loading) return;
     if(!costRef.current) return;
     if(chartsRef.current.c) chartsRef.current.c.destroy();
-    const src = costView==="category" ? costStats.byCat.map(x=>({label:x.name,val:x.cost,color:x.color})) : costStats.byProj.map(x=>({label:x.name,val:x.cost,color:x.color}));
+    const src = costView==="category" ? costStats.byCat.map(x=>({label:x.name,val:x.cost,color:x.color})) : costView==="project" ? costStats.byProj.map(x=>({label:x.name,val:x.cost,color:x.color})) : costStats.byMach.map(x=>({label:x.name,val:x.cost,color:x.color}));
     chartsRef.current.c = new Chart(costRef.current,{
       type:"bar",
       data:{labels:src.map(x=>x.label),datasets:[{label:"ค่าใช้จ่าย (บาท)",data:src.map(x=>x.val),backgroundColor:src.map(x=>x.color),borderRadius:6,barThickness:22}]},
@@ -1145,19 +1156,20 @@ function Dashboard({user,goTo}){
         </div>
         <div className="card" style={{marginBottom:18}}>
           <div className="card-h">
-            <div><h3>ประเมินค่าใช้จ่าย</h3><div className="sub">แยกตาม{costView==="category"?"หมวดหมู่":"โครงการ"} · {repairs.length} งาน · รวม {fmtBaht(costStats.total)}</div></div>
+            <div><h3>ประเมินค่าใช้จ่าย</h3><div className="sub">แยกตาม{costView==="category"?"หมวดหมู่":costView==="project"?"โครงการ":"เครื่องจักร"} · {repairs.length} งาน · รวม {fmtBaht(costStats.total)}</div></div>
             <div className="seg" style={{display:"inline-flex",background:"var(--bg)",border:"1px solid var(--line)",borderRadius:10,padding:3}}>
-              <button className={costView==="category"?"on":""} onClick={()=>setCostView("category")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="category"?"var(--primary)":"transparent",color:costView==="category"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-tags"></i> หมวดหมู่</button>
-              <button className={costView==="project"?"on":""} onClick={()=>setCostView("project")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="project"?"var(--primary)":"transparent",color:costView==="project"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-diagram-project"></i> โครงการ</button>
+              <button onClick={()=>setCostView("category")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="category"?"var(--primary)":"transparent",color:costView==="category"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-tags"></i> หมวดหมู่</button>
+              <button onClick={()=>setCostView("project")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="project"?"var(--primary)":"transparent",color:costView==="project"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-diagram-project"></i> โครงการ</button>
+              <button onClick={()=>setCostView("machine")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="machine"?"var(--primary)":"transparent",color:costView==="machine"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-industry"></i> เครื่องจักร</button>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:0}}>
             <div className="card-body" style={{height:360,borderRight:"1px solid var(--line)"}}><canvas ref={costRef}></canvas></div>
             <div style={{maxHeight:360,overflowY:"auto"}}>
               <table className="data">
-                <thead><tr><th>{costView==="category"?"หมวดหมู่":"โครงการ"}</th><th style={{textAlign:"right"}}>งาน</th><th style={{textAlign:"right"}}>ค่าใช้จ่าย</th><th style={{textAlign:"right"}}>%</th></tr></thead>
+                <thead><tr><th>{costView==="category"?"หมวดหมู่":costView==="project"?"โครงการ":"เครื่องจักร"}</th><th style={{textAlign:"right"}}>งาน</th><th style={{textAlign:"right"}}>ค่าใช้จ่าย</th><th style={{textAlign:"right"}}>%</th></tr></thead>
                 <tbody>
-                  {(costView==="category"?costStats.byCat:costStats.byProj).map((x,i)=>{
+                  {(costView==="category"?costStats.byCat:costView==="project"?costStats.byProj:costStats.byMach).map((x,i)=>{
                     const pct = costStats.total ? (x.cost/costStats.total*100) : 0;
                     return (
                       <tr key={i}>
@@ -1168,7 +1180,7 @@ function Dashboard({user,goTo}){
                       </tr>
                     );
                   })}
-                  {(costView==="category"?costStats.byCat:costStats.byProj).length===0 && (
+                  {(costView==="category"?costStats.byCat:costView==="project"?costStats.byProj:costStats.byMach).length===0 && (
                     <tr><td colSpan="4"><div className="empty" style={{padding:30}}><i className="fa-solid fa-chart-column"></i><div className="t" style={{fontSize:14}}>ยังไม่มีข้อมูลค่าใช้จ่าย</div></div></td></tr>
                   )}
                 </tbody>
@@ -1350,8 +1362,8 @@ function Repairs({user}){
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
-                      {["Admin","Officer"].includes(user.role) && <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>setStatusFor(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
-                      {user.role==="Admin" && <button className="ia" title="แก้ไขข้อมูล (Admin)" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
+                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>setStatusFor(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
+                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
                     </div>
                   </td>
                 </tr>
@@ -1361,7 +1373,7 @@ function Repairs({user}){
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={user.role==="Admin"?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
+      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
       {statusFor && <StatusMenu r={statusFor} onClose={()=>setStatusFor(null)} onPick={(next,label)=>{setStatusFor(null);quickAction(statusFor,next,label);}} />}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
       {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
@@ -1386,6 +1398,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
       </div>
       <div className="detail-grid">
         <div className="full"><div className="k">อาการ/ปัญหา</div><div className="v" style={{fontSize:16,fontWeight:500}}>{r.title}</div><div style={{color:"var(--muted)",fontSize:13,marginTop:4,lineHeight:1.5}}>{r.desc}</div></div>
+        {r.repairNote && <div className="full"><div className="k" style={{color:"var(--primary)"}}><i className="fa-solid fa-screwdriver-wrench" style={{marginRight:5}}></i>รายละเอียดการซ่อม</div><div className="v" style={{fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 12px",marginTop:4}}>{r.repairNote}</div></div>}
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
         <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
         <div><div className="k">โครงการ/หน่วยงาน</div><div className="v">{r.project}</div></div>
@@ -1478,20 +1491,21 @@ function StatusMenu({r,onClose,onPick}){
 }
 
 function EditRepairModal({r,onClose,onSave}){
-  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||""});
+  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||""});
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
   const submit = () => { const patch = {...f, cost: f.cost===""?"":Number(f.cost)||0}; onSave(r, patch); };
-  const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin"].includes(u.role));
+  const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin","Engineer"].includes(u.role));
   return (
     <Modal open={true} onClose={onClose} size="lg"
       title={<><i className="fa-solid fa-user-pen" style={{color:"#1E40AF",marginRight:8}}></i>แก้ไขข้อมูล · <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>}
       footer={<><button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึกการแก้ไข</button></>}>
-      <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",color:"#92400E",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
-        <i className="fa-solid fa-shield-halved" style={{marginRight:6}}></i>โหมด Admin — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
+      <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
+        <i className="fa-solid fa-pen-to-square" style={{marginRight:6}}></i>โหมดแก้ไข — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
         <div style={{gridColumn:"1 / -1"}}><label className="k">อาการ/ปัญหา</label><input className="inp" value={f.title} onChange={e=>set("title",e.target.value)} /></div>
-        <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียด</label><textarea className="inp" rows="3" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
+        <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียดปัญหา</label><textarea className="inp" rows="2" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
+        <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>
         <div><label className="k">เลขที่ไซต์งาน</label><input className="inp" value={f.siteId} onChange={e=>set("siteId",e.target.value)} /></div>
         <div><label className="k">รหัสเครื่องจักร</label><input className="inp" value={f.machineCode} onChange={e=>set("machineCode",e.target.value)} /></div>
         <div><label className="k">โครงการ/หน่วยงาน</label><select className="inp" value={f.project} onChange={e=>set("project",e.target.value)}><option value="">— ไม่ระบุ —</option>{Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort().map(p=>(<option key={p} value={p}>{p}</option>))}</select></div>
@@ -1913,7 +1927,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears"}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2004,6 +2018,7 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>สถานที่ติดตั้ง</label><input value={f.location||""} onChange={e=>up("location",e.target.value)} placeholder="เช่น โรงงาน A - สายการผลิต 1" /></div>
           <div className="form-field"><label>ชั่วโมงทำงานสะสม</label><input type="number" min="0" value={f.hours||0} onChange={e=>up("hours",e.target.value)} /></div>
           <div className="form-field"><label>ซ่อมบำรุงล่าสุด</label><input type="date" value={f.lastService||""} onChange={e=>up("lastService",e.target.value)} /></div>
+          <div className="form-field"><label>ชื่อพนักงานขับ / ผู้ควบคุม</label><input value={f.driverName||""} onChange={e=>up("driverName",e.target.value)} placeholder="เช่น นายสมชาย ใจดี" /></div>
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>หมายเหตุ</label><textarea rows="3" value={f.note||""} onChange={e=>up("note",e.target.value)} placeholder="หมายเหตุเพิ่มเติม..."></textarea></div>
         </div>
         <div className="form-field" style={{marginTop:14}}>
@@ -2044,6 +2059,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
             <div><div className="k">สถานที่ติดตั้ง</div><div className="v">{m.location||"—"}</div></div>
             <div><div className="k">ซ่อมบำรุงล่าสุด</div><div className="v">{m.lastService||"—"}</div></div>
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
+            <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{m.driverName||"—"}</div></div>
           </div>
           {m.note && <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}><div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div><div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div></div>}
         </div>
