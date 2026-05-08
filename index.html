@@ -103,7 +103,7 @@ a{color:inherit;text-decoration:none}
 .sidebar-toggle{display:none;position:fixed;top:14px;left:14px;z-index:30;width:44px;height:44px;border-radius:12px;background:#fff;box-shadow:var(--shadow);color:var(--text);place-items:center;font-size:16px}
 .sidebar-scrim{display:none}
 @media (max-width:1024px){
-  .shell{grid-template-columns:1fr}
+  .shell{grid-template-columns:1fr;overflow-x:clip;max-width:100vw}
   .sidebar{position:fixed;left:0;top:0;width:280px;transform:translateX(-100%);transition:transform .22s ease-out;height:100dvh;z-index:25}
   .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}
   .sidebar-toggle{display:grid}
@@ -145,7 +145,8 @@ a{color:inherit;text-decoration:none}
   .modal-b{padding:16px;overflow-x:hidden}
   .modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .modal-h{padding:14px 16px}
-  .modal-f{padding:12px 16px}
+  .modal-f{padding:12px 16px;flex-wrap:wrap;gap:8px}
+  .modal-f .btn{flex:1;min-width:0;justify-content:center}
   .form-grid{grid-template-columns:1fr !important}
   .form-grid .full{grid-column:1/-1}
   .detail-grid{grid-template-columns:1fr !important}
@@ -556,7 +557,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
+      const ALLOW = ['title','desc','repairNote','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();
@@ -766,7 +767,7 @@ window.Login = Login;
 <script type="text/babel">
 function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
-  const isTech = user.role==="Technician";
+  const isTech = ["Technician","Engineer"].includes(user.role);
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
@@ -884,13 +885,13 @@ function Projects({user}){
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
-            <th style={{width:44}}>#</th>
-            <th style={{width:100}}>รหัส</th>
+            <th style={{width:44}} className="hide-on-mobile">#</th>
+            <th style={{width:100}} className="hide-on-mobile">รหัส</th>
             <th>ชื่อโครงการ</th>
-            <th>รายละเอียด</th>
+            <th className="hide-on-mobile">รายละเอียด</th>
             <th style={{width:100}}>สถานะ</th>
-            <th style={{width:80}}>เครื่องจักร</th>
-            <th style={{width:80}}>แจ้งซ่อม</th>
+            <th style={{width:80}} className="hide-on-mobile">เครื่องจักร</th>
+            <th style={{width:80}} className="hide-on-mobile">แจ้งซ่อม</th>
             <th style={{width:90}}>จัดการ</th>
           </tr></thead>
           <tbody>
@@ -900,18 +901,18 @@ function Projects({user}){
               const sc=STATUS_COLOR[p.status]||"#94A3B8";
               return (
                 <tr key={p.id}>
-                  <td style={{color:"var(--muted)",fontSize:12}}>{i+1}</td>
-                  <td><span className="mono" style={{fontSize:12,fontWeight:500,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 8px",borderRadius:6}}>{p.code||"—"}</span></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12}}>{i+1}</td>
+                  <td className="hide-on-mobile"><span className="mono" style={{fontSize:12,fontWeight:500,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 8px",borderRadius:6}}>{p.code||"—"}</span></td>
                   <td>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <span style={{width:10,height:10,borderRadius:"50%",background:p.color||"#3B82F6",flexShrink:0,display:"inline-block"}}></span>
                       <span style={{fontWeight:500}}>{p.name}</span>
                     </div>
                   </td>
-                  <td style={{color:"var(--muted)",fontSize:13,maxWidth:260}}><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.desc||"—"}</div></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13,maxWidth:260}}><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.desc||"—"}</div></td>
                   <td><span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,padding:"3px 10px",borderRadius:999,background:sc+"22",color:sc}}><span style={{width:6,height:6,borderRadius:"50%",background:sc}}></span>{STATUS_LABEL[p.status]||p.status}</span></td>
-                  <td style={{textAlign:"center"}}><strong>{mCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
-                  <td style={{textAlign:"center"}}><strong>{rCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
+                  <td className="hide-on-mobile" style={{textAlign:"center"}}><strong>{mCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
+                  <td className="hide-on-mobile" style={{textAlign:"center"}}><strong>{rCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
                   <td>
                     <div className="row-actions">
                       {["Admin","Officer"].includes(user.role) && <>
@@ -1034,7 +1035,18 @@ function Dashboard({user,goTo}){
     const byProj = Object.entries(byProjMap).map(([name,v],i)=>({
       name, color:projColors[i%projColors.length], ...v
     })).sort((a,b)=>b.cost-a.cost);
-    return {total,done,pending,avg,byCat,byProj};
+    const byMachMap = {};
+    repairs.forEach(r=>{
+      const mc = r.machineCode||"ไม่ระบุ";
+      if(!byMachMap[mc]) byMachMap[mc]={count:0,cost:0};
+      byMachMap[mc].count++;
+      byMachMap[mc].cost += Number(r.cost)||0;
+    });
+    const machColors = ["#0EA5E9","#10B981","#F59E0B","#EF4444","#8B5CF6","#1E40AF","#EC4899","#6366F1","#14B8A6","#F97316"];
+    const byMach = Object.entries(byMachMap).map(([name,v],i)=>({
+      name, color:machColors[i%machColors.length], ...v
+    })).sort((a,b)=>b.cost-a.cost);
+    return {total,done,pending,avg,byCat,byProj,byMach};
   },[repairs]);
 
   const fmtBaht = (n) => "฿" + Math.round(Number(n)||0).toLocaleString();
@@ -1095,7 +1107,7 @@ function Dashboard({user,goTo}){
     if(loading) return;
     if(!costRef.current) return;
     if(chartsRef.current.c) chartsRef.current.c.destroy();
-    const src = costView==="category" ? costStats.byCat.map(x=>({label:x.name,val:x.cost,color:x.color})) : costStats.byProj.map(x=>({label:x.name,val:x.cost,color:x.color}));
+    const src = costView==="category" ? costStats.byCat.map(x=>({label:x.name,val:x.cost,color:x.color})) : costView==="project" ? costStats.byProj.map(x=>({label:x.name,val:x.cost,color:x.color})) : costStats.byMach.map(x=>({label:x.name,val:x.cost,color:x.color}));
     chartsRef.current.c = new Chart(costRef.current,{
       type:"bar",
       data:{labels:src.map(x=>x.label),datasets:[{label:"ค่าใช้จ่าย (บาท)",data:src.map(x=>x.val),backgroundColor:src.map(x=>x.color),borderRadius:6,barThickness:22}]},
@@ -1144,19 +1156,20 @@ function Dashboard({user,goTo}){
         </div>
         <div className="card" style={{marginBottom:18}}>
           <div className="card-h">
-            <div><h3>ประเมินค่าใช้จ่าย</h3><div className="sub">แยกตาม{costView==="category"?"หมวดหมู่":"โครงการ"} · {repairs.length} งาน · รวม {fmtBaht(costStats.total)}</div></div>
+            <div><h3>ประเมินค่าใช้จ่าย</h3><div className="sub">แยกตาม{costView==="category"?"หมวดหมู่":costView==="project"?"โครงการ":"เครื่องจักร"} · {repairs.length} งาน · รวม {fmtBaht(costStats.total)}</div></div>
             <div className="seg" style={{display:"inline-flex",background:"var(--bg)",border:"1px solid var(--line)",borderRadius:10,padding:3}}>
-              <button className={costView==="category"?"on":""} onClick={()=>setCostView("category")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="category"?"var(--primary)":"transparent",color:costView==="category"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-tags"></i> หมวดหมู่</button>
-              <button className={costView==="project"?"on":""} onClick={()=>setCostView("project")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="project"?"var(--primary)":"transparent",color:costView==="project"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-diagram-project"></i> โครงการ</button>
+              <button onClick={()=>setCostView("category")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="category"?"var(--primary)":"transparent",color:costView==="category"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-tags"></i> หมวดหมู่</button>
+              <button onClick={()=>setCostView("project")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="project"?"var(--primary)":"transparent",color:costView==="project"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-diagram-project"></i> โครงการ</button>
+              <button onClick={()=>setCostView("machine")} style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",background:costView==="machine"?"var(--primary)":"transparent",color:costView==="machine"?"#fff":"var(--muted)",fontFamily:"Kanit"}}><i className="fa-solid fa-industry"></i> เครื่องจักร</button>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:0}}>
             <div className="card-body" style={{height:360,borderRight:"1px solid var(--line)"}}><canvas ref={costRef}></canvas></div>
             <div style={{maxHeight:360,overflowY:"auto"}}>
               <table className="data">
-                <thead><tr><th>{costView==="category"?"หมวดหมู่":"โครงการ"}</th><th style={{textAlign:"right"}}>งาน</th><th style={{textAlign:"right"}}>ค่าใช้จ่าย</th><th style={{textAlign:"right"}}>%</th></tr></thead>
+                <thead><tr><th>{costView==="category"?"หมวดหมู่":costView==="project"?"โครงการ":"เครื่องจักร"}</th><th style={{textAlign:"right"}}>งาน</th><th style={{textAlign:"right"}}>ค่าใช้จ่าย</th><th style={{textAlign:"right"}}>%</th></tr></thead>
                 <tbody>
-                  {(costView==="category"?costStats.byCat:costStats.byProj).map((x,i)=>{
+                  {(costView==="category"?costStats.byCat:costView==="project"?costStats.byProj:costStats.byMach).map((x,i)=>{
                     const pct = costStats.total ? (x.cost/costStats.total*100) : 0;
                     return (
                       <tr key={i}>
@@ -1167,7 +1180,7 @@ function Dashboard({user,goTo}){
                       </tr>
                     );
                   })}
-                  {(costView==="category"?costStats.byCat:costStats.byProj).length===0 && (
+                  {(costView==="category"?costStats.byCat:costView==="project"?costStats.byProj:costStats.byMach).length===0 && (
                     <tr><td colSpan="4"><div className="empty" style={{padding:30}}><i className="fa-solid fa-chart-column"></i><div className="t" style={{fontSize:14}}>ยังไม่มีข้อมูลค่าใช้จ่าย</div></div></td></tr>
                   )}
                 </tbody>
@@ -1179,16 +1192,16 @@ function Dashboard({user,goTo}){
           <div className="card-h"><div><h3>รายการแจ้งซ่อมล่าสุด</h3><div className="sub">5 รายการที่เพิ่งแจ้งเข้ามา</div></div><button className="btn btn-ghost btn-sm" onClick={()=>goTo("repairs")}>ดูทั้งหมด <i className="fa-solid fa-arrow-right"></i></button></div>
           <div className="table-wrap">
             <table className="data">
-              <thead><tr><th>เลขที่</th><th>อาการ/ปัญหา</th><th>หมวดหมู่</th><th>สถานะ</th><th>ผู้แจ้ง</th><th>วันที่</th></tr></thead>
+              <thead><tr><th>เลขที่</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th className="hide-on-mobile">วันที่</th></tr></thead>
               <tbody>
                 {recent.map(r=>(
                   <tr key={r.id}>
                     <td><span className="ticket-id">{r.running}</span></td>
                     <td><div className="cell-title">{r.title}</div></td>
-                    <td><CategoryChip categoryId={r.categoryId}/></td>
+                    <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                     <td><Badge status={r.status}/></td>
-                    <td><Avatar name={r.reporterName}/>{r.reporterName}</td>
-                    <td style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                    <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
+                    <td className="hide-on-mobile" style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1334,23 +1347,23 @@ function Repairs({user}){
         </div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th>เลขที่ไซต์งาน</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th>โครงการ/หน่วยงาน</th><th>หมวดหมู่</th><th>สถานะ</th><th>ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">เลขที่ไซต์งาน</th><th className="hide-on-mobile">วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">โครงการ/หน่วยงาน</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {filtered.map(r=>(
                 <tr key={r.id}>
                   <td><span className="ticket-id">{r.running}</span></td>
-                  <td><span className="site-id">{r.siteId||"—"}</span></td>
-                  <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                  <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td style={{fontSize:13}}>{r.project}</td>
-                  <td><CategoryChip categoryId={r.categoryId}/></td>
+                  <td className="hide-on-mobile" style={{fontSize:13}}>{r.project}</td>
+                  <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
-                  <td><Avatar name={r.reporterName}/>{r.reporterName}</td>
+                  <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
-                      {["Admin","Officer"].includes(user.role) && <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>setStatusFor(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
-                      {user.role==="Admin" && <button className="ia" title="แก้ไขข้อมูล (Admin)" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
+                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>setStatusFor(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
+                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
                     </div>
                   </td>
                 </tr>
@@ -1360,7 +1373,7 @@ function Repairs({user}){
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={user.role==="Admin"?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
+      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
       {statusFor && <StatusMenu r={statusFor} onClose={()=>setStatusFor(null)} onPick={(next,label)=>{setStatusFor(null);quickAction(statusFor,next,label);}} />}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
       {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
@@ -1385,6 +1398,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
       </div>
       <div className="detail-grid">
         <div className="full"><div className="k">อาการ/ปัญหา</div><div className="v" style={{fontSize:16,fontWeight:500}}>{r.title}</div><div style={{color:"var(--muted)",fontSize:13,marginTop:4,lineHeight:1.5}}>{r.desc}</div></div>
+        {r.repairNote && <div className="full"><div className="k" style={{color:"var(--primary)"}}><i className="fa-solid fa-screwdriver-wrench" style={{marginRight:5}}></i>รายละเอียดการซ่อม</div><div className="v" style={{fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 12px",marginTop:4}}>{r.repairNote}</div></div>}
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
         <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
         <div><div className="k">โครงการ/หน่วยงาน</div><div className="v">{r.project}</div></div>
@@ -1400,7 +1414,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
           <span><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่ ({r.parts.length} รายการ)</span>
           <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString()}</span>
         </div>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <div className="table-scroll" style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",minWidth:480,borderCollapse:"collapse",fontSize:13}}>
           <thead><tr style={{background:"#F8FAFC"}}>
             <th style={{padding:"8px 14px",textAlign:"left",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)"}}>รายการ</th>
             <th style={{padding:"8px 12px",textAlign:"left",color:"var(--muted)",fontWeight:500,borderBottom:"1px solid var(--line-soft)",width:130}}>แหล่งซื้อ</th>
@@ -1420,6 +1435,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
             ))}
           </tbody>
         </table>
+        </div>{/* table-scroll */}
         {r.laborCost>0 && <div style={{padding:"10px 14px",borderTop:"1px solid var(--line-soft)",display:"flex",justifyContent:"space-between",fontSize:13,background:"#FFFBF0"}}>
           <span style={{color:"var(--muted)"}}><i className="fa-solid fa-person-digging" style={{marginRight:6}}></i>ค่าแรงช่างซ่อม</span>
           <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString()}</span>
@@ -1475,20 +1491,21 @@ function StatusMenu({r,onClose,onPick}){
 }
 
 function EditRepairModal({r,onClose,onSave}){
-  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||""});
+  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||""});
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
   const submit = () => { const patch = {...f, cost: f.cost===""?"":Number(f.cost)||0}; onSave(r, patch); };
-  const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin"].includes(u.role));
+  const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin","Engineer"].includes(u.role));
   return (
     <Modal open={true} onClose={onClose} size="lg"
       title={<><i className="fa-solid fa-user-pen" style={{color:"#1E40AF",marginRight:8}}></i>แก้ไขข้อมูล · <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>}
       footer={<><button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึกการแก้ไข</button></>}>
-      <div style={{background:"#FEF3C7",border:"1px solid #FCD34D",color:"#92400E",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
-        <i className="fa-solid fa-shield-halved" style={{marginRight:6}}></i>โหมด Admin — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
+      <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
+        <i className="fa-solid fa-pen-to-square" style={{marginRight:6}}></i>โหมดแก้ไข — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
         <div style={{gridColumn:"1 / -1"}}><label className="k">อาการ/ปัญหา</label><input className="inp" value={f.title} onChange={e=>set("title",e.target.value)} /></div>
-        <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียด</label><textarea className="inp" rows="3" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
+        <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียดปัญหา</label><textarea className="inp" rows="2" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
+        <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>
         <div><label className="k">เลขที่ไซต์งาน</label><input className="inp" value={f.siteId} onChange={e=>set("siteId",e.target.value)} /></div>
         <div><label className="k">รหัสเครื่องจักร</label><input className="inp" value={f.machineCode} onChange={e=>set("machineCode",e.target.value)} /></div>
         <div><label className="k">โครงการ/หน่วยงาน</label><select className="inp" value={f.project} onChange={e=>set("project",e.target.value)}><option value="">— ไม่ระบุ —</option>{Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort().map(p=>(<option key={p} value={p}>{p}</option>))}</select></div>
@@ -1586,7 +1603,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
       <div style={{marginBottom:20}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-person-digging" style={{color:"var(--warning)",marginRight:6}}></i>ค่าแรงช่างซ่อม</div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
+          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:"100%",maxWidth:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
           <span style={{color:"var(--muted)",fontSize:13}}>บาท</span>
         </div>
       </div>
@@ -1676,16 +1693,16 @@ function Users({user}){
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>หน่วยงาน</th><th>สิทธิ์เข้าถึงโครงการ</th><th>อีเมล</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th className="hide-on-mobile">ตำแหน่ง</th><th className="hide-on-mobile">หน่วยงาน</th><th className="hide-on-mobile">สิทธิ์เข้าถึงโครงการ</th><th className="hide-on-mobile">อีเมล</th><th>จัดการ</th></tr></thead>
           <tbody>
             {filtered.map(u=>(
               <tr key={u.id}>
                 <td><span className="mono" style={{background:"var(--line-soft)",padding:"2px 7px",borderRadius:6,fontSize:12.5}}>{u.username}</span></td>
                 <td><Avatar name={u.name}/>{u.name}</td>
-                <td><span className="badge" style={{background:roleColors[u.role]+"22",color:roleColors[u.role]}}><span className="dot"></span>{u.role}</span></td>
-                <td>{u.dept}</td>
-                <td>{renderProjectAccess(u)}</td>
-                <td style={{color:"var(--muted)",fontSize:13}}>{u.email}</td>
+                <td className="hide-on-mobile"><span className="badge" style={{background:roleColors[u.role]+"22",color:roleColors[u.role]}}><span className="dot"></span>{u.role}</span></td>
+                <td className="hide-on-mobile">{u.dept}</td>
+                <td className="hide-on-mobile">{renderProjectAccess(u)}</td>
+                <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13}}>{u.email}</td>
                 <td><div className="row-actions"><button className="ia" title="แก้ไข" onClick={()=>setEdit({...u,projects:Array.isArray(u.projects)?u.projects:[]})}><i className="fa-solid fa-pen"></i></button><button className="ia danger" title="ลบ" onClick={()=>del(u)}><i className="fa-solid fa-trash"></i></button></div></td>
               </tr>
             ))}
@@ -1801,17 +1818,17 @@ function Categories({user}){
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th style={{width:80}}>สี</th><th style={{width:80}}>ไอคอน</th><th>ชื่อหมวดหมู่</th><th>FontAwesome Class</th><th>จำนวนงาน</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th style={{width:80}} className="hide-on-mobile">สี</th><th style={{width:80}}>ไอคอน</th><th>ชื่อหมวดหมู่</th><th className="hide-on-mobile">FontAwesome Class</th><th className="hide-on-mobile">จำนวนงาน</th><th>จัดการ</th></tr></thead>
           <tbody>
             {rows.map(c=>{
               const cnt = window.__DATA.repairs.filter(r=>r.categoryId===c.id).length;
               return (
                 <tr key={c.id}>
-                  <td><span className="color-swatch" style={{background:c.color}}></span> <span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.color}</span></td>
+                  <td className="hide-on-mobile"><span className="color-swatch" style={{background:c.color}}></span> <span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.color}</span></td>
                   <td><div style={{width:36,height:36,borderRadius:8,background:c.color+"22",color:c.color,display:"grid",placeItems:"center",fontSize:16}}><i className={`fa-solid ${c.icon}`}></i></div></td>
                   <td style={{fontWeight:500}}>{c.name}</td>
-                  <td><span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.icon}</span></td>
-                  <td><strong>{cnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>งาน</span></td>
+                  <td className="hide-on-mobile"><span className="mono" style={{fontSize:12,color:"var(--muted)"}}>{c.icon}</span></td>
+                  <td className="hide-on-mobile"><strong>{cnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>งาน</span></td>
                   <td><div className="row-actions"><button className="ia" onClick={()=>setEdit(c)}><i className="fa-solid fa-pen"></i></button><button className="ia danger" onClick={()=>del(c)}><i className="fa-solid fa-trash"></i></button></div></td>
                 </tr>
               );
@@ -1910,7 +1927,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears"}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2001,6 +2018,7 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>สถานที่ติดตั้ง</label><input value={f.location||""} onChange={e=>up("location",e.target.value)} placeholder="เช่น โรงงาน A - สายการผลิต 1" /></div>
           <div className="form-field"><label>ชั่วโมงทำงานสะสม</label><input type="number" min="0" value={f.hours||0} onChange={e=>up("hours",e.target.value)} /></div>
           <div className="form-field"><label>ซ่อมบำรุงล่าสุด</label><input type="date" value={f.lastService||""} onChange={e=>up("lastService",e.target.value)} /></div>
+          <div className="form-field"><label>ชื่อพนักงานขับ / ผู้ควบคุม</label><input value={f.driverName||""} onChange={e=>up("driverName",e.target.value)} placeholder="เช่น นายสมชาย ใจดี" /></div>
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>หมายเหตุ</label><textarea rows="3" value={f.note||""} onChange={e=>up("note",e.target.value)} placeholder="หมายเหตุเพิ่มเติม..."></textarea></div>
         </div>
         <div className="form-field" style={{marginTop:14}}>
@@ -2041,6 +2059,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
             <div><div className="k">สถานที่ติดตั้ง</div><div className="v">{m.location||"—"}</div></div>
             <div><div className="k">ซ่อมบำรุงล่าสุด</div><div className="v">{m.lastService||"—"}</div></div>
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
+            <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{m.driverName||"—"}</div></div>
           </div>
           {m.note && <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}><div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div><div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div></div>}
         </div>
@@ -2101,9 +2120,9 @@ function ReporterDashboard({user,goTo}){
         <div className="card-h"><div><h3>งานแจ้งซ่อมล่าสุดของฉัน</h3><div className="sub">{mine.length} รายการทั้งหมด</div></div><button className="btn btn-ghost btn-sm" onClick={()=>goTo("r-mine")}>ดูทั้งหมด <i className="fa-solid fa-arrow-right"></i></button></div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>หมวดหมู่</th><th>สถานะ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">วันที่</th><th>อาการ</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th></tr></thead>
             <tbody>
-              {recent.map(r=>(<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td></tr>))}
+              {recent.map(r=>(<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td></tr>))}
               {recent.length===0 && (<tr><td colSpan="5"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีรายการ</div><div>คลิก "แจ้งซ่อมใหม่" เพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
           </table>
@@ -2211,11 +2230,11 @@ function MyRepairs({user}){
         <div className="filters"><div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>คำร้องแจ้งซ่อมของฉัน ({rows.length} รายการ)</div></div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th>หมวดหมู่</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">อัปเดตล่าสุด</th><th>จัดการ</th></tr></thead>
             <tbody>
               {rows.map(r=>{
                 const last=r.timeline[r.timeline.length-1];
-                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
+                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
               })}
               {rows.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีคำร้อง</div><div>คลิก "แจ้งซ่อมใหม่" ในเมนูด้านซ้ายเพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
