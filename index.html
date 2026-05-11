@@ -1666,6 +1666,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
 
 window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
+window.EditRepairModal = EditRepairModal;
 </script>
 
 <script type="text/babel">
@@ -2076,10 +2077,28 @@ function MachineForm({initial,mode,onClose,onSave}){
 }
 
 function MachineDetail({m,user,onClose,onEdit,onDelete}){
-  const related = window.__DATA.repairs.filter(r=>r.machineCode===m.code).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const [relatedRows, setRelatedRows] = React.useState(()=>window.__DATA.repairs.filter(r=>r.machineCode===m.code).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)));
   const statusColor = ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[m.status]||"#64748B";
   const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
   const [viewRepair, setViewRepair] = React.useState(null);
+  const [editRepair, setEditRepair] = React.useState(null);
+
+  const saveEdit = async (r, patch) => {
+    try{
+      try{ await window.api("updateRepair",{id:r.id,patch,by:user.name}); }
+      catch(e1){
+        if(/Unknown action/i.test(String(e1.message||e1))){
+          const {status,cost,...rest}=patch;
+          await window.api("updateRepairStatus",{id:r.id,status:status||r.status,cost,by:user.name,note:"แก้ไขข้อมูล",patch:rest});
+        } else { throw e1; }
+      }
+      const updated={...r,...patch,timeline:[...r.timeline,{status:patch.status||r.status,when:new Date(),by:user.name,note:"แก้ไขข้อมูล"}]};
+      setRelatedRows(prev=>prev.map(x=>x.id===r.id?updated:x));
+      window.__DATA.repairs=window.__DATA.repairs.map(x=>x.id===r.id?updated:x);
+      setEditRepair(null);
+      Swal.fire({icon:"success",title:"บันทึกการแก้ไขแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+  };
   return (
     <>
     <Modal open={true} onClose={onClose} title={<>เครื่องจักร <span className="mono" style={{marginLeft:6,color:"var(--primary)"}}>{m.code}</span></>} size="lg"
@@ -2113,17 +2132,18 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
         </div>
       </div>
       <div style={{borderTop:"1px dashed var(--line)",paddingTop:16}}>
-        <div style={{fontWeight:500,marginBottom:10,fontSize:14}}><i className="fa-solid fa-clock-rotate-left" style={{color:"var(--primary)",marginRight:6}}></i>ประวัติการแจ้งซ่อม ({related.length})</div>
-        {related.length>0 ? (
+        <div style={{fontWeight:500,marginBottom:10,fontSize:14}}><i className="fa-solid fa-clock-rotate-left" style={{color:"var(--primary)",marginRight:6}}></i>ประวัติการแจ้งซ่อม ({relatedRows.length})</div>
+        {relatedRows.length>0 ? (
           <table className="data" style={{border:"1px solid var(--line)",borderRadius:8}}>
-            <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>สถานะ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>สถานะ</th>{canEdit&&<th>จัดการ</th>}</tr></thead>
             <tbody>
-              {related.map(r=>(
-                <tr key={r.id} onClick={()=>setViewRepair(r)} style={{cursor:"pointer"}} className="hover:bg-gray-50">
-                  <td><span className="ticket-id" style={{display:"inline-flex",alignItems:"center",gap:5}}>{r.running}<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.5}}></i></span></td>
-                  <td style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
-                  <td style={{fontSize:13}}>{r.title}</td>
-                  <td><Badge status={r.status}/></td>
+              {relatedRows.map(r=>(
+                <tr key={r.id} style={{cursor:"pointer"}}>
+                  <td onClick={()=>setViewRepair(r)}><span className="ticket-id" style={{display:"inline-flex",alignItems:"center",gap:5}}>{r.running}<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.5}}></i></span></td>
+                  <td onClick={()=>setViewRepair(r)} style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                  <td onClick={()=>setViewRepair(r)} style={{fontSize:13}}>{r.title}</td>
+                  <td onClick={()=>setViewRepair(r)}><Badge status={r.status}/></td>
+                  {canEdit&&<td><button className="ia" title="แก้ไขข้อมูล" onClick={e=>{e.stopPropagation();setEditRepair(r);}} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button></td>}
                 </tr>
               ))}
             </tbody>
@@ -2131,7 +2151,8 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
         ) : <div style={{color:"var(--muted)",fontSize:13,padding:"12px 0"}}>ยังไม่มีประวัติการซ่อม</div>}
       </div>
     </Modal>
-    {viewRepair && <RepairDetail r={viewRepair} user={user} onClose={()=>setViewRepair(null)} onQuick={null} onEdit={null} onEditParts={null}/>}
+    {viewRepair && <window.RepairDetail r={viewRepair} user={user} onClose={()=>setViewRepair(null)} onQuick={null} onEdit={canEdit?(r)=>{setViewRepair(null);setEditRepair(r);}:null} onEditParts={null}/>}
+    {editRepair && <window.EditRepairModal r={editRepair} onClose={()=>setEditRepair(null)} onSave={saveEdit}/>}
     </>
   );
 }
