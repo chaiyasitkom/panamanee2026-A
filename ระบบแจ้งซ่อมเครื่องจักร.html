@@ -1231,10 +1231,24 @@ function Repairs({user}){
   const [q,setQ] = React.useState("");
   const [status,setStatus] = React.useState("all");
   const [cat,setCat] = React.useState("all");
+  const [filterProj,setFilterProj] = React.useState("all");
+  const [filterMachType,setFilterMachType] = React.useState("all");
   const [detail,setDetail] = React.useState(null);
   const [statusFor,setStatusFor] = React.useState(null);
   const [editFor,setEditFor] = React.useState(null);
   const [loading,setLoading] = React.useState(false);
+
+  const machCatMap = React.useMemo(()=>{
+    const m={};
+    (window.__DATA.machines||[]).forEach(x=>{if(x.code)m[x.code]=x.categoryId||"";});
+    return m;
+  },[]);
+
+  const projOptions = React.useMemo(()=>[...new Set(rows.map(r=>r.project).filter(Boolean))].sort(),[rows]);
+  const machTypeOptions = React.useMemo(()=>{
+    const ids = new Set(rows.map(r=>machCatMap[r.machineCode]).filter(Boolean));
+    return window.__DATA.categories.filter(c=>ids.has(c.id));
+  },[rows,machCatMap]);
 
   const filtered = React.useMemo(()=>{
     return rows.filter(r=>{
@@ -1244,12 +1258,14 @@ function Repairs({user}){
       }
       if(status!=="all" && r.status!==status) return false;
       if(cat!=="all" && r.categoryId!==cat) return false;
+      if(filterProj!=="all" && (r.project||"")!==filterProj) return false;
+      if(filterMachType!=="all" && machCatMap[r.machineCode]!==filterMachType) return false;
       if(user.role==="Technician"){
         if(!(r.assignedId===user.id || r.status==="new" || r.status==="assess")) return false;
       }
       return true;
     });
-  },[rows,q,status,cat,user]);
+  },[rows,q,status,cat,filterProj,filterMachType,machCatMap,user]);
 
   const [assessFor, setAssessFor] = React.useState(null);
 
@@ -1345,6 +1361,16 @@ function Repairs({user}){
             <option value="all">ทุกหมวดหมู่</option>
             {window.__DATA.categories.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}
           </select>
+          <select value={filterProj} onChange={e=>setFilterProj(e.target.value)}>
+            <option value="all">ทุกโครงการ</option>
+            {projOptions.map(p=>(<option key={p} value={p}>{p}</option>))}
+          </select>
+          {machTypeOptions.length>0 && (
+            <select value={filterMachType} onChange={e=>setFilterMachType(e.target.value)}>
+              <option value="all">ทุกประเภทเครื่องจักร</option>
+              {machTypeOptions.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}
+            </select>
+          )}
           <div className="spacer"></div>
           <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} / {rows.length} รายการ</div>
         </div>
