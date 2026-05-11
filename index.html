@@ -546,7 +546,7 @@ async function api(action, payload = {}) {
       const { id, patch, by } = payload;
       const clean = { ...patch };
       clean.updatedAt = new Date().toISOString();
-      delete clean.id; delete clean.running; delete clean.createdAt; delete clean.timeline;
+      delete clean.id; delete clean.running; delete clean.timeline;
       const tlKey = _db.ref('/repairs/' + id + '/timeline').push().key;
       clean['timeline/' + tlKey] = {
         id: tlKey, status: clean.status || '', when: new Date().toISOString(), by: by || '', note: 'แก้ไขข้อมูลโดย Admin'
@@ -991,7 +991,8 @@ window.Projects = Projects;
 <script type="text/babel">
 function Dashboard({user,goTo}){
   const [loading,setLoading] = React.useState(true);
-  const [costView,setCostView] = React.useState("category"); // category | project
+  const [costView,setCostView] = React.useState("category");
+  const [dashDetail,setDashDetail] = React.useState(null);
   const doughnutRef = React.useRef(null);
   const barRef = React.useRef(null);
   const costRef = React.useRef(null);
@@ -1115,7 +1116,7 @@ function Dashboard({user,goTo}){
     });
   },[loading,costView,costStats]);
 
-  const recent = repairs.slice(0,5);
+  const recent = repairs.filter(r=>r.status!=="done");
   const stats = [
     { key:"all", label:"รายการทั้งหมด", val:counts.all, icon:"fa-clipboard-list", color:"#3B82F6", delta:"+12% vs เดือนก่อน", up:true },
     { key:"assess", label:"รอประเมินราคา", val:counts.assess, icon:"fa-magnifying-glass-dollar", color:"#8B5CF6" },
@@ -1189,14 +1190,14 @@ function Dashboard({user,goTo}){
           </div>
         </div>
         <div className="card">
-          <div className="card-h"><div><h3>รายการแจ้งซ่อมล่าสุด</h3><div className="sub">5 รายการที่เพิ่งแจ้งเข้ามา</div></div><button className="btn btn-ghost btn-sm" onClick={()=>goTo("repairs")}>ดูทั้งหมด <i className="fa-solid fa-arrow-right"></i></button></div>
+          <div className="card-h"><div><h3>รายการแจ้งซ่อมที่ยังดำเนินการอยู่</h3><div className="sub">{recent.length} รายการ · ยกเว้นงานที่เสร็จสมบูรณ์แล้ว</div></div><button className="btn btn-ghost btn-sm" onClick={()=>goTo("repairs")}>ดูทั้งหมด <i className="fa-solid fa-arrow-right"></i></button></div>
           <div className="table-wrap">
             <table className="data">
               <thead><tr><th>เลขที่</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th className="hide-on-mobile">วันที่</th></tr></thead>
               <tbody>
                 {recent.map(r=>(
                   <tr key={r.id}>
-                    <td><span className="ticket-id">{r.running}</span></td>
+                    <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDashDetail(r)}>{r.running}</span></td>
                     <td><div className="cell-title">{r.title}</div></td>
                     <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                     <td><Badge status={r.status}/></td>
@@ -1204,11 +1205,13 @@ function Dashboard({user,goTo}){
                     <td className="hide-on-mobile" style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   </tr>
                 ))}
+                {recent.length===0&&(<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-circle-check" style={{color:"#10B981"}}></i><div className="t">ไม่มีงานค้างอยู่</div><div>งานทั้งหมดเสร็จสมบูรณ์แล้ว</div></div></td></tr>)}
               </tbody>
             </table>
           </div>
         </div>
       </>}
+      {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user} onQuick={null} onEdit={null} onEditParts={null}/>}
     </>
   );
 }
@@ -1351,7 +1354,7 @@ function Repairs({user}){
             <tbody>
               {filtered.map(r=>(
                 <tr key={r.id}>
-                  <td><span className="ticket-id">{r.running}</span></td>
+                  <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDetail(r)}>{r.running}</span></td>
                   <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
                   <td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
@@ -1491,9 +1494,10 @@ function StatusMenu({r,onClose,onPick}){
 }
 
 function EditRepairModal({r,onClose,onSave}){
-  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||""});
+  const toDateStr = (d) => { if(!d) return ""; const dt = typeof d==="string"?new Date(d):d; return dt.toISOString().slice(0,10); };
+  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||"",createdAt:toDateStr(r.createdAt)});
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
-  const submit = () => { const patch = {...f, cost: f.cost===""?"":Number(f.cost)||0}; onSave(r, patch); };
+  const submit = () => { const patch = {...f, cost: f.cost===""?"":Number(f.cost)||0, createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt}; onSave(r, patch); };
   const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin","Engineer"].includes(u.role));
   return (
     <Modal open={true} onClose={onClose} size="lg"
@@ -1512,6 +1516,7 @@ function EditRepairModal({r,onClose,onSave}){
         <div><label className="k">หมวดหมู่</label><select className="inp" value={f.categoryId} onChange={e=>set("categoryId",e.target.value)}>{window.__DATA.categories.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
         <div><label className="k">สถานะ</label><select className="inp" value={f.status} onChange={e=>set("status",e.target.value)}>{window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}</select></div>
         <div><label className="k">ค่าใช้จ่าย (บาท)</label><input className="inp" type="number" value={f.cost} onChange={e=>set("cost",e.target.value)} /></div>
+        <div><label className="k">วันที่แจ้ง</label><input className="inp" type="date" value={f.createdAt} onChange={e=>set("createdAt",e.target.value)} /></div>
         <div><label className="k">ผู้แจ้ง</label><input className="inp" value={f.reporterName} onChange={e=>set("reporterName",e.target.value)} /></div>
         <div><label className="k">ผู้รับผิดชอบ</label><select className="inp" value={f.assignedId} onChange={e=>set("assignedId",e.target.value)}><option value="">— ยังไม่มอบหมาย —</option>{technicians.map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}</select></div>
       </div>
@@ -1631,6 +1636,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
 }
 
 window.Repairs = Repairs;
+window.RepairDetail = RepairDetail;
 </script>
 
 <script type="text/babel">
@@ -1927,7 +1933,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",driveLink1:"",driveLink2:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2019,6 +2025,14 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field"><label>ชั่วโมงทำงานสะสม</label><input type="number" min="0" value={f.hours||0} onChange={e=>up("hours",e.target.value)} /></div>
           <div className="form-field"><label>ซ่อมบำรุงล่าสุด</label><input type="date" value={f.lastService||""} onChange={e=>up("lastService",e.target.value)} /></div>
           <div className="form-field"><label>ชื่อพนักงานขับ / ผู้ควบคุม</label><input value={f.driverName||""} onChange={e=>up("driverName",e.target.value)} placeholder="เช่น นายสมชาย ใจดี" /></div>
+          <div className="form-field" style={{gridColumn:"1/-1"}}>
+            <label><i className="fa-brands fa-google-drive" style={{marginRight:6,color:"#4285F4"}}></i>ลิงค์ไฟล์ Google Drive (1) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>เช่น คู่มือ, ใบรับประกัน</span></label>
+            <input value={f.driveLink1||""} onChange={e=>up("driveLink1",e.target.value)} placeholder="https://drive.google.com/..." />
+          </div>
+          <div className="form-field" style={{gridColumn:"1/-1"}}>
+            <label><i className="fa-brands fa-google-drive" style={{marginRight:6,color:"#4285F4"}}></i>ลิงค์ไฟล์ Google Drive (2) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>เช่น แบบแปลน, ประวัติซ่อมบำรุง</span></label>
+            <input value={f.driveLink2||""} onChange={e=>up("driveLink2",e.target.value)} placeholder="https://drive.google.com/..." />
+          </div>
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>หมายเหตุ</label><textarea rows="3" value={f.note||""} onChange={e=>up("note",e.target.value)} placeholder="หมายเหตุเพิ่มเติม..."></textarea></div>
         </div>
         <div className="form-field" style={{marginTop:14}}>
@@ -2061,6 +2075,11 @@ function MachineDetail({m,user,onClose,onEdit,onDelete}){
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
             <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{m.driverName||"—"}</div></div>
           </div>
+          {(m.driveLink1||m.driveLink2) && <div style={{marginTop:14,display:"grid",gap:8}}>
+            <div style={{fontSize:12,fontWeight:500,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4",marginRight:6}}></i>ไฟล์เอกสาร Google Drive</div>
+            {m.driveLink1 && <a href={m.driveLink1} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:13,textDecoration:"none"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>ไฟล์เอกสาร (1)<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:10,opacity:.6,marginLeft:"auto"}}></i></a>}
+            {m.driveLink2 && <a href={m.driveLink2} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:13,textDecoration:"none"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>ไฟล์เอกสาร (2)<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:10,opacity:.6,marginLeft:"auto"}}></i></a>}
+          </div>}
           {m.note && <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}><div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div><div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div></div>}
         </div>
       </div>
