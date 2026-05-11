@@ -1511,7 +1511,10 @@ function EditRepairModal({r,onClose,onSave}){
         <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียดปัญหา</label><textarea className="inp" rows="2" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
         <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>
         <div><label className="k">เลขที่ไซต์งาน</label><input className="inp" value={f.siteId} onChange={e=>set("siteId",e.target.value)} /></div>
-        <div><label className="k">รหัสเครื่องจักร</label><input className="inp" value={f.machineCode} onChange={e=>set("machineCode",e.target.value)} /></div>
+        <div><label className="k">รหัสเครื่องจักร</label>
+          <input className="inp" list="edit-machine-dl" value={f.machineCode} onChange={e=>{const code=e.target.value;const m=(window.__DATA.machines||[]).find(x=>x.code===code);setF(p=>({...p,machineCode:code,...(m&&!p.project?{project:m.project||""}:{})}));}} placeholder="พิมพ์หรือเลือกรหัสเครื่องจักร..." />
+          <datalist id="edit-machine-dl">{(window.__DATA.machines||[]).map(m=>(<option key={m.id} value={m.code}>{m.name}{m.project?` · ${m.project}`:""}</option>))}</datalist>
+        </div>
         <div><label className="k">โครงการ/หน่วยงาน</label><select className="inp" value={f.project} onChange={e=>set("project",e.target.value)}><option value="">— ไม่ระบุ —</option>{Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort().map(p=>(<option key={p} value={p}>{p}</option>))}</select></div>
         <div><label className="k">หมวดหมู่</label><select className="inp" value={f.categoryId} onChange={e=>set("categoryId",e.target.value)}>{window.__DATA.categories.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
         <div><label className="k">สถานะ</label><select className="inp" value={f.status} onChange={e=>set("status",e.target.value)}>{window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}</select></div>
@@ -1932,7 +1935,7 @@ function Machines({user}){
         <select value={statusF} onChange={e=>setStatusF(e.target.value)}><option value="all">ทุกสถานะ</option><option value="ใช้งาน">ใช้งานอยู่</option><option value="ซ่อม">กำลังซ่อม</option><option value="รอซ่อม">รอซ่อม</option></select>
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
-        {["Admin","Officer"].includes(user.role) && (
+        {["Admin","Officer","Engineer"].includes(user.role) && (
           <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",driveLink1:"",driveLink2:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
@@ -1957,7 +1960,7 @@ function Machines({user}){
           </div>
         );
       })}
-      {filtered.length===0 && (<div style={{gridColumn:"1/-1"}} className="card"><div className="empty"><i className="fa-solid fa-industry"></i><div className="t">ยังไม่มีเครื่องจักรในระบบ</div><div>{["Admin","Officer"].includes(user.role)?"กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น":"รอผู้ดูแลระบบเพิ่มข้อมูล"}</div></div></div>)}
+      {filtered.length===0 && (<div style={{gridColumn:"1/-1"}} className="card"><div className="empty"><i className="fa-solid fa-industry"></i><div className="t">ยังไม่มีเครื่องจักรในระบบ</div><div>{["Admin","Officer","Engineer"].includes(user.role)?"กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น":"รอผู้ดูแลระบบเพิ่มข้อมูล"}</div></div></div>)}
     </div>
     {detail && <MachineDetail m={detail} user={user} onClose={()=>setDetail(null)} onEdit={()=>{setEdit({mode:"edit",m:detail});setDetail(null);}} onDelete={()=>remove(detail)} />}
     {edit && <MachineForm initial={edit.m} mode={edit.mode} onClose={()=>setEdit(null)} onSave={save} />}
@@ -2049,7 +2052,7 @@ function MachineForm({initial,mode,onClose,onSave}){
 function MachineDetail({m,user,onClose,onEdit,onDelete}){
   const related = window.__DATA.repairs.filter(r=>r.machineCode===m.code).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const statusColor = ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[m.status]||"#64748B";
-  const canEdit = ["Admin","Officer"].includes(user.role);
+  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
   const [viewRepair, setViewRepair] = React.useState(null);
   return (
     <>
@@ -2178,7 +2181,7 @@ function NewRequest({user,goTo}){
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
       window.__DATA.repairs = [saved,...window.__DATA.repairs];
       setLoading(false);
-      Swal.fire({icon:"success",title:"แจ้งซ่อมสำเร็จ!",html:`เลขที่ใบแจ้งซ่อม: <strong class="mono" style="color:#1E40AF">${saved.running}</strong>`,confirmButtonColor:"#1E40AF"}).then(()=>goTo("r-mine"));
+      Swal.fire({icon:"success",title:"แจ้งซ่อมสำเร็จ!",html:`เลขที่ใบแจ้งซ่อม: <strong class="mono" style="color:#1E40AF">${saved.running}</strong>`,confirmButtonColor:"#1E40AF"}).then(()=>goTo(["Admin","Officer","Engineer"].includes(user.role)?"repairs":"r-mine"));
     }catch(err){ setLoading(false); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
 
@@ -2218,7 +2221,7 @@ function NewRequest({user,goTo}){
         </div>
       </div>
       <div style={{padding:"14px 22px",borderTop:"1px solid var(--line)",display:"flex",justifyContent:"flex-end",gap:10,background:"#FAFBFC"}}>
-        <button className="btn btn-ghost" onClick={()=>goTo("r-dashboard")}>ยกเลิก</button>
+        <button className="btn btn-ghost" onClick={()=>goTo(["Admin","Officer","Engineer"].includes(user.role)?"repairs":"r-dashboard")}>ยกเลิก</button>
         <button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-paper-plane"></i> ส่งคำร้องแจ้งซ่อม</button>
       </div>
     </div>
@@ -2406,7 +2409,7 @@ function App(){
           <div className="actions">
             <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหาทั้งระบบ..."/></div>
             <button className="btn btn-icon btn-ghost" title="Tweaks" onClick={()=>setTweakOpen(v=>!v)}><i className="fa-solid fa-sliders"></i></button>
-            {(page==="repairs" && ["Admin","Officer"].includes(user.role)) && (
+            {(page==="repairs" && ["Admin","Officer","Engineer"].includes(user.role)) && (
               <button className="btn btn-primary" onClick={()=>setPage("r-new")}><i className="fa-solid fa-plus"></i> แจ้งซ่อมใหม่</button>
             )}
           </div>
