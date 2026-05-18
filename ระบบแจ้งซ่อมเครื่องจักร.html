@@ -765,7 +765,66 @@ window.Login = Login;
 </script>
 
 <script type="text/babel">
+function ChangePasswordModal({user,onClose}){
+  const [oldPw,setOldPw] = React.useState("");
+  const [newPw,setNewPw] = React.useState("");
+  const [confirmPw,setConfirmPw] = React.useState("");
+  const [loading,setLoading] = React.useState(false);
+  const [showOld,setShowOld] = React.useState(false);
+  const [showNew,setShowNew] = React.useState(false);
+  const inSt = {width:"100%",padding:"10px 40px 10px 12px",border:"1px solid var(--line)",borderRadius:8,fontFamily:"Kanit",fontSize:14,outline:"none",background:"#fff"};
+  const eyeBtn = (show,toggle) => (
+    <button type="button" onClick={toggle} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"var(--muted)",padding:4,lineHeight:1}}>
+      <i className={`fa-solid ${show?"fa-eye-slash":"fa-eye"}`}></i>
+    </button>
+  );
+  const submit = async () => {
+    if(!oldPw||!newPw||!confirmPw){ Swal.fire({icon:"warning",title:"กรุณากรอกข้อมูลให้ครบทุกช่อง"}); return; }
+    if(newPw.length<6){ Swal.fire({icon:"warning",title:"รหัสผ่านใหม่สั้นเกินไป",text:"ต้องมีอย่างน้อย 6 ตัวอักษร"}); return; }
+    if(newPw!==confirmPw){ Swal.fire({icon:"warning",title:"รหัสผ่านใหม่ไม่ตรงกัน",text:"กรุณากรอกรหัสผ่านใหม่และยืนยันให้ตรงกัน"}); return; }
+    setLoading(true);
+    try{
+      await window.api("login",{username:user.username,password:oldPw});
+      await window.api("updateUser",{id:user.id,patch:{password:newPw}});
+      setLoading(false); onClose();
+      Swal.fire({icon:"success",title:"เปลี่ยนรหัสผ่านสำเร็จ",timer:1800,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){
+      setLoading(false);
+      const msg = /Username หรือ Password/i.test(err.message)?"รหัสผ่านเดิมไม่ถูกต้อง":err.message;
+      Swal.fire({icon:"error",title:"ไม่สำเร็จ",text:msg});
+    }
+  };
+  return (
+    <Modal open={true} onClose={onClose} title={<><i className="fa-solid fa-key" style={{color:"var(--primary)",marginRight:8}}></i>เปลี่ยนรหัสผ่าน</>} size="sm"
+      footer={<><button className="btn btn-ghost" onClick={onClose} disabled={loading}>ยกเลิก</button><button className="btn btn-primary" onClick={submit} disabled={loading}>{loading?<><div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> กำลังบันทึก...</>:<><i className="fa-solid fa-check"></i> เปลี่ยนรหัสผ่าน</>}</button></>}>
+      <div style={{display:"grid",gap:14}}>
+        <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#1E40AF"}}>
+          <i className="fa-solid fa-user" style={{marginRight:6}}></i>บัญชี: <strong>{user.username}</strong> · {user.name}
+        </div>
+        <div>
+          <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>รหัสผ่านเดิม <span style={{color:"#EF4444"}}>*</span></label>
+          <div style={{position:"relative"}}><input style={inSt} type={showOld?"text":"password"} value={oldPw} onChange={e=>setOldPw(e.target.value)} placeholder="กรอกรหัสผ่านเดิม" autoComplete="current-password"/>{eyeBtn(showOld,()=>setShowOld(v=>!v))}</div>
+        </div>
+        <div>
+          <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>รหัสผ่านใหม่ <span style={{color:"#EF4444"}}>*</span> <span style={{fontWeight:400}}>(อย่างน้อย 6 ตัวอักษร)</span></label>
+          <div style={{position:"relative"}}><input style={inSt} type={showNew?"text":"password"} value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="กรอกรหัสผ่านใหม่" autoComplete="new-password"/>{eyeBtn(showNew,()=>setShowNew(v=>!v))}</div>
+        </div>
+        <div>
+          <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>ยืนยันรหัสผ่านใหม่ <span style={{color:"#EF4444"}}>*</span></label>
+          <div style={{position:"relative"}}>
+            <input style={{...inSt,borderColor:confirmPw&&confirmPw!==newPw?"#EF4444":"var(--line)"}} type={showNew?"text":"password"} value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} placeholder="กรอกรหัสผ่านอีกครั้ง" autoComplete="new-password"/>
+            {confirmPw&&confirmPw===newPw&&<i className="fa-solid fa-circle-check" style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:"#10B981",pointerEvents:"none"}}></i>}
+            {confirmPw&&confirmPw!==newPw&&<i className="fa-solid fa-circle-xmark" style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:"#EF4444",pointerEvents:"none"}}></i>}
+          </div>
+          {confirmPw&&confirmPw!==newPw&&<div style={{fontSize:12,color:"#EF4444",marginTop:4}}>รหัสผ่านไม่ตรงกัน</div>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function Sidebar({user,active,onNav,onLogout,open,onClose}){
+  const [changePwModal,setChangePwModal] = React.useState(false);
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
   const isTech = ["Technician","Engineer"].includes(user.role);
   const adminNav = [
@@ -823,9 +882,11 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
             <div className="name">{user.name}</div>
             <div className="role">{user.role} · {user.dept}</div>
           </div>
+          <button className="logout" onClick={()=>setChangePwModal(true)} title="เปลี่ยนรหัสผ่าน"><i className="fa-solid fa-key"></i></button>
           <button className="logout" onClick={onLogout} title="ออกจากระบบ"><i className="fa-solid fa-right-from-bracket"></i></button>
         </div>
       </aside>
+      {changePwModal && <ChangePasswordModal user={user} onClose={()=>setChangePwModal(false)}/>}
     </>
   );
 }
