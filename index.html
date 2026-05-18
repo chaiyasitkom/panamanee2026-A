@@ -1982,7 +1982,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer","Engineer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",driveLink1:"",driveLink2:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",driveLink1:"",driveLink2:"",inspectionDate:"",nextInspectionDate:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2073,6 +2073,8 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>สถานที่ติดตั้ง</label><input value={f.location||""} onChange={e=>up("location",e.target.value)} placeholder="เช่น โรงงาน A - สายการผลิต 1" /></div>
           <div className="form-field"><label>ชั่วโมงทำงานสะสม</label><input type="number" min="0" value={f.hours||0} onChange={e=>up("hours",e.target.value)} /></div>
           <div className="form-field"><label>ซ่อมบำรุงล่าสุด</label><input type="date" value={f.lastService||""} onChange={e=>up("lastService",e.target.value)} /></div>
+          <div className="form-field"><label><i className="fa-solid fa-certificate" style={{marginRight:5,color:"#7C3AED"}}></i>วันที่ตรวจสอบ (ปจ2)</label><input type="date" value={f.inspectionDate||""} onChange={e=>up("inspectionDate",e.target.value)} /></div>
+          <div className="form-field"><label><i className="fa-solid fa-calendar-check" style={{marginRight:5,color:"#EF4444"}}></i>วันที่ตรวจสอบครั้งถัดไป</label><input type="date" value={f.nextInspectionDate||""} onChange={e=>up("nextInspectionDate",e.target.value)} /></div>
           <div className="form-field"><label>ชื่อพนักงานขับ / ผู้ควบคุม</label><input value={f.driverName||""} onChange={e=>up("driverName",e.target.value)} placeholder="เช่น นายสมชาย ใจดี" /></div>
           <div className="form-field" style={{gridColumn:"1/-1"}}>
             <label><i className="fa-brands fa-google-drive" style={{marginRight:6,color:"#4285F4"}}></i>ลิงค์ไฟล์ Google Drive (1) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>เช่น คู่มือ, ใบรับประกัน</span></label>
@@ -2263,18 +2265,74 @@ window.Machines = Machines;
 
 <script type="text/babel">
 function DocPJ2({user}){
-  const machines = React.useMemo(()=>{
-    const all = window.filterByUserProjects(user, window.__DATA.machines, "project");
-    return all.filter(m=>m.driveLink1||m.driveLink2);
-  },[user]);
+  const [rows,setRows] = React.useState(()=>window.filterByUserProjects(user,window.__DATA.machines,"project"));
   const [q,setQ] = React.useState("");
   const [filterProj,setFilterProj] = React.useState("all");
-  const projects = React.useMemo(()=>[...new Set(machines.map(m=>m.project).filter(Boolean))].sort(),[machines]);
-  const filtered = React.useMemo(()=>machines.filter(m=>{
+  const [editCell,setEditCell] = React.useState(null); // {id,field,value}
+  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const today = React.useMemo(()=>{ const d=new Date(); d.setHours(0,0,0,0); return d; },[]);
+  const toDateStr = (d) => { try{ return new Date(d).toISOString().slice(0,10); }catch(e){ return ""; } };
+
+  const projects = React.useMemo(()=>[...new Set(rows.map(m=>m.project).filter(Boolean))].sort(),[rows]);
+  const filtered = React.useMemo(()=>rows.filter(m=>{
     if(filterProj!=="all" && m.project!==filterProj) return false;
     if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
     return true;
-  }),[machines,q,filterProj]);
+  }),[rows,q,filterProj]);
+
+  const saveDate = async () => {
+    if(!editCell) return;
+    const {id,field,value} = editCell;
+    try{
+      await window.api("updateMachine",{id,patch:{[field]:value}});
+      const upd = rows.map(m=>m.id===id?{...m,[field]:value}:m);
+      setRows(upd); window.__DATA.machines=window.__DATA.machines.map(m=>m.id===id?{...m,[field]:value}:m);
+      setEditCell(null);
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+  };
+
+  const nextDateColor = (val) => {
+    if(!val) return null;
+    const d=new Date(val); d.setHours(0,0,0,0);
+    const diff=Math.floor((d-today)/(1000*60*60*24));
+    if(diff<0) return "#EF4444";
+    if(diff<=30) return "#F59E0B";
+    return "#10B981";
+  };
+
+  const renderDateCell = (m,field) => {
+    const val = m[field]||"";
+    const isEditing = editCell&&editCell.id===m.id&&editCell.field===field;
+    const color = field==="nextInspectionDate"?nextDateColor(val):null;
+    if(isEditing) return (
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <input type="date" value={editCell.value} onChange={e=>setEditCell(ec=>({...ec,value:e.target.value}))}
+          style={{padding:"3px 7px",border:"1px solid var(--primary)",borderRadius:6,fontSize:12,fontFamily:"Kanit"}} autoFocus/>
+        <button onClick={saveDate} style={{padding:"3px 10px",background:"var(--primary)",color:"#fff",border:"none",borderRadius:6,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>บันทึก</button>
+        <button onClick={()=>setEditCell(null)} style={{padding:"3px 8px",background:"none",border:"1px solid var(--line)",borderRadius:6,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>ยกเลิก</button>
+      </div>
+    );
+    return (
+      <div style={{display:"flex",alignItems:"center",gap:5}}>
+        {val ? (
+          <span style={{fontSize:12,fontWeight:color?"600":"400",color:color?color:"inherit",background:color?color+"18":"transparent",padding:color?"2px 7px":"0",borderRadius:5,display:"inline-flex",alignItems:"center",gap:4}}>
+            {window.__DATA.fmtDate(val)}
+            {color==="#EF4444"&&<span style={{fontSize:10}}>⚠ เกินกำหนด</span>}
+            {color==="#F59E0B"&&<span style={{fontSize:10}}>ใกล้ถึงกำหนด</span>}
+          </span>
+        ) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
+        {canEdit&&<button onClick={()=>setEditCell({id:m.id,field,value:val||toDateStr(new Date())})}
+          style={{padding:"1px 5px",background:"none",border:"1px solid var(--line)",borderRadius:4,fontSize:10,cursor:"pointer",color:"var(--muted)"}}>
+          <i className={`fa-solid ${val?"fa-pen":"fa-plus"}`}></i>
+        </button>}
+      </div>
+    );
+  };
+
+  const linkBtn = (url) => url
+    ? <a href={url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:6,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:12,textDecoration:"none",whiteSpace:"nowrap"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>เปิดไฟล์<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.6}}></i></a>
+    : <span style={{color:"var(--muted)"}}>—</span>;
+
   return (
     <div className="card">
       <div className="filters">
@@ -2284,29 +2342,31 @@ function DocPJ2({user}){
           {projects.map(p=>(<option key={p} value={p}>{p}</option>))}
         </select>
         <div className="spacer"></div>
-        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} รายการ</div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} / {rows.length} รายการ</div>
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>รหัสเครื่องจักร</th><th>ชื่อเครื่องจักร</th><th className="hide-on-mobile">โครงการ</th><th className="hide-on-mobile">ประเภท</th><th>เอกสาร (1)</th><th>เอกสาร (2)</th></tr></thead>
+          <thead><tr>
+            <th>รหัส</th><th>ชื่อเครื่องจักร</th>
+            <th className="hide-on-mobile">โครงการ</th>
+            <th>วันที่ตรวจสอบ</th>
+            <th>วันที่ตรวจสอบครั้งถัดไป</th>
+            <th className="hide-on-mobile">เอกสาร (1)</th>
+            <th className="hide-on-mobile">เอกสาร (2)</th>
+          </tr></thead>
           <tbody>
-            {filtered.map(m=>{
-              const cat=window.getCategory(m.categoryId);
-              const linkBtn = (url,label) => url
-                ? <a href={url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:6,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:12,textDecoration:"none",whiteSpace:"nowrap"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>{label}<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.6}}></i></a>
-                : <span style={{color:"var(--muted)"}}>—</span>;
-              return (
-                <tr key={m.id}>
-                  <td><span className="mono" style={{fontSize:12}}>{m.code||"—"}</span></td>
-                  <td><div style={{fontWeight:500}}>{m.name}</div>{m.brand&&<div style={{fontSize:12,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
-                  <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
-                  <td className="hide-on-mobile"><span className="badge" style={{background:cat.color+"22",color:cat.color,fontSize:12}}><i className={`fa-solid ${cat.icon}`} style={{marginRight:4}}></i>{cat.name}</span></td>
-                  <td>{linkBtn(m.driveLink1,"เปิดไฟล์")}</td>
-                  <td>{linkBtn(m.driveLink2,"เปิดไฟล์")}</td>
-                </tr>
-              );
-            })}
-            {filtered.length===0&&(<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ยังไม่มีเครื่องจักรที่มีไฟล์เอกสาร ปจ2</div></div></td></tr>)}
+            {filtered.map(m=>(
+              <tr key={m.id}>
+                <td><span className="mono" style={{fontSize:12}}>{m.code||"—"}</span></td>
+                <td><div style={{fontWeight:500,fontSize:13}}>{m.name}</div>{m.brand&&<div style={{fontSize:11,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
+                <td>{renderDateCell(m,"inspectionDate")}</td>
+                <td>{renderDateCell(m,"nextInspectionDate")}</td>
+                <td className="hide-on-mobile">{linkBtn(m.driveLink1)}</td>
+                <td className="hide-on-mobile">{linkBtn(m.driveLink2)}</td>
+              </tr>
+            ))}
+            {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
           </tbody>
         </table>
       </div>
