@@ -772,6 +772,8 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
+    { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
@@ -780,6 +782,8 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
+    { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
   ];
   const reporterNav = [
@@ -787,6 +791,8 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"r-mine", icon:"fa-clipboard-check", label:"ติดตามสถานะ" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
+    { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
   ];
   const nav = isAdminish ? adminNav : isTech ? techNav : reporterNav;
@@ -2256,6 +2262,115 @@ window.Machines = Machines;
 </script>
 
 <script type="text/babel">
+function DocPJ2({user}){
+  const machines = React.useMemo(()=>{
+    const all = window.filterByUserProjects(user, window.__DATA.machines, "project");
+    return all.filter(m=>m.driveLink1||m.driveLink2);
+  },[user]);
+  const [q,setQ] = React.useState("");
+  const [filterProj,setFilterProj] = React.useState("all");
+  const projects = React.useMemo(()=>[...new Set(machines.map(m=>m.project).filter(Boolean))].sort(),[machines]);
+  const filtered = React.useMemo(()=>machines.filter(m=>{
+    if(filterProj!=="all" && m.project!==filterProj) return false;
+    if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
+    return true;
+  }),[machines,q,filterProj]);
+  return (
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา รหัส / ชื่อเครื่องจักร..." value={q} onChange={e=>setQ(e.target.value)}/></div>
+        <select value={filterProj} onChange={e=>setFilterProj(e.target.value)}>
+          <option value="all">ทุกโครงการ</option>
+          {projects.map(p=>(<option key={p} value={p}>{p}</option>))}
+        </select>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} รายการ</div>
+      </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead><tr><th>รหัสเครื่องจักร</th><th>ชื่อเครื่องจักร</th><th className="hide-on-mobile">โครงการ</th><th className="hide-on-mobile">ประเภท</th><th>เอกสาร (1)</th><th>เอกสาร (2)</th></tr></thead>
+          <tbody>
+            {filtered.map(m=>{
+              const cat=window.getCategory(m.categoryId);
+              const linkBtn = (url,label) => url
+                ? <a href={url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:6,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:12,textDecoration:"none",whiteSpace:"nowrap"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>{label}<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.6}}></i></a>
+                : <span style={{color:"var(--muted)"}}>—</span>;
+              return (
+                <tr key={m.id}>
+                  <td><span className="mono" style={{fontSize:12}}>{m.code||"—"}</span></td>
+                  <td><div style={{fontWeight:500}}>{m.name}</div>{m.brand&&<div style={{fontSize:12,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
+                  <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
+                  <td className="hide-on-mobile"><span className="badge" style={{background:cat.color+"22",color:cat.color,fontSize:12}}><i className={`fa-solid ${cat.icon}`} style={{marginRight:4}}></i>{cat.name}</span></td>
+                  <td>{linkBtn(m.driveLink1,"เปิดไฟล์")}</td>
+                  <td>{linkBtn(m.driveLink2,"เปิดไฟล์")}</td>
+                </tr>
+              );
+            })}
+            {filtered.length===0&&(<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ยังไม่มีเครื่องจักรที่มีไฟล์เอกสาร ปจ2</div></div></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MachineTransferHistory({user}){
+  const allTransfers = React.useMemo(()=>{
+    const visible = window.filterByUserProjects(user, window.__DATA.machines, "project");
+    const list=[];
+    visible.forEach(m=>{
+      (m.transferHistory||[]).forEach(t=>list.push({...t,machineCode:m.code,machineName:m.name,currentProject:m.project}));
+    });
+    return list.sort((a,b)=>new Date(b.when)-new Date(a.when));
+  },[user]);
+  const [q,setQ] = React.useState("");
+  const [filterProj,setFilterProj] = React.useState("all");
+  const projects = React.useMemo(()=>{
+    const s=new Set(); allTransfers.forEach(t=>{if(t.from)s.add(t.from);if(t.to)s.add(t.to);}); return [...s].sort();
+  },[allTransfers]);
+  const filtered = React.useMemo(()=>allTransfers.filter(t=>{
+    if(filterProj!=="all" && t.from!==filterProj && t.to!==filterProj) return false;
+    if(q){ const qq=q.toLowerCase(); if(!([t.machineCode,t.machineName,t.from,t.to,t.by,t.note].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
+    return true;
+  }),[allTransfers,q,filterProj]);
+  return (
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา รหัส / ชื่อ / โครงการ..." value={q} onChange={e=>setQ(e.target.value)}/></div>
+        <select value={filterProj} onChange={e=>setFilterProj(e.target.value)}>
+          <option value="all">ทุกโครงการ</option>
+          {projects.map(p=>(<option key={p} value={p}>{p}</option>))}
+        </select>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} รายการ</div>
+      </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead><tr><th>วันที่ย้าย</th><th>รหัส</th><th>ชื่อเครื่องจักร</th><th>จากโครงการ</th><th style={{width:24}}></th><th>ไปโครงการ</th><th className="hide-on-mobile">โดย</th><th className="hide-on-mobile">เหตุผล</th></tr></thead>
+          <tbody>
+            {filtered.map((t,i)=>(
+              <tr key={i}>
+                <td style={{color:"var(--muted)",whiteSpace:"nowrap",fontSize:13}}>{window.__DATA.fmtDate(t.when)}</td>
+                <td><span className="mono" style={{fontSize:12}}>{t.machineCode||"—"}</span></td>
+                <td style={{fontWeight:500,fontSize:13}}>{t.machineName||"—"}</td>
+                <td><span style={{background:"#F5F3FF",color:"#6D28D9",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:500}}>{t.from||"ไม่ระบุ"}</span></td>
+                <td style={{textAlign:"center"}}><i className="fa-solid fa-arrow-right" style={{color:"var(--muted)",fontSize:11}}></i></td>
+                <td><span style={{background:"#EFF6FF",color:"#1E40AF",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:600}}>{t.to}</span></td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{t.by||"—"}</td>
+                <td className="hide-on-mobile" style={{fontSize:12,color:"#4B5563",maxWidth:200}}>{t.note||"—"}</td>
+              </tr>
+            ))}
+            {filtered.length===0&&(<tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-right-left"></i><div className="t">ไม่พบประวัติการย้าย</div><div>ยังไม่มีการย้ายเครื่องจักรระหว่างโครงการ</div></div></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+</script>
+
+
+<script type="text/babel">
 function ReporterDashboard({user,goTo}){
   const mine = React.useMemo(()=>{
     if(user.role==="Engineer") return window.filterByUserProjects(user,window.__DATA.repairs,"project");
@@ -2522,6 +2637,8 @@ function App(){
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
     "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
+    "doc-pj2":{t:"ปจ2 - เอกสารรับรองการตรวจสอบและทดสอบ",c:"ลิงค์ไฟล์เอกสารตามรายการเครื่องจักร"},
+    "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
     "projects":{t:"โครงการ",c:"Projects · จัดการข้อมูลโครงการทั้งหมด"},
     "r-dashboard":{t:"แดชบอร์ด",c:"สรุปงานแจ้งซ่อมของฉัน"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
@@ -2535,6 +2652,8 @@ function App(){
     if(page==="users") return <Users user={user}/>;
     if(page==="categories") return <Categories user={user}/>;
     if(page==="machines") return <Machines user={user}/>;
+    if(page==="doc-pj2") return <DocPJ2 user={user}/>;
+    if(page==="transfer-history") return <MachineTransferHistory user={user}/>;
     if(page==="projects") return <Projects user={user}/>;
     if(page==="r-dashboard") return <ReporterDashboard user={user} goTo={setPage}/>;
     if(page==="r-new") return <NewRequest user={user} goTo={setPage}/>;
