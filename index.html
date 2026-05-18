@@ -2344,6 +2344,12 @@ function DocPJ2({user}){
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} / {rows.length} รายการ</div>
       </div>
+      <div style={{padding:"8px 16px",borderBottom:"1px solid var(--line)",background:"#FAFBFC",display:"flex",gap:16,flexWrap:"wrap",fontSize:12,color:"var(--muted)"}}>
+        <span style={{fontWeight:500,color:"var(--text)"}}>หมายเหตุ:</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:"50%",background:"#10B981",display:"inline-block"}}></span>เขียว — ยังไม่ถึงกำหนด (&gt;30 วัน)</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:"50%",background:"#F59E0B",display:"inline-block"}}></span>เหลือง — ใกล้ถึงกำหนด (≤30 วัน)</span>
+        <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:"50%",background:"#EF4444",display:"inline-block"}}></span>แดง — เกินกำหนดแล้ว ⚠</span>
+      </div>
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
