@@ -478,6 +478,12 @@ async function api(action, payload = {}) {
       return { updated: true };
     }
 
+    case 'getUserPassword': {
+      const { id } = payload;
+      const snap = await _db.ref('/users/' + id + '/password').get();
+      return { password: snap.val() || "" };
+    }
+
     case 'deleteUser': {
       const { id } = payload;
       await _db.ref('/users/' + id).remove();
@@ -1778,6 +1784,15 @@ function Users({user}){
     });
   };
 
+  const [revealedPw,setRevealedPw] = React.useState({});
+  const togglePw = async (u) => {
+    if(revealedPw[u.id]!==undefined){ setRevealedPw(p=>{const n={...p};delete n[u.id];return n;}); return; }
+    try{
+      const {password} = await window.api("getUserPassword",{id:u.id});
+      setRevealedPw(p=>({...p,[u.id]:password}));
+    }catch(err){ Swal.fire({icon:"error",title:"ไม่สำเร็จ",text:err.message}); }
+  };
+
   const roleColors = {Admin:"#1E40AF",Officer:"#8B5CF6",Technician:"#F59E0B",Engineer:"#06B6D4",Reporter:"#10B981",Director:"#EF4444"};
 
   const renderProjectAccess = (u) => {
@@ -1796,7 +1811,7 @@ function Users({user}){
       </div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th className="hide-on-mobile">ตำแหน่ง</th><th className="hide-on-mobile">หน่วยงาน</th><th className="hide-on-mobile">สิทธิ์เข้าถึงโครงการ</th><th className="hide-on-mobile">อีเมล</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>Username</th><th>ชื่อ-นามสกุล</th><th className="hide-on-mobile">ตำแหน่ง</th><th className="hide-on-mobile">หน่วยงาน</th><th className="hide-on-mobile">สิทธิ์เข้าถึงโครงการ</th><th className="hide-on-mobile">อีเมล</th>{user.role==="Admin"&&<th>รหัสผ่าน</th>}<th>จัดการ</th></tr></thead>
           <tbody>
             {filtered.map(u=>(
               <tr key={u.id}>
@@ -1806,6 +1821,14 @@ function Users({user}){
                 <td className="hide-on-mobile">{u.dept}</td>
                 <td className="hide-on-mobile">{renderProjectAccess(u)}</td>
                 <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13}}>{u.email}</td>
+                {user.role==="Admin"&&<td><div style={{display:"flex",alignItems:"center",gap:6,minWidth:100}}>
+                  <span className="mono" style={{fontSize:12.5,letterSpacing:revealedPw[u.id]!==undefined?".01em":".1em"}}>
+                    {revealedPw[u.id]!==undefined ? revealedPw[u.id] : "••••••"}
+                  </span>
+                  <button className="ia" title={revealedPw[u.id]!==undefined?"ซ่อน":"แสดงรหัสผ่าน"} onClick={()=>togglePw(u)} style={{color:revealedPw[u.id]!==undefined?"var(--primary)":"var(--muted)"}}>
+                    <i className={`fa-solid ${revealedPw[u.id]!==undefined?"fa-eye-slash":"fa-eye"}`}></i>
+                  </button>
+                </div></td>}
                 <td><div className="row-actions"><button className="ia" title="แก้ไข" onClick={()=>setEdit({...u,projects:Array.isArray(u.projects)?u.projects:[]})}><i className="fa-solid fa-pen"></i></button><button className="ia danger" title="ลบ" onClick={()=>del(u)}><i className="fa-solid fa-trash"></i></button></div></td>
               </tr>
             ))}
