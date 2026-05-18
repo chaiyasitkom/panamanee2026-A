@@ -2362,6 +2362,13 @@ function DocPJ2({user}){
     if(filterProj!=="all" && m.project!==filterProj) return false;
     if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
     return true;
+  }).sort((a,b)=>{
+    const da = a.nextInspectionDate ? new Date(a.nextInspectionDate) : null;
+    const db = b.nextInspectionDate ? new Date(b.nextInspectionDate) : null;
+    if(!da && !db) return 0;
+    if(!da) return 1;
+    if(!db) return -1;
+    return da - db;
   }),[rows,q,filterProj]);
 
   const saveDate = async () => {
