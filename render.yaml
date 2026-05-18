@@ -1,10 +1,6 @@
 services:
   - type: web
     name: panamanee2026
-    runtime: static
+    env: static
+    buildCommand: ""
     staticPublishPath: .
-    buildCommand: echo 'static site'
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
