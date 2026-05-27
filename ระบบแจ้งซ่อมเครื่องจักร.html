@@ -2448,8 +2448,8 @@ function DocPJ2({user}){
             <th className="hide-on-mobile">โครงการ</th>
             <th>วันที่ตรวจสอบ</th>
             <th>วันที่ตรวจสอบครั้งถัดไป</th>
-            <th className="hide-on-mobile">เอกสาร (1)</th>
-            <th className="hide-on-mobile">เอกสาร (2)</th>
+            <th>เอกสาร (1)</th>
+            <th>เอกสาร (2)</th>
           </tr></thead>
           <tbody>
             {filtered.map(m=>(
@@ -2459,8 +2459,8 @@ function DocPJ2({user}){
                 <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
                 <td>{renderDateCell(m,"inspectionDate")}</td>
                 <td>{renderDateCell(m,"nextInspectionDate")}</td>
-                <td className="hide-on-mobile">{linkBtn(m.driveLink1)}</td>
-                <td className="hide-on-mobile">{linkBtn(m.driveLink2)}</td>
+                <td>{linkBtn(m.driveLink1)}</td>
+                <td>{linkBtn(m.driveLink2)}</td>
               </tr>
             ))}
             {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
