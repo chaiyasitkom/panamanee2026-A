@@ -734,7 +734,7 @@ function Login({onLogin}){
             <span className="chip"><i className="fa-solid fa-chart-line" style={{marginRight:6}}></i>Analytics</span>
           </div>
         </div>
-        <div className="login-foot">© 2026 Repair Management System · v3.002 Firebase &nbsp;|&nbsp; อัปเดต 27 พ.ค. 2569 เวลา 15:24 น.</div>
+        <div className="login-foot">© 2026 Repair Management System · v3.003 Firebase &nbsp;|&nbsp; อัปเดต 27 พ.ค. 2569 เวลา 15:38 น.</div>
       </div>
       <div className="login-card-wrap">
         <form className="login-card" onSubmit={submit}>
@@ -1438,15 +1438,15 @@ function Repairs({user}){
         </div>
         <div className="table-wrap">
           <table className="data">
-            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">เลขที่ไซต์งาน</th><th className="hide-on-mobile">วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th className="hide-on-mobile">โครงการ/หน่วยงาน</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>เลขที่</th><th className="hide-on-mobile">เลขที่ไซต์งาน</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th><th>โครงการ/หน่วยงาน</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th><th className="hide-on-mobile">ผู้แจ้ง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {filtered.map(r=>(
                 <tr key={r.id}>
                   <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDetail(r)}>{r.running}</span></td>
                   <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
-                  <td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                  <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td className="hide-on-mobile" style={{fontSize:13}}>{r.project}</td>
+                  <td style={{fontSize:13}}>{r.project}</td>
                   <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
                   <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
