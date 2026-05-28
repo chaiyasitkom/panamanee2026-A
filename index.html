@@ -402,6 +402,16 @@ async function api(action, payload = {}) {
         u => String(u.username) === String(username) && String(u.password) === String(password)
       );
       if (!user) throw new Error('Username หรือ Password ไม่ถูกต้อง');
+      const logRef = _db.ref('/loginLogs').push();
+      await logRef.set({
+        id: logRef.key,
+        userId: user.id || "",
+        username: user.username || "",
+        name: user.name || "",
+        role: user.role || "",
+        dept: user.dept || "",
+        when: new Date().toISOString()
+      });
       const safe = { ...user };
       delete safe.password;
       return safe;
@@ -564,6 +574,13 @@ async function api(action, payload = {}) {
       };
       await _db.ref('/repairs/' + id).update(clean);
       return { ok: true };
+    }
+
+    case 'getLoginLogs': {
+      const snap = await _db.ref('/loginLogs').get();
+      const logs = snap.val() ? Object.values(snap.val()) : [];
+      logs.sort((a,b) => new Date(b.when) - new Date(a.when));
+      return { logs };
     }
 
     default:
@@ -734,7 +751,7 @@ function Login({onLogin}){
             <span className="chip"><i className="fa-solid fa-chart-line" style={{marginRight:6}}></i>Analytics</span>
           </div>
         </div>
-        <div className="login-foot">© 2026 Repair Management System · v3.004 Firebase &nbsp;|&nbsp; อัปเดต 27 พ.ค. 2569 เวลา 15:54 น.</div>
+        <div className="login-foot">© 2026 Repair Management System · v3.011 Firebase &nbsp;|&nbsp; อัปเดต 28 พ.ค. 2569 เวลา 12:00 น.</div>
       </div>
       <div className="login-card-wrap">
         <form className="login-card" onSubmit={submit}>
@@ -831,6 +848,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
+    ...(user.role==="Admin" ? [{ key:"login-logs", icon:"fa-shield-halved", label:"ประวัติการล็อกอิน" }] : []),
   ];
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
@@ -869,7 +887,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
           ))}
           <div className="section">ทั่วไป</div>
           <div className="nav-item"><i className="fa-solid fa-bell"></i><span>การแจ้งเตือน</span></div>
-          <div className="nav-item"><i className="fa-solid fa-gear"></i><span>ตั้งค่า</span></div>
+          <div className="nav-item" onClick={()=>setChangePwModal(true)}><i className="fa-solid fa-gear"></i><span>ตั้งค่า</span></div>
         </nav>
         <div className="me">
           <div className="avatar">{window.initials(user.name)}</div>
@@ -877,7 +895,6 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
             <div className="name">{user.name}</div>
             <div className="role">{user.role} · {user.dept}</div>
           </div>
-          <button className="logout" onClick={()=>setChangePwModal(true)} title="เปลี่ยนรหัสผ่าน"><i className="fa-solid fa-key"></i></button>
           <button className="logout" onClick={onLogout} title="ออกจากระบบ"><i className="fa-solid fa-right-from-bracket"></i></button>
         </div>
       </aside>
@@ -1986,6 +2003,13 @@ window.Categories = Categories;
 </script>
 
 <script type="text/babel">
+function gdriveThumb(url, sz=600){
+  if(!url) return null;
+  let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if(!m) m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if(!m) return null;
+  return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${sz}`;
+}
 function Machines({user}){
   const allowAll = window.userCanSeeAllProjects(user);
   const allowed = new Set(user.projects||[]);
@@ -2055,7 +2079,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer","Engineer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",driveLink1:"",driveLink2:"",inspectionDate:"",nextInspectionDate:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",inspectionDate:"",nextInspectionDate:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2067,13 +2091,16 @@ function Machines({user}){
         return (
           <div className="machine-card" key={m.id} onClick={()=>setDetail(m)}>
             <div className="machine-thumb">
-              {<><div className="pattern"></div><div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div></>}
+              <div className="pattern"></div>
+              <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
+              {m.drivePhoto && <img src={gdriveThumb(m.drivePhoto)} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"} />}
               {m.categoryId && <div className="drive-tag" style={{background:cat.color,color:"#fff"}}><i className={`fa-solid ${cat.icon}`}></i> {cat.name}</div>}
               <div className="status-dot" style={{background:statusColor(m.status)}}><span style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}></span>{m.status}</div>
             </div>
             <div className="machine-info">
               <div className="n">{m.name}</div>
               <div className="m">{m.code}{m.brand?` · ${m.brand}`:""}{m.model?` ${m.model}`:""}</div>
+              {m.serial && <div className="m mono" style={{fontSize:11,marginTop:1,opacity:.75}}>{m.serial}</div>}
               <div className="meta"><span><i className="fa-solid fa-diagram-project"></i> {m.project||"—"}</span>{m.ownership&&<span><i className="fa-solid fa-handshake"></i> {m.ownership}</span>}</div>
             </div>
           </div>
@@ -2150,6 +2177,11 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field"><label><i className="fa-solid fa-calendar-check" style={{marginRight:5,color:"#EF4444"}}></i>วันที่ตรวจสอบครั้งถัดไป</label><input type="date" value={f.nextInspectionDate||""} onChange={e=>up("nextInspectionDate",e.target.value)} /></div>
           <div className="form-field"><label>ชื่อพนักงานขับ / ผู้ควบคุม</label><input value={f.driverName||""} onChange={e=>up("driverName",e.target.value)} placeholder="เช่น นายสมชาย ใจดี" /></div>
           <div className="form-field" style={{gridColumn:"1/-1"}}>
+            <label><i className="fa-solid fa-image" style={{marginRight:6,color:"#10B981"}}></i>ลิงค์รูปภาพ Google Drive <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>รูปถ่ายเครื่องจักร (จะแสดงในการ์ด)</span></label>
+            <input value={f.drivePhoto||""} onChange={e=>up("drivePhoto",e.target.value)} placeholder="https://drive.google.com/file/d/..." />
+            {gdriveThumb(f.drivePhoto) && <div style={{marginTop:8}}><img src={gdriveThumb(f.drivePhoto)} alt="preview" style={{height:100,borderRadius:8,objectFit:"cover",border:"1px solid var(--line)"}} onError={e=>e.target.style.display="none"} /></div>}
+          </div>
+          <div className="form-field" style={{gridColumn:"1/-1"}}>
             <label><i className="fa-brands fa-google-drive" style={{marginRight:6,color:"#4285F4"}}></i>ลิงค์ไฟล์ Google Drive (1) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>เช่น คู่มือ, ใบรับประกัน</span></label>
             <input value={f.driveLink1||""} onChange={e=>up("driveLink1",e.target.value)} placeholder="https://drive.google.com/..." />
           </div>
@@ -2214,6 +2246,54 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
   const [editTrIdx, setEditTrIdx] = React.useState(null);
   const [editTrDate, setEditTrDate] = React.useState("");
   const toDateStr = (d) => { try{ return new Date(d).toISOString().slice(0,10); }catch(e){ return ""; } };
+  const [editDateField, setEditDateField] = React.useState(null);
+  const [editDateValue, setEditDateValue] = React.useState("");
+  const [savingDate, setSavingDate] = React.useState(false);
+  const today = React.useMemo(()=>{ const d=new Date(); d.setHours(0,0,0,0); return d; },[]);
+  const nextDateColor = (val) => {
+    if(!val) return null;
+    const d=new Date(val); d.setHours(0,0,0,0);
+    const diff=Math.floor((d-today)/(1000*60*60*24));
+    if(diff<0) return "#EF4444";
+    if(diff<=30) return "#F59E0B";
+    return "#10B981";
+  };
+  const saveInspectionDate = async () => {
+    if(!editDateField) return;
+    setSavingDate(true);
+    try{ await onPatchMachine({[editDateField]:editDateValue}); setEditDateField(null); }
+    catch(e){}
+    setSavingDate(false);
+  };
+  const renderInspectionCell = (field) => {
+    const val = m[field]||"";
+    const color = field==="nextInspectionDate" ? nextDateColor(val) : null;
+    if(editDateField===field) return (
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <input type="date" value={editDateValue} onChange={e=>setEditDateValue(e.target.value)}
+          style={{padding:"3px 7px",border:"1px solid var(--primary)",borderRadius:6,fontSize:12,fontFamily:"Kanit"}} autoFocus/>
+        <button onClick={saveInspectionDate} disabled={savingDate} style={{padding:"3px 10px",background:"var(--primary)",color:"#fff",border:"none",borderRadius:6,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>
+          {savingDate?"...":"บันทึก"}
+        </button>
+        <button onClick={()=>setEditDateField(null)} style={{padding:"3px 8px",background:"none",border:"1px solid var(--line)",borderRadius:6,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>ยกเลิก</button>
+      </div>
+    );
+    return (
+      <div style={{display:"flex",alignItems:"center",gap:5}}>
+        {val ? (
+          <span style={{fontSize:12,fontWeight:color?"600":"400",color:color||"inherit",background:color?color+"18":"transparent",padding:color?"2px 7px":"0",borderRadius:5,display:"inline-flex",alignItems:"center",gap:4}}>
+            {window.__DATA.fmtDate(val)}
+            {color==="#EF4444"&&<span style={{fontSize:10}}>⚠ เกินกำหนด</span>}
+            {color==="#F59E0B"&&<span style={{fontSize:10}}>ใกล้ถึงกำหนด</span>}
+          </span>
+        ) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
+        {canEdit && <button onClick={()=>{setEditDateField(field);setEditDateValue(val||toDateStr(new Date()));}}
+          style={{padding:"1px 5px",background:"none",border:"1px solid var(--line)",borderRadius:4,fontSize:10,cursor:"pointer",color:"var(--muted)"}} title="แก้ไขวันที่">
+          <i className={`fa-solid ${val?"fa-pen":"fa-plus"}`}></i>
+        </button>}
+      </div>
+    );
+  };
   const saveTransferDate = async () => {
     if(editTrIdx===null||!editTrDate) return;
     const newHistory = m.transferHistory.map((t,i)=>i===editTrIdx?{...t,when:new Date(editTrDate).toISOString()}:t);
@@ -2243,7 +2323,11 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
       footer={<>{canEdit&&<button className="btn btn-danger" onClick={onDelete}><i className="fa-solid fa-trash"></i> ลบ</button>}<div style={{flex:1}}></div><button className="btn btn-ghost" onClick={onClose}>ปิด</button>{canEdit&&<button className="btn btn-ghost" style={{color:"#7C3AED",border:"1px solid #DDD6FE"}} onClick={()=>setTransferModal(true)}><i className="fa-solid fa-right-left"></i> ย้ายโครงการ</button>}{canEdit&&<button className="btn btn-primary" onClick={onEdit}><i className="fa-solid fa-pen-to-square"></i> แก้ไข</button>}</>}>
       <div className="detail-header" style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:22,marginBottom:18}}>
         <div style={{borderRadius:12,overflow:"hidden",aspectRatio:"1",background:"var(--bg)",position:"relative"}}>
-          <div className="machine-thumb" style={{position:"absolute",inset:0,borderRadius:0}}><div className="pattern"></div><div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div></div>
+          <div className="machine-thumb" style={{position:"absolute",inset:0,borderRadius:0}}>
+            <div className="pattern"></div>
+            <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
+            {m.drivePhoto && <img src={gdriveThumb(m.drivePhoto)} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"} />}
+          </div>
         </div>
         <div>
           <div style={{fontSize:20,fontWeight:600,marginBottom:4}}>{m.name}</div>
@@ -2260,6 +2344,21 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
             <div><div className="k">ซ่อมบำรุงล่าสุด</div><div className="v">{m.lastService||"—"}</div></div>
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
             <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{m.driverName||"—"}</div></div>
+          </div>
+          <div style={{marginTop:12,padding:"10px 14px",background:"#F5F3FF",border:"1px solid #DDD6FE",borderRadius:10}}>
+            <div style={{fontSize:11,fontWeight:600,color:"#7C3AED",textTransform:"uppercase",letterSpacing:".06em",marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+              <i className="fa-solid fa-certificate"></i>ปจ2 — การตรวจสอบและทดสอบ
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>วันที่ตรวจสอบ</div>
+                {renderInspectionCell("inspectionDate")}
+              </div>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>วันที่ตรวจสอบครั้งถัดไป</div>
+                {renderInspectionCell("nextInspectionDate")}
+              </div>
+            </div>
           </div>
           {(m.driveLink1||m.driveLink2) && <div style={{marginTop:14,display:"grid",gap:8}}>
             <div style={{fontSize:12,fontWeight:500,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4",marginRight:6}}></i>ไฟล์เอกสาร Google Drive</div>
@@ -2349,7 +2448,7 @@ function DocPJ2({user}){
   const projects = React.useMemo(()=>[...new Set(rows.map(m=>m.project).filter(Boolean))].sort(),[rows]);
   const filtered = React.useMemo(()=>rows.filter(m=>{
     if(filterProj!=="all" && m.project!==filterProj) return false;
-    if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
+    if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project,m.serial].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
     return true;
   }).sort((a,b)=>{
     const da = a.nextInspectionDate ? new Date(a.nextInspectionDate) : null;
@@ -2416,7 +2515,7 @@ function DocPJ2({user}){
   return (
     <div className="card">
       <div className="filters">
-        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา รหัส / ชื่อเครื่องจักร..." value={q} onChange={e=>setQ(e.target.value)}/></div>
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา รหัส / ชื่อ / ซีเรียล..." value={q} onChange={e=>setQ(e.target.value)}/></div>
         <select value={filterProj} onChange={e=>setFilterProj(e.target.value)}>
           <option value="all">ทุกโครงการ</option>
           {projects.map(p=>(<option key={p} value={p}>{p}</option>))}
@@ -2433,23 +2532,24 @@ function DocPJ2({user}){
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
-            <th>รหัส</th><th>ชื่อเครื่องจักร</th>
+            <th>รหัส</th>
+            <th>เอกสาร (1)</th>
+            <th>เอกสาร (2)</th>
+            <th>ชื่อเครื่องจักร</th>
             <th className="hide-on-mobile">โครงการ</th>
             <th>วันที่ตรวจสอบ</th>
             <th>วันที่ตรวจสอบครั้งถัดไป</th>
-            <th>เอกสาร (1)</th>
-            <th>เอกสาร (2)</th>
           </tr></thead>
           <tbody>
             {filtered.map(m=>(
               <tr key={m.id}>
                 <td><span className="mono" style={{fontSize:12}}>{m.code||"—"}</span></td>
+                <td>{linkBtn(m.driveLink1)}</td>
+                <td>{linkBtn(m.driveLink2)}</td>
                 <td><div style={{fontWeight:500,fontSize:13}}>{m.name}</div>{m.brand&&<div style={{fontSize:11,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
                 <td>{renderDateCell(m,"inspectionDate")}</td>
                 <td>{renderDateCell(m,"nextInspectionDate")}</td>
-                <td>{linkBtn(m.driveLink1)}</td>
-                <td>{linkBtn(m.driveLink2)}</td>
               </tr>
             ))}
             {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
@@ -2457,6 +2557,143 @@ function DocPJ2({user}){
         </table>
       </div>
     </div>
+  );
+}
+
+function LoginLogs(){
+  const [logs, setLogs] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState(null);
+  const [q, setQ] = React.useState("");
+  const [filterRole, setFilterRole] = React.useState("all");
+  const [filterUser, setFilterUser] = React.useState("all");
+
+  const fetchLogs = () => {
+    setLoading(true); setErr(null);
+    window.api("getLoginLogs").then(r=>{
+      setLogs(r.logs||[]);
+      setLoading(false);
+    }).catch(e=>{
+      setErr(e.message||"โหลดข้อมูลไม่สำเร็จ");
+      setLoading(false);
+    });
+  };
+
+  React.useEffect(()=>{ fetchLogs(); },[]);
+
+  const roleColor = {"Admin":"#7C3AED","Officer":"#1D4ED8","Engineer":"#0369A1","Technician":"#047857","Director":"#B45309","Reporter":"#64748B"};
+
+  const todayStr = new Date().toISOString().slice(0,10);
+  const todayLogs = logs.filter(l=>(l.when||"").slice(0,10)===todayStr);
+  const uniqueToday = new Set(todayLogs.map(l=>l.userId)).size;
+
+  const userNames = React.useMemo(()=>[...new Set(logs.map(l=>l.username).filter(Boolean))].sort(),[logs]);
+  const roles = React.useMemo(()=>[...new Set(logs.map(l=>l.role).filter(Boolean))].sort(),[logs]);
+
+  const filtered = React.useMemo(()=>logs.filter(l=>{
+    if(filterRole!=="all" && l.role!==filterRole) return false;
+    if(filterUser!=="all" && l.username!==filterUser) return false;
+    if(q){
+      const qq=q.toLowerCase();
+      if(![l.username,l.name,l.role,l.dept].map(x=>(x||"").toLowerCase()).join(" ").includes(qq)) return false;
+    }
+    return true;
+  }),[logs,q,filterRole,filterUser]);
+
+  const fmtWhen = (iso) => {
+    if(!iso) return "—";
+    const d = new Date(iso);
+    const date = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const time = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+    return `${date} ${time}`;
+  };
+
+  const stats = [
+    {label:"ล็อกอินทั้งหมด",val:logs.length,icon:"fa-clock-rotate-left",color:"#3B82F6"},
+    {label:"ล็อกอินวันนี้",val:todayLogs.length,icon:"fa-calendar-day",color:"#10B981"},
+    {label:"ผู้ใช้ที่ active วันนี้",val:uniqueToday,icon:"fa-user-check",color:"#8B5CF6"},
+    {label:"ผู้ใช้ทั้งหมด",val:userNames.length,icon:"fa-users",color:"#F59E0B"},
+  ];
+
+  return (
+    <>
+    <div className="stat-grid" style={{marginBottom:18}}>
+      {stats.map((s,i)=>(<div className="stat" key={i}><div className="ic" style={{background:s.color+"1a",color:s.color}}><i className={`fa-solid ${s.icon}`}></i></div><div className="label">{s.label}</div><div className="val">{s.val}</div></div>))}
+    </div>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา ชื่อ / Username / แผนก..." value={q} onChange={e=>setQ(e.target.value)}/></div>
+        <select value={filterUser} onChange={e=>setFilterUser(e.target.value)}>
+          <option value="all">ทุก Username</option>
+          {userNames.map(u=>(<option key={u} value={u}>{u}</option>))}
+        </select>
+        <select value={filterRole} onChange={e=>setFilterRole(e.target.value)}>
+          <option value="all">ทุก Role</option>
+          {roles.map(r=>(<option key={r} value={r}>{r}</option>))}
+        </select>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} / {logs.length} รายการ</div>
+        <button className="btn btn-ghost" onClick={fetchLogs} disabled={loading} title="โหลดใหม่">
+          <i className={`fa-solid fa-rotate${loading?" fa-spin":""}`}></i>
+        </button>
+      </div>
+      {loading ? (
+        <div style={{display:"grid",placeItems:"center",padding:60,gap:12}}>
+          <div className="spinner" style={{width:32,height:32,borderWidth:3}}></div>
+          <div style={{color:"var(--muted)",fontSize:13}}>กำลังโหลด...</div>
+        </div>
+      ) : err ? (
+        <div style={{padding:32,textAlign:"center"}}>
+          <i className="fa-solid fa-triangle-exclamation" style={{fontSize:32,color:"var(--danger)",marginBottom:10,display:"block"}}></i>
+          <div style={{fontWeight:500,marginBottom:6}}>โหลดข้อมูลไม่สำเร็จ</div>
+          <div style={{fontSize:13,color:"var(--muted)",marginBottom:14}}>{err}</div>
+          <button className="btn btn-primary" onClick={fetchLogs}><i className="fa-solid fa-rotate"></i> ลองใหม่</button>
+        </div>
+      ) : logs.length===0 ? (
+        <div style={{padding:40,textAlign:"center"}}>
+          <i className="fa-solid fa-clock-rotate-left" style={{fontSize:36,color:"var(--muted)",marginBottom:12,display:"block"}}></i>
+          <div style={{fontWeight:600,fontSize:15,marginBottom:6}}>ยังไม่มีประวัติการล็อกอิน</div>
+          <div style={{fontSize:13,color:"var(--muted)",marginBottom:4}}>ระบบเพิ่งเปิดใช้งานฟีเจอร์นี้</div>
+          <div style={{fontSize:13,color:"var(--muted)"}}>Log จะเริ่มบันทึกเมื่อ user แต่ละคน <strong>ออกจากระบบแล้วล็อกอินใหม่</strong></div>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr>
+              <th style={{width:36}}>#</th>
+              <th>เวลาที่ล็อกอิน</th>
+              <th>ชื่อ-สกุล</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>แผนก</th>
+            </tr></thead>
+            <tbody>
+              {filtered.map((l,i)=>{
+                const rc = roleColor[l.role]||"#64748B";
+                const isToday = (l.when||"").slice(0,10)===todayStr;
+                return (
+                  <tr key={l.id||i} style={isToday?{background:"#F0FDF4"}:{}}>
+                    <td style={{color:"var(--muted)",fontSize:11,textAlign:"center"}}>{i+1}</td>
+                    <td>
+                      <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:12,fontWeight:isToday?600:400,color:isToday?"#065F46":"var(--text)"}}>
+                        {fmtWhen(l.when)}
+                      </div>
+                      {isToday&&<div style={{fontSize:10,color:"#10B981",fontWeight:500,marginTop:1}}>● วันนี้</div>}
+                    </td>
+                    <td><div style={{fontWeight:500,fontSize:13}}>{l.name||"—"}</div></td>
+                    <td><span className="mono" style={{fontSize:12,padding:"2px 7px",background:"#F1F5F9",borderRadius:5}}>{l.username||"—"}</span></td>
+                    <td><span style={{padding:"2px 9px",borderRadius:999,fontSize:11,fontWeight:600,background:rc+"18",color:rc}}>{l.role||"—"}</span></td>
+                    <td style={{fontSize:13,color:"var(--muted)"}}>{l.dept||"—"}</td>
+                  </tr>
+                );
+              })}
+              {filtered.length===0&&(<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-magnifying-glass"></i><div className="t">ไม่พบข้อมูลที่ค้นหา</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+    </>
   );
 }
 
@@ -2745,6 +2982,7 @@ function App(){
     "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
     "doc-pj2":{t:"ปจ2 - เอกสารรับรองการตรวจสอบและทดสอบ",c:"ลิงค์ไฟล์เอกสารตามรายการเครื่องจักร"},
     "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
+    "login-logs":{t:"ประวัติการล็อกอิน",c:"บันทึกการเข้าสู่ระบบของผู้ใช้ทั้งหมด · เฉพาะ Admin"},
     "projects":{t:"โครงการ",c:"Projects · จัดการข้อมูลโครงการทั้งหมด"},
     "r-dashboard":{t:"แดชบอร์ด",c:"สรุปงานแจ้งซ่อมของฉัน"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
@@ -2760,6 +2998,7 @@ function App(){
     if(page==="machines") return <Machines user={user}/>;
     if(page==="doc-pj2") return <DocPJ2 user={user}/>;
     if(page==="transfer-history") return <MachineTransferHistory user={user}/>;
+    if(page==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
     if(page==="projects") return <Projects user={user}/>;
     if(page==="r-dashboard") return <ReporterDashboard user={user} goTo={setPage}/>;
     if(page==="r-new") return <NewRequest user={user} goTo={setPage}/>;
