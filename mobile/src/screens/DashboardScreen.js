@@ -7,7 +7,7 @@ import Badge from '../components/Badge';
 import CategoryChip from '../components/CategoryChip';
 import { fmtDate, avatarColor, initials } from '../utils/helpers';
 
-export default function DashboardScreen({ navigation, user }) {
+export default function DashboardScreen({ navigation, user, goToPage }) {
   const { data } = useAppData();
 
   const repairs = useMemo(() => {
@@ -66,7 +66,7 @@ export default function DashboardScreen({ navigation, user }) {
       <View style={styles.section}>
         <View style={styles.sectionHdr}>
           <Text style={styles.sectionTitle}>รายการแจ้งซ่อมล่าสุด</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Repairs')}>
+          <TouchableOpacity onPress={() => goToPage('repairs')}>
             <Text style={styles.seeAll}>ดูทั้งหมด →</Text>
           </TouchableOpacity>
         </View>

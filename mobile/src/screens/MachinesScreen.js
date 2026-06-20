@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  ScrollView, Modal, Alert,
+  ScrollView, Modal, Alert, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme/colors';
@@ -24,6 +24,7 @@ const emptyMachine = () => ({
   id: '', project: '', code: '', name: '', brand: '', model: '', size: '',
   serial: '', ownership: '', categoryId: '', note: '', status: 'ใช้งาน',
   location: '', lastService: '', hours: 0, icon: 'fa-gears',
+  driverName: '', driveLink1: '', driveLink2: '', inspectionDate: '', nextInspectionDate: '',
 });
 
 export default function MachinesScreen({ user }) {
@@ -205,7 +206,30 @@ function MachineDetailModal({ m, categories, repairs, canEdit, onClose, onEdit, 
           <Row label="สถานที่ติดตั้ง" value={m.location} />
           <Row label="ซ่อมบำรุงล่าสุด" value={m.lastService} />
           <Row label="ชั่วโมงทำงาน" value={`${Number(m.hours || 0).toLocaleString()} ชม.`} />
+          <Row label="วันที่ตรวจสอบ (ปจ2)" value={m.inspectionDate} />
+          <Row label="ตรวจสอบครั้งถัดไป" value={m.nextInspectionDate} />
+          <Row label="ผู้ควบคุม" value={m.driverName} />
         </View>
+
+        {(m.driveLink1 || m.driveLink2) && (
+          <View style={styles.card2}>
+            <Text style={styles.cardTitle}>ไฟล์เอกสาร</Text>
+            {m.driveLink1 ? (
+              <TouchableOpacity style={styles.linkBtn} onPress={() => Linking.openURL(m.driveLink1)}>
+                <Ionicons name="logo-google" size={15} color="#4285F4" />
+                <Text style={styles.linkBtnText}>ไฟล์เอกสาร (1)</Text>
+                <Ionicons name="open-outline" size={14} color={Colors.primary} />
+              </TouchableOpacity>
+            ) : null}
+            {m.driveLink2 ? (
+              <TouchableOpacity style={styles.linkBtn} onPress={() => Linking.openURL(m.driveLink2)}>
+                <Ionicons name="logo-google" size={15} color="#4285F4" />
+                <Text style={styles.linkBtnText}>ไฟล์เอกสาร (2)</Text>
+                <Ionicons name="open-outline" size={14} color={Colors.primary} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
 
         {m.note ? (
           <View style={styles.noteBox}>
@@ -295,6 +319,11 @@ function MachineFormModal({ initial, categories, projects, onClose, onSave }) {
         <Field label="สถานที่ติดตั้ง" value={f.location} onChangeText={v => set('location', v)} placeholder="เช่น โรงงาน A - สายการผลิต 1" />
         <Field label="ชั่วโมงทำงานสะสม" value={String(f.hours || 0)} onChangeText={v => set('hours', v)} keyboardType="numeric" />
         <Field label="ซ่อมบำรุงล่าสุด" value={f.lastService} onChangeText={v => set('lastService', v)} placeholder="YYYY-MM-DD" />
+        <Field label="วันที่ตรวจสอบ (ปจ2)" value={f.inspectionDate} onChangeText={v => set('inspectionDate', v)} placeholder="YYYY-MM-DD" />
+        <Field label="วันที่ตรวจสอบครั้งถัดไป" value={f.nextInspectionDate} onChangeText={v => set('nextInspectionDate', v)} placeholder="YYYY-MM-DD" />
+        <Field label="ชื่อพนักงานขับ / ผู้ควบคุม" value={f.driverName} onChangeText={v => set('driverName', v)} placeholder="เช่น นายสมชาย ใจดี" />
+        <Field label="ลิงก์ไฟล์เอกสาร (1)" value={f.driveLink1} onChangeText={v => set('driveLink1', v)} placeholder="https://drive.google.com/..." autoCapitalize="none" />
+        <Field label="ลิงก์ไฟล์เอกสาร (2)" value={f.driveLink2} onChangeText={v => set('driveLink2', v)} placeholder="https://drive.google.com/..." autoCapitalize="none" />
         <Field label="หมายเหตุ" value={f.note} onChangeText={v => set('note', v)} placeholder="หมายเหตุเพิ่มเติม" multiline />
 
         <View style={styles.buttons}>
@@ -363,6 +392,8 @@ const styles = StyleSheet.create({
   row:              { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.line + '80' },
   rowLabel:         { fontSize: 13, color: Colors.muted },
   rowValue:         { fontSize: 13, fontWeight: '500', color: Colors.text, flex: 1, textAlign: 'right' },
+  linkBtn:          { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11, marginBottom: 8 },
+  linkBtnText:      { flex: 1, fontSize: 13, color: Colors.primary, fontWeight: '500' },
   noteBox:          { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 12, padding: 14, marginBottom: 14 },
   noteTitle:        { fontSize: 12.5, fontWeight: '600', color: '#92400E', marginBottom: 4 },
   noteText:         { fontSize: 13, color: '#78350F' },

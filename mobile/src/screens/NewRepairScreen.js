@@ -56,7 +56,7 @@ function SelectField({ label, value, options, onSelect, disabled, placeholder, h
   );
 }
 
-export default function NewRepairScreen({ navigation, user }) {
+export default function NewRepairScreen({ navigation, user, goToPage }) {
   const { data, addRepair } = useAppData();
   const [loading, setLoading] = useState(false);
   const [f, setF] = useState({ project: '', categoryId: '', machineCode: '', title: '', desc: '', siteId: '' });
@@ -105,7 +105,7 @@ export default function NewRepairScreen({ navigation, user }) {
           text: 'ตกลง',
           onPress: () => {
             if (navigation.canGoBack()) navigation.goBack();
-            else navigation.navigate('MyRepairs');
+            else if (goToPage) goToPage('myrepairs');
           },
         },
       ]);

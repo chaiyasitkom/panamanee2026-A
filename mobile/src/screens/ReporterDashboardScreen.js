@@ -7,7 +7,7 @@ import Badge from '../components/Badge';
 import CategoryChip from '../components/CategoryChip';
 import { fmtDate } from '../utils/helpers';
 
-export default function ReporterDashboardScreen({ navigation, user }) {
+export default function ReporterDashboardScreen({ navigation, user, goToPage }) {
   const { data } = useAppData();
 
   const mine = useMemo(() => {
@@ -53,7 +53,7 @@ export default function ReporterDashboardScreen({ navigation, user }) {
         ))}
       </View>
 
-      <TouchableOpacity style={styles.cta} activeOpacity={0.8} onPress={() => navigation.navigate('NewRepair')}>
+      <TouchableOpacity style={styles.cta} activeOpacity={0.8} onPress={() => goToPage('newrepair')}>
         <View style={styles.ctaIcon}>
           <Ionicons name="add-circle" size={32} color={Colors.primary} />
         </View>
@@ -67,7 +67,7 @@ export default function ReporterDashboardScreen({ navigation, user }) {
       <View style={styles.section}>
         <View style={styles.sectionHdr}>
           <Text style={styles.sectionTitle}>คำร้องล่าสุดของฉัน</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('MyRepairs')}>
+          <TouchableOpacity onPress={() => goToPage('myrepairs')}>
             <Text style={styles.seeAll}>ดูทั้งหมด →</Text>
           </TouchableOpacity>
         </View>
