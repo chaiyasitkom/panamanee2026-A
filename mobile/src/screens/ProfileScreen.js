@@ -13,7 +13,9 @@ const ROLE_LABEL = {
   Director: 'ผู้บริหาร',
 };
 
-export default function ProfileScreen({ user, onLogout }) {
+const APP_VERSION = '1.1.0';
+
+export default function ProfileScreen({ user, onLogout, navigation }) {
   const handleLogout = () => {
     Alert.alert('ออกจากระบบ?', 'คุณต้องการออกจากระบบใช่หรือไม่?', [
       { text: 'ยกเลิก', style: 'cancel' },
@@ -54,12 +56,28 @@ export default function ProfileScreen({ user, onLogout }) {
         <InfoRow icon="shield-outline" label="บทบาท" value={roleLabel} />
       </View>
 
+      {user.role === 'Admin' && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>เครื่องมือผู้ดูแลระบบ</Text>
+          <TouchableOpacity style={styles.toolRow} onPress={() => navigation.navigate('Users')}>
+            <Ionicons name="people-outline" size={18} color={Colors.primary} style={{ width: 24 }} />
+            <Text style={styles.toolText}>จัดการผู้ใช้งาน</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.toolRow, { borderBottomWidth: 0 }]} onPress={() => navigation.navigate('Categories')}>
+            <Ionicons name="pricetags-outline" size={18} color={Colors.primary} style={{ width: 24 }} />
+            <Text style={styles.toolText}>จัดการหมวดหมู่</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.muted} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.7}>
         <Ionicons name="log-out-outline" size={20} color={Colors.danger} />
         <Text style={styles.logoutText}>ออกจากระบบ</Text>
       </TouchableOpacity>
 
-      <Text style={styles.version}>ระบบแจ้งซ่อมเครื่องจักร · v1.0.0</Text>
+      <Text style={styles.version}>ระบบแจ้งซ่อมเครื่องจักร · v{APP_VERSION}</Text>
     </ScrollView>
   );
 }
@@ -77,6 +95,8 @@ const styles = StyleSheet.create({
   infoRow:     { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, gap: 10, borderBottomWidth: 1, borderBottomColor: Colors.line + '80' },
   infoLabel:   { fontSize: 11, color: Colors.muted },
   infoValue:   { fontSize: 14, fontWeight: '500', color: Colors.text, marginTop: 2 },
+  toolRow:     { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: Colors.line + '80' },
+  toolText:    { fontSize: 14, fontWeight: '500', color: Colors.text, flex: 1 },
   logoutBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#fff', margin: 12, marginTop: 0, borderRadius: 14, padding: 16, borderWidth: 1.5, borderColor: Colors.danger + '40' },
   logoutText:  { fontSize: 15, fontWeight: '700', color: Colors.danger },
   version:     { textAlign: 'center', fontSize: 11, color: Colors.muted, marginTop: 8 },

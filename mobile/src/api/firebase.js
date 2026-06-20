@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getDatabase, ref, get, set, update, push } from 'firebase/database';
+import { getDatabase, ref, get, set, update, push, remove } from 'firebase/database';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y',
@@ -93,6 +93,68 @@ export async function api(action, payload = {}) {
       };
       await update(ref(db, '/repairs/' + id), clean);
       return { ok: true };
+    }
+
+    case 'createUser': {
+      const { user } = payload;
+      if (!user.id) user.id = await nextId('users', 'U', 3);
+      user.createdAt = new Date().toISOString();
+      await set(ref(db, '/users/' + user.id), user);
+      const safe = { ...user };
+      delete safe.password;
+      return safe;
+    }
+
+    case 'updateUser': {
+      const { id, patch } = payload;
+      const upd = { ...patch };
+      if (!upd.password) delete upd.password;
+      await update(ref(db, '/users/' + id), upd);
+      return { updated: true };
+    }
+
+    case 'deleteUser': {
+      const { id } = payload;
+      await remove(ref(db, '/users/' + id));
+      return { deleted: true };
+    }
+
+    case 'createCategory': {
+      const { cat } = payload;
+      if (!cat.id) cat.id = await nextId('categories', 'C', 2);
+      await set(ref(db, '/categories/' + cat.id), cat);
+      return cat;
+    }
+
+    case 'updateCategory': {
+      const { id, patch } = payload;
+      await update(ref(db, '/categories/' + id), patch);
+      return { updated: true };
+    }
+
+    case 'deleteCategory': {
+      const { id } = payload;
+      await remove(ref(db, '/categories/' + id));
+      return { deleted: true };
+    }
+
+    case 'createMachine': {
+      const { m } = payload;
+      if (!m.id) m.id = await nextId('machines', 'M', 3);
+      await set(ref(db, '/machines/' + m.id), m);
+      return m;
+    }
+
+    case 'updateMachine': {
+      const { id, patch } = payload;
+      await update(ref(db, '/machines/' + id), patch);
+      return { updated: true };
+    }
+
+    case 'deleteMachine': {
+      const { id } = payload;
+      await remove(ref(db, '/machines/' + id));
+      return { deleted: true };
     }
 
     default:

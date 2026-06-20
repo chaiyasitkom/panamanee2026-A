@@ -93,8 +93,6 @@ export default function LoginScreen({ onLogin }) {
                 : <><Ionicons name="log-in-outline" size={18} color="#fff" /><Text style={styles.btnText}> เข้าสู่ระบบ</Text></>
               }
             </TouchableOpacity>
-
-            <Text style={styles.hint}>บัญชีทดสอบ: admin / komdevil99</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -122,5 +120,4 @@ const styles = StyleSheet.create({
   btn:        { backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8 },
   btnDisabled:{ opacity: 0.6 },
   btnText:    { color: '#fff', fontSize: 16, fontWeight: '700' },
-  hint:       { textAlign: 'center', color: Colors.muted, fontSize: 12, marginTop: 18 },
 });

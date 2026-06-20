@@ -13,6 +13,9 @@ import NewRepairScreen from '../screens/NewRepairScreen';
 import ReporterDashboardScreen from '../screens/ReporterDashboardScreen';
 import MyRepairsScreen from '../screens/MyRepairsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import MachinesScreen from '../screens/MachinesScreen';
+import UsersScreen from '../screens/UsersScreen';
+import CategoriesScreen from '../screens/CategoriesScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -49,6 +52,12 @@ function AdminTabs({ user, onLogout }) {
         {props => <RepairsScreen {...props} user={user} />}
       </Tab.Screen>
       <Tab.Screen
+        name="Machines"
+        options={{ title: 'ทะเบียนเครื่องจักร', tabBarIcon: ({ color, size }) => <Ionicons name="construct-outline" size={size} color={color} /> }}
+      >
+        {props => <MachinesScreen {...props} user={user} />}
+      </Tab.Screen>
+      <Tab.Screen
         name="Profile"
         options={{ title: 'โปรไฟล์', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} /> }}
       >
@@ -78,6 +87,12 @@ function ReporterTabs({ user, onLogout }) {
         options={{ title: 'ติดตามสถานะ', tabBarIcon: ({ color, size }) => <Ionicons name="clipboard-outline" size={size} color={color} /> }}
       >
         {props => <MyRepairsScreen {...props} user={user} />}
+      </Tab.Screen>
+      <Tab.Screen
+        name="Machines"
+        options={{ title: 'ทะเบียนเครื่องจักร', tabBarIcon: ({ color, size }) => <Ionicons name="construct-outline" size={size} color={color} /> }}
+      >
+        {props => <MachinesScreen {...props} user={user} />}
       </Tab.Screen>
       <Tab.Screen
         name="Profile"
@@ -125,6 +140,16 @@ export default function AppNavigator({ user, onLogin, onLogout }) {
           >
             {props => <NewRepairScreen {...props} user={user} />}
           </Stack.Screen>
+          <Stack.Screen
+            name="Users"
+            component={UsersScreen}
+            options={{ headerShown: true, title: 'จัดการผู้ใช้งาน', headerStyle: { backgroundColor: Colors.primary }, headerTintColor: '#fff' }}
+          />
+          <Stack.Screen
+            name="Categories"
+            component={CategoriesScreen}
+            options={{ headerShown: true, title: 'จัดการหมวดหมู่', headerStyle: { backgroundColor: Colors.primary }, headerTintColor: '#fff' }}
+          />
         </>
       )}
     </Stack.Navigator>
