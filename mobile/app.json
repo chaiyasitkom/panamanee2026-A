@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "ระบบแจ้งซ่อม",
+    "slug": "repair-management",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#1E40AF"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.panamanee.repairmanagement"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#1E40AF"
+      },
+      "package": "com.panamanee.repairmanagement"
+    },
+    "plugins": [
+      "expo-font"
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/096694dc-85d3-4e0d-a667-3b08bb0d529c",
+      "fallbackToCacheTimeout": 0
+    },
+    "extra": {
+      "eas": {
+        "projectId": "096694dc-85d3-4e0d-a667-3b08bb0d529c"
+      }
+    },
+    "owner": "komdevil"
+  }
+}
