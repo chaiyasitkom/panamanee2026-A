@@ -3,12 +3,15 @@
     "name": "ระบบแจ้งซ่อม",
     "slug": "repair-management",
     "version": "1.0.0",
+    "scheme": "repairapp",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "splash": {
       "backgroundColor": "#1E40AF"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.panamanee.repairmanagement"
