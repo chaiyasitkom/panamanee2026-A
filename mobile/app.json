@@ -26,7 +26,7 @@
       "expo-font"
     ],
     "runtimeVersion": {
-      "policy": "appVersion"
+      "policy": "sdkVersion"
     },
     "updates": {
       "url": "https://u.expo.dev/096694dc-85d3-4e0d-a667-3b08bb0d529c",
