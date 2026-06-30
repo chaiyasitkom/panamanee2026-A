@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.min.css" />
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -269,6 +270,25 @@ table.data tr:last-child td{border-bottom:0}
 .form-field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px;font-weight:500}
 .form-field input,.form-field select,.form-field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;outline:none;transition:border-color .12s,box-shadow .12s}
 .form-field input:focus,.form-field select:focus,.form-field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.withdrawal-preview-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 10px;color:var(--text);font-weight:600}
+.withdrawal-paper-wrap{overflow-x:auto;background:#F1F5F9;border:1px solid var(--line);border-radius:12px;padding:16px}
+.withdrawal-paper{width:794px;min-height:1123px;margin:auto;background:#fff;color:#000;font-family:"TH Sarabun PSK","TH Sarabun New","Sarabun","Kanit",Arial,sans-serif;padding:78px 42px 46px;box-shadow:0 10px 26px rgba(15,23,42,.12);position:relative}
+.withdrawal-paper .paper-logo{width:112px;height:132px;display:block}
+.withdrawal-paper .paper-head{display:grid;grid-template-columns:150px 1fr 190px;gap:18px;align-items:start;margin-bottom:18px;position:relative;min-height:122px}
+.withdrawal-paper .paper-title-block{position:absolute;left:50%;top:8px;transform:translateX(-50%);width:340px;text-align:center}
+.withdrawal-paper .company{text-align:center;font-size:25px;font-weight:400;margin-top:10px}
+.withdrawal-paper .doc-title{text-align:center;font-size:24px;font-weight:400;margin-top:3px}
+.withdrawal-paper .paper-line{border-bottom:1px dotted #000;display:inline-block;min-width:132px;text-align:center;line-height:1.3}
+.withdrawal-paper .paper-meta-row{display:flex;align-items:flex-end;gap:6px;font-size:18px;font-weight:400;margin-bottom:18px}
+.withdrawal-paper .paper-meta-row.full .paper-line{flex:1;text-align:left;padding-left:14px}
+.withdrawal-paper .item-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:40px;table-layout:fixed}
+.withdrawal-paper .item-table th,.withdrawal-paper .item-table td{border:1px solid #000;padding:1px 4px;height:24px;vertical-align:middle;line-height:1.05}
+.withdrawal-paper .item-table th{background:#F3A26E;text-align:center;font-weight:400;font-size:12px;white-space:nowrap;overflow:hidden}
+.withdrawal-paper .item-table td{text-align:center}
+.withdrawal-paper .item-table td.item-name{text-align:left;padding-left:10px}
+.withdrawal-paper .sign-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:24px;text-align:center;font-size:17px}
+.withdrawal-paper .sign-line{height:38px;border-bottom:1px dotted #000;margin-bottom:7px}
+@media (max-width:900px){.withdrawal-paper-wrap{padding:10px}.withdrawal-paper{transform:scale(.78);transform-origin:top left;margin-right:-176px;margin-bottom:-247px}}
 .form-field textarea{min-height:90px;resize:vertical;font-size:14px}
 .form-field .hint{color:var(--muted);font-size:11.5px;margin-top:4px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
@@ -465,12 +485,13 @@ async function api(action, payload = {}) {
 
     case 'bootstrap': {
       await _seedIfEmpty();
-      const [usersSnap, catSnap, machSnap, repSnap, projSnap] = await Promise.all([
+      const [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap] = await Promise.all([
         _db.ref('/users').get(),
         _db.ref('/categories').get(),
         _db.ref('/machines').get(),
         _db.ref('/repairs').get(),
         _db.ref('/projects').get(),
+        _db.ref('/withdrawals').get(),
       ]);
       const users = Object.values(usersSnap.val() || {}).map(u => {
         const x = { ...u }; delete x.password; return x;
@@ -482,7 +503,21 @@ async function api(action, payload = {}) {
         timeline: r.timeline ? Object.values(r.timeline) : [],
       }));
       const projects = Object.values(projSnap.val() || {});
-      return { users, categories, machines, repairs, projects };
+      const withdrawals = Object.entries(wdSnap.val() || {}).map(([key, value]) => ({ ...value, key }));
+      return { users, categories, machines, repairs, projects, withdrawals };
+    }
+
+    case 'upsertWithdrawal': {
+      const { key, doc } = payload;
+      const cleanKey = String(key || doc.docNo || doc.id || Date.now()).replace(/[.#$/\[\]]/g, '-').replace(/\s+/g, '-');
+      await _db.ref('/withdrawals/' + cleanKey).update({ ...doc, updatedAt: new Date().toISOString() });
+      return { ...doc, key: cleanKey };
+    }
+
+    case 'deleteWithdrawal': {
+      const { key } = payload;
+      await _db.ref('/withdrawals/' + key).remove();
+      return { deleted: true };
     }
 
     case 'createProject': {
@@ -659,6 +694,7 @@ window.__DATA = {
   machines: [],
   repairs: [],
   projects: [],
+  withdrawals: [],
   statuses: STATUSES,
   fmtDate, fmtDateTime
 };
@@ -677,6 +713,7 @@ window.__DATA.bootstrap = async function(){
   window.__DATA.machines   = d.machines   || [];
   window.__DATA.repairs    = d.repairs    || [];
   window.__DATA.projects   = d.projects   || [];
+  window.__DATA.withdrawals = d.withdrawals || [];
   return window.__DATA;
 };
 
@@ -889,6 +926,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
@@ -900,6 +938,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
@@ -909,6 +948,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"r-mine", icon:"fa-clipboard-check", label:"ติดตามสถานะ" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
@@ -2482,6 +2522,106 @@ window.Machines = Machines;
 </script>
 
 <script type="text/babel">
+function WithdrawalLogo(){
+  return (
+    <svg className="paper-logo" viewBox="0 0 180 210" aria-label="Panamanee logo">
+      <path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" strokeWidth="18" strokeLinecap="butt"/>
+      <path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" strokeWidth="18" strokeLinecap="butt"/>
+      <path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/>
+      <path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/>
+      <path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/>
+      <text x="90" y="188" textAnchor="middle" fontFamily="Tahoma,Arial,sans-serif" fontSize="14" fontWeight="700" fill="#155E95">บริษัท พานามณี จำกัด</text>
+      <text x="90" y="204" textAnchor="middle" fontFamily="Tahoma,Arial,sans-serif" fontSize="12" fill="#155E95">Panamanee Co., Ltd</text>
+    </svg>
+  );
+}
+
+function WithdrawalPaperPreview({doc,items}){
+  const clean = v => String(v ?? "").trim();
+  const formatThaiDate = (value) => {
+    if(!value) return "";
+    const d = new Date(value);
+    if(isNaN(d)) return value;
+    return d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"});
+  };
+  const rows = (items || []).map((x,i)=>({no:i+1,name:clean(x.name),qty:clean(x.qty),unit:clean(x.unit),remark:clean(x.remark)})).filter(x=>x.name||x.qty||x.unit||x.remark);
+  while(rows.length < 24) rows.push({no:rows.length+1,name:"",qty:"",unit:"",remark:""});
+  return (
+    <div className="withdrawal-paper-wrap">
+      <div className="withdrawal-paper">
+        <div className="paper-head">
+          <div><WithdrawalLogo/></div>
+          <div className="paper-title-block">
+            <div className="company">บริษัท พานามณี จำกัด</div>
+            <div className="doc-title">ใบขอเบิก/ขอสั่งซื้อ</div>
+          </div>
+          <div></div>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+          <div className="paper-meta-row">เลขที่ใบเบิก <span className="paper-line">{doc.docNo || ""}</span></div>
+          <div className="paper-meta-row">วันที่ <span className="paper-line">{formatThaiDate(doc.docDate)}</span></div>
+        </div>
+        <div className="paper-meta-row full">หน่วยงาน <span className="paper-line">{doc.department || doc.project || ""}</span></div>
+        <table className="item-table">
+          <thead>
+            <tr><th rowSpan="2" style={{width:"8%"}}>ลำดับ</th><th rowSpan="2" style={{width:"28%"}}>รายการ</th><th colSpan="2" style={{width:"18%"}}>จำนวนเบิก/ขอสั่งซื้อ</th><th rowSpan="2" style={{width:"12%"}}>ยอดคงเหลือ</th><th rowSpan="2" style={{width:"12%"}}>วันที่เบิกล่าสุด</th><th rowSpan="2" style={{width:"8%"}}>ราคา</th><th rowSpan="2" style={{width:"9%"}}>จำนวนเงิน</th><th rowSpan="2">หมายเหตุ</th></tr>
+            <tr><th>จำนวน</th><th>หน่วยนับ</th></tr>
+          </thead>
+          <tbody>{rows.map(item=><tr key={item.no}><td>{item.no}</td><td className="item-name">{item.name}</td><td>{item.qty}</td><td>{item.unit}</td><td>-</td><td>-</td><td>-</td><td>-</td><td>{item.remark}</td></tr>)}</tbody>
+        </table>
+        <div className="sign-grid"><div><div className="sign-line"></div><div>ผู้ขอเบิก/ขอสั่งซื้อ</div></div><div><div className="sign-line"></div><div>ผู้ตรวจสอบ</div></div><div><div className="sign-line"></div><div>ผู้อนุมัติ</div></div></div>
+      </div>
+    </div>
+  );
+}
+
+function Withdrawals({user}){
+  const canEdit = ["Admin","Officer","Director","Engineer"].includes(user.role);
+  const [rows,setRows] = React.useState(()=>window.__DATA.withdrawals || []);
+  const [q,setQ] = React.useState("");
+  const [edit,setEdit] = React.useState(null);
+  const clean = v => String(v ?? "").trim();
+  const safeKey = v => (clean(v) || `WD-${Date.now()}`).replace(/[.#$/\[\]]/g,"-").replace(/\s+/g,"-");
+  const parseItems = (doc) => Array.isArray(doc.items) ? doc.items : [];
+  const logoSvg = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+  const buildPdfHtml = (doc) => {
+    const fmt = v => { const d = new Date(v); return v && !isNaN(d) ? d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"}) : (v||""); };
+    const items = parseItems(doc).map((x,i)=>({...x,no:i+1}));
+    while(items.length < 24) items.push({no:items.length+1,name:"",qty:"",unit:"",remark:""});
+    const trs = items.map(item=>`<tr><td>${item.no}</td><td style="text-align:left;padding-left:8px">${item.name||""}</td><td>${item.qty||""}</td><td>${item.unit||""}</td><td>-</td><td>-</td><td>-</td><td>-</td><td style="text-align:left">${item.remark||""}</td></tr>`).join("");
+    return `<div style="font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:21mm 9mm 12mm;background:#fff;box-sizing:border-box;position:relative"><style>table.wd{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:40px}table.wd th,table.wd td{border:1px solid #000;padding:1px 4px;height:24px;line-height:1.05;text-align:center;vertical-align:middle}table.wd th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap;overflow:hidden}</style><div style="display:grid;grid-template-columns:38mm 1fr 50mm;gap:5mm;align-items:start;margin-bottom:6mm;position:relative;min-height:32mm"><div>${logoSvg}</div><div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:90mm;text-align:center"><div style="font-size:25px;font-weight:400">บริษัท พานามณี จำกัด</div><div style="font-size:24px;font-weight:400;margin-top:1mm">ใบขอเบิก/ขอสั่งซื้อ</div></div><div></div></div><div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;font-weight:400;margin-bottom:7mm"><div>เลขที่ใบเบิก <span style="border-bottom:1px dotted #000;display:inline-block;min-width:34mm;text-align:center">${doc.docNo||""}</span></div><div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:36mm;text-align:center">${fmt(doc.docDate)}</span></div></div><div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;font-weight:400;margin-bottom:10mm"><span>หน่วยงาน</span><span style="border-bottom:1px dotted #000;display:inline-block;flex:1;padding-left:4mm">${doc.department||doc.project||""}</span></div><table class="wd"><thead><tr><th rowspan="2" style="width:11mm">ลำดับ</th><th rowspan="2" style="width:53mm">รายการ</th><th colspan="2" style="width:34mm">จำนวนเบิก/ขอสั่งซื้อ</th><th rowspan="2" style="width:21mm">ยอดคงเหลือ</th><th rowspan="2" style="width:22mm">วันที่เบิกล่าสุด</th><th rowspan="2" style="width:15mm">ราคา</th><th rowspan="2" style="width:18mm">จำนวนเงิน</th><th rowspan="2">หมายเหตุ</th></tr><tr><th>จำนวน</th><th>หน่วยนับ</th></tr></thead><tbody>${trs}</tbody></table><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:7mm;font-size:17px;text-align:center"><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ขอเบิก/ขอสั่งซื้อ</div></div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ตรวจสอบ</div></div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div></div></div></div>`;
+  };
+  const pdfName = doc => `${clean(doc.docNo||"withdrawal").replace(/[\\/:*?"<>|]/g,"-")}.pdf`;
+  const downloadPdf = async (doc) => {
+    if(!window.html2pdf){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF"}); return; }
+    const el = document.createElement("div"); el.innerHTML = buildPdfHtml(doc); document.body.appendChild(el);
+    try{ await html2pdf().set({margin:0,filename:pdfName(doc),image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save(); }
+    finally{ el.remove(); }
+  };
+  const save = async (form) => {
+    const key = form.key || safeKey(form.docNo);
+    const saved = await window.api("upsertWithdrawal",{key,doc:{...form,id:form.docNo||key}});
+    const upd = rows.some(x=>x.key===saved.key) ? rows.map(x=>x.key===saved.key?saved:x) : [saved,...rows];
+    setRows(upd); window.__DATA.withdrawals = upd; setEdit(null);
+    Swal.fire({icon:"success",title:"บันทึกรายการเบิกแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+  };
+  const remove = (doc) => Swal.fire({title:"ลบรายการเบิก?",icon:"warning",showCancelButton:true,confirmButtonText:"ลบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#EF4444"}).then(async r=>{ if(!r.isConfirmed) return; await window.api("deleteWithdrawal",{key:doc.key}); const upd=rows.filter(x=>x.key!==doc.key); setRows(upd); window.__DATA.withdrawals=upd; });
+  const filtered = rows.filter(x=>!q || [x.docNo,x.docDate,x.project,x.department,x.requester].join(" ").toLowerCase().includes(q.toLowerCase()));
+  return <><div className="card"><div className="filters"><div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input value={q} onChange={e=>setQ(e.target.value)} placeholder="ค้นหาเลขที่ใบเบิก / โครงการ / หน่วยงาน..." /></div><div className="spacer"></div>{canEdit&&<button className="btn btn-primary" onClick={()=>setEdit({docNo:"",docDate:window.__DATA.fmtDate(new Date()),project:"",department:"",requester:"",items:[{name:"",qty:"",unit:"",remark:""}],note:""})}><i className="fa-solid fa-plus"></i> เพิ่มรายการเบิก</button>}</div><div className="table-wrap"><table className="data"><thead><tr><th>เลขที่</th><th>วันที่</th><th>หน่วยงาน/โครงการ</th><th>ผู้เบิก</th><th>รายการ</th><th>PDF</th><th></th></tr></thead><tbody>{filtered.map(doc=><tr key={doc.key||doc.docNo}><td><span className="ticket-id">{doc.docNo||"-"}</span></td><td>{doc.docDate||"-"}</td><td>{doc.department||doc.project||"-"}</td><td>{doc.requester||"-"}</td><td>{parseItems(doc).length.toLocaleString("th-TH")}</td><td><button className="btn btn-sm btn-ghost" onClick={()=>downloadPdf(doc)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td><td>{canEdit&&<div className="row-actions"><button className="ia" onClick={()=>setEdit(doc)}><i className="fa-solid fa-pen"></i></button><button className="ia danger" onClick={()=>remove(doc)}><i className="fa-solid fa-trash"></i></button></div>}</td></tr>)}{filtered.length===0&&<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-invoice"></i><div className="t">ยังไม่มีรายการเบิกของ</div><div>กดเพิ่มรายการเบิกเพื่อเริ่มต้น</div></div></td></tr>}</tbody></table></div></div>{edit&&<WithdrawalForm initial={edit} onClose={()=>setEdit(null)} onSave={save}/>}</>;
+}
+
+function WithdrawalForm({initial,onClose,onSave}){
+  const [f,setF] = React.useState(initial);
+  const [items,setItems] = React.useState(()=>Array.isArray(initial.items)&&initial.items.length?initial.items:[{name:"",qty:"",unit:"",remark:""}]);
+  const up = (k,v)=>setF(p=>({...p,[k]:v}));
+  const upItem = (i,k,v)=>setItems(prev=>prev.map((x,idx)=>idx===i?{...x,[k]:v}:x));
+  const addItem = ()=>setItems(prev=>[...prev,{name:"",qty:"",unit:"",remark:""}]);
+  const removeItem = i=>setItems(prev=>prev.length<=1?[{name:"",qty:"",unit:"",remark:""}]:prev.filter((_,idx)=>idx!==i));
+  const cleanItems = items.map(x=>({name:String(x.name||"").trim(),qty:String(x.qty||"").trim(),unit:String(x.unit||"").trim(),remark:String(x.remark||"").trim()})).filter(x=>x.name||x.qty||x.unit||x.remark);
+  const submit = e => { e.preventDefault(); if(!String(f.docNo||"").trim()){ Swal.fire({icon:"warning",title:"กรอกเลขที่ใบเบิกก่อน"}); return; } if(!cleanItems.length){ Swal.fire({icon:"warning",title:"เพิ่มรายการอย่างน้อย 1 รายการ"}); return; } onSave({...f,items:cleanItems}); };
+  return <Modal open={true} onClose={onClose} size="xl" title={<><i className="fa-solid fa-file-invoice" style={{marginRight:8,color:"var(--primary)"}}></i>{f.key?"แก้ไขรายการเบิก":"เพิ่มรายการเบิก"}</>} footer={<><button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึก</button></>}><form onSubmit={submit}><div className="form-grid"><div className="form-field"><label>เลขที่ใบเบิก *</label><input value={f.docNo||""} onChange={e=>up("docNo",e.target.value)} placeholder="PN-202604-017" /></div><div className="form-field"><label>วันที่</label><input type="date" value={f.docDate||""} onChange={e=>up("docDate",e.target.value)} /></div><div className="form-field"><label>ผู้เบิก</label><input value={f.requester||""} onChange={e=>up("requester",e.target.value)} /></div><div className="form-field"><label>หน่วยงาน</label><input value={f.department||""} onChange={e=>up("department",e.target.value)} /></div><div className="form-field" style={{gridColumn:"1/-1"}}><label>โครงการ</label><input value={f.project||""} onChange={e=>up("project",e.target.value)} /></div><div className="form-field" style={{gridColumn:"1/-1"}}><label>รายการเบิก</label><div className="table-wrap" style={{border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}><table className="data"><thead><tr><th style={{width:44}}>#</th><th>ชื่อรายการ</th><th style={{width:120}}>จำนวน</th><th style={{width:120}}>หน่วย</th><th>หมายเหตุ</th><th style={{width:48}}></th></tr></thead><tbody>{items.map((item,idx)=><tr key={idx}><td style={{textAlign:"center"}}>{idx+1}</td><td><input value={item.name||""} onChange={e=>upItem(idx,"name",e.target.value)} /></td><td><input value={item.qty||""} onChange={e=>upItem(idx,"qty",e.target.value)} /></td><td><input value={item.unit||""} onChange={e=>upItem(idx,"unit",e.target.value)} /></td><td><input value={item.remark||""} onChange={e=>upItem(idx,"remark",e.target.value)} /></td><td><button type="button" className="ia danger" onClick={()=>removeItem(idx)}><i className="fa-solid fa-trash"></i></button></td></tr>)}</tbody></table></div><button type="button" className="btn btn-ghost btn-sm" style={{marginTop:10}} onClick={addItem}><i className="fa-solid fa-plus"></i> เพิ่มแถวรายการ</button></div><div className="form-field" style={{gridColumn:"1/-1"}}><label>หมายเหตุ</label><textarea rows="3" value={f.note||""} onChange={e=>up("note",e.target.value)}></textarea></div></div><div className="withdrawal-preview-title"><span><i className="fa-solid fa-file-lines" style={{color:"var(--primary)",marginRight:8}}></i>แบบฟอร์มใบเบิกที่จะออกเป็น PDF</span><span style={{fontSize:12,color:"var(--muted)",fontWeight:400}}>24 แถวต่อหน้า</span></div><WithdrawalPaperPreview doc={f} items={items}/></form></Modal>;
+}
+
 function DocPJ2({user}){
   const [rows,setRows] = React.useState(()=>window.filterByUserProjects(user,window.__DATA.machines,"project"));
   const [q,setQ] = React.useState("");
@@ -3026,6 +3166,7 @@ function App(){
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
     "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
+    "withdrawals":{t:"รายการเบิกของ",c:"ERP Withdrawal · ใบขอเบิก/ขอสั่งซื้อ 24 แถวต่อหน้า"},
     "doc-pj2":{t:"ปจ2 - เอกสารรับรองการตรวจสอบและทดสอบ",c:"ลิงค์ไฟล์เอกสารตามรายการเครื่องจักร"},
     "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
     "login-logs":{t:"ประวัติการล็อกอิน",c:"บันทึกการเข้าสู่ระบบของผู้ใช้ทั้งหมด · เฉพาะ Admin"},
@@ -3042,6 +3183,7 @@ function App(){
     if(page==="users") return <Users user={user}/>;
     if(page==="categories") return <Categories user={user}/>;
     if(page==="machines") return <Machines user={user}/>;
+    if(page==="withdrawals") return <Withdrawals user={user}/>;
     if(page==="doc-pj2") return <DocPJ2 user={user}/>;
     if(page==="transfer-history") return <MachineTransferHistory user={user}/>;
     if(page==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
