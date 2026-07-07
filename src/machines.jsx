@@ -1,9 +1,7 @@
 function Machines({user}){
-  const allowAll = window.userCanSeeAllProjects(user);
-  const allowed = new Set(user.projects||[]);
   const visibleRows = React.useMemo(()=>(
-    allowAll ? window.__DATA.machines : window.__DATA.machines.filter(m=>!m.project || allowed.has(m.project))
-  ),[allowAll]);
+    window.filterByUserProjects(user, window.__DATA.machines, "project")
+  ),[user]);
 
   const [rows,setRows] = React.useState(visibleRows);
   const [q,setQ] = React.useState("");

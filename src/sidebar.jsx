@@ -2,36 +2,37 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
   const isTech = user.role==="Technician";
   const isReporter = user.role==="Reporter" || user.role==="Engineer";
+  const systemId = user.activeErp?.id || "repairs";
 
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
-    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
   ];
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
-    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   const reporterNav = [
     { key:"r-dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"r-mine", icon:"fa-clipboard-check", label:"ติดตามสถานะ" },
-    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
-  const nav = isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const assetNav = [
+    { key:"machines", icon:"fa-boxes-stacked", label:"Asset" },
+  ];
+  const nav = systemId==="assets" ? assetNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
 
   return (
     <>
       {open && <div className="sidebar-scrim show" onClick={onClose}></div>}
       <aside className={`sidebar ${open?"open":""}`}>
-        <div className="brand">
-          <div className="mark"><i className="fa-solid fa-screwdriver-wrench"></i></div>
+          <div className="brand">
+          <div className="mark"><i className={`fa-solid ${user.activeErp?.icon || "fa-screwdriver-wrench"}`}></i></div>
           <div className="t">
-            ระบบแจ้งซ่อม
-            <small>เครื่องจักร · Machine Repair</small>
+            {user.activeErp?.name || "ระบบแจ้งซ่อม"}
+            <small>{systemId==="assets" ? "Asset Management" : "Machine Repair"}</small>
           </div>
         </div>
         <nav className="nav">

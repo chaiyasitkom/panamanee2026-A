@@ -16,6 +16,15 @@ const PROJECTS = [
   "สำนักงานใหญ่ - ชั้น 3","สำนักงานใหญ่ - ห้องเซิร์ฟเวอร์","โรงงาน C - แผนก QC"
 ];
 
+const ERP_SYSTEMS = [
+  { id:"repairs", name:"งานซ่อม", desc:"แจ้งซ่อม ติดตามงาน และบริหารงานซ่อม", icon:"fa-screwdriver-wrench", status:"ready", startPage:"dashboard" },
+  { id:"production", name:"Production", desc:"รอพัฒนา", icon:"fa-industry", status:"soon" },
+  { id:"assets", name:"Asset", desc:"ทะเบียนและข้อมูลทรัพย์สิน/เครื่องจักร", icon:"fa-boxes-stacked", status:"ready", startPage:"machines" },
+  { id:"consume", name:"Consume", desc:"สำหรับเบิกจ่ายเช็คสต๊อก (รอพัฒนา)", icon:"fa-box-open", status:"soon" },
+  { id:"pc", name:"PC (Petty Cash)", desc:"รอพัฒนา", icon:"fa-money-bill-wave", status:"soon" },
+  { id:"hr-time", name:"บุคลากร/เวลาทำงาน", desc:"รอพัฒนา", icon:"fa-users", status:"soon" },
+];
+
 function fmtDate(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function fmtDateTime(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${fmtDate(d)} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
 
@@ -27,6 +36,9 @@ window.__DATA = {
   repairs: [],
   statuses: STATUSES,
   projects: PROJECTS,
+  erpSystems: ERP_SYSTEMS,
+  activeErp: null,
+  activeProject: "",
   fmtDate, fmtDateTime
 };
 
@@ -45,6 +57,7 @@ window.__DATA.bootstrap = async function(){
   window.__DATA.categories = d.categories || [];
   window.__DATA.machines   = d.machines   || [];
   window.__DATA.repairs    = d.repairs    || [];
+  if (Array.isArray(d.projects) && d.projects.length) window.__DATA.projects = d.projects;
   return window.__DATA;
 };
 
@@ -52,12 +65,15 @@ window.__DATA.bootstrap = async function(){
 window.getStatus = (key) => STATUSES.find(s=>s.key===key) || STATUSES[0];
 window.getCategory = (id) => window.__DATA.categories.find(c=>c.id===id) || {name:"-",color:"#64748B",icon:"fa-circle"};
 window.getUser = (id) => window.__DATA.users.find(u=>u.id===id);
+window.getActiveProject = (user) => user?.activeProject || window.__DATA.activeProject || "";
+window.getActiveErp = (user) => user?.activeErp || window.__DATA.activeErp || null;
 
 // ====== PROJECT ACCESS CONTROL ======
 // ถ้า user.projects ว่างหรือเป็น Admin/Director → เห็นทุกโครงการ
 // ถ้าไม่ใช่ → เห็นเฉพาะโครงการที่อยู่ใน user.projects
 window.userCanSeeAllProjects = (user) => {
   if(!user) return false;
+  if(window.getActiveProject(user)) return false;
   if(["Admin","Director"].includes(user.role)) return true;
   // Engineer → จำกัดเฉพาะโครงการที่ระบุเท่านั้น (ถ้าไม่ได้ระบุ = ไม่เห็นโครงการใดเลย)
   if(user.role==="Engineer") return false;
@@ -66,18 +82,25 @@ window.userCanSeeAllProjects = (user) => {
 };
 window.userProjects = (user) => {
   if(!user) return [];
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return [activeProject];
   if(window.userCanSeeAllProjects(user)) {
-    // คืนรายการโครงการที่มีในระบบทั้งหมด (จาก machines)
+    const fromProjects = (window.__DATA.projects||[]).map(p => typeof p === "string" ? p : p.name).filter(Boolean);
+    if(fromProjects.length) return fromProjects;
     return Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean)));
   }
   return Array.isArray(user.projects) ? user.projects : [];
 };
 window.userCanSeeProject = (user, project) => {
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return !project || project === activeProject;
   if(window.userCanSeeAllProjects(user)) return true;
   if(!project) return true; // data ที่ไม่ระบุโครงการ ให้เห็นได้
   return (user.projects||[]).includes(project);
 };
 window.filterByUserProjects = (user, items, projectKey="project") => {
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return items.filter(x => !x[projectKey] || x[projectKey] === activeProject);
   if(window.userCanSeeAllProjects(user)) return items;
   const allowed = new Set(user.projects||[]);
   return items.filter(x => !x[projectKey] || allowed.has(x[projectKey]));

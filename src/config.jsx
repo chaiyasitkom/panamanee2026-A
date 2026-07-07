@@ -14,6 +14,68 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 
 const _db = firebase.database();
+const CONFIG_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyOLdoS83MVCh5ThGUf7WbR3IrNU2dfKL2P-dcde4PjJ8o6-tsb7ZItHdo8TmVBn_w6/exec';
+
+async function getAppsScriptUrl() {
+  const current = window.APPS_SCRIPT_URL || localStorage.getItem('APPS_SCRIPT_URL') || CONFIG_APPS_SCRIPT_URL;
+  if (current) return current;
+  if (!window.Swal) return '';
+  const r = await Swal.fire({
+    icon: 'info',
+    title: 'ตั้งค่า Google Apps Script URL',
+    input: 'url',
+    inputPlaceholder: 'https://script.google.com/macros/s/XXXXXXXXXXXX/exec',
+    text: 'วาง Web app URL ที่ Deploy จาก backend/Code.gs เพื่อให้อัปโหลดไฟล์ไป Google Drive ได้',
+    showCancelButton: true,
+    confirmButtonText: 'บันทึก',
+    cancelButtonText: 'ยกเลิก',
+    inputValidator: (v) => {
+      if (!v) return 'กรุณาวาง Web app URL';
+      if (!String(v).includes('script.google.com') || !String(v).includes('/exec')) return 'URL ต้องเป็น Google Apps Script Web app ที่ลงท้าย /exec';
+      return null;
+    }
+  });
+  if (!r.isConfirmed) return '';
+  localStorage.setItem('APPS_SCRIPT_URL', r.value);
+  window.APPS_SCRIPT_URL = r.value;
+  return r.value;
+}
+
+async function callAppsScript(action, payload = {}) {
+  const APPS_SCRIPT_URL = await getAppsScriptUrl();
+  if (!APPS_SCRIPT_URL) {
+    throw new Error('ยังไม่ได้ตั้งค่า APPS_SCRIPT_URL สำหรับอัปโหลดไฟล์ไป Google Drive');
+  }
+  const body = JSON.stringify({ action, ...payload });
+  let res;
+  try {
+    res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+    });
+  } catch (firstErr) {
+    try {
+      const form = new FormData();
+      form.append('payload', body);
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: form });
+    } catch (secondErr) {
+      throw new Error('เชื่อมต่อ Apps Script ไม่สำเร็จ: ตรวจสอบว่า Web app URL ลงท้าย /exec, Deploy เป็น New version แล้ว, Execute as: Me และ Who has access: Anyone');
+    }
+  }
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('Apps Script ตอบ 401 Unauthorized: Deployment ยังบังคับให้ login อยู่ กรุณาตั้ง Who has access: Anyone');
+    }
+    if (res.status === 403) {
+      throw new Error('Apps Script ตอบ 403 Forbidden: กรุณา Deploy เป็น Web app โดยตั้ง Execute as: Me และ Who has access: Anyone');
+    }
+    throw new Error(`Apps Script HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || 'Apps Script error');
+  return json.data;
+}
 
 async function _nextId(collection, prefix, pad) {
   const snap = await _db.ref('/' + collection).get();
@@ -143,6 +205,10 @@ async function api(action, payload = {}) {
       const { id } = payload;
       await _db.ref('/machines/' + id).remove();
       return { deleted: true };
+    }
+
+    case 'uploadPJ2Document': {
+      return callAppsScript('uploadPJ2Document', payload);
     }
 
     case 'createRepair': {

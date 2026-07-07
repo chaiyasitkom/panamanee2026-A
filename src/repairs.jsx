@@ -1,9 +1,7 @@
 function Repairs({user}){
-  const allowAll = window.userCanSeeAllProjects(user);
-  const allowed = new Set(user.projects||[]);
   const visibleRows = React.useMemo(()=>(
-    allowAll ? window.__DATA.repairs : window.__DATA.repairs.filter(r=>!r.project || allowed.has(r.project))
-  ),[allowAll]);
+    window.filterByUserProjects(user, window.__DATA.repairs, "project")
+  ),[user]);
 
   const [rows,setRows] = React.useState(visibleRows);
   React.useEffect(()=>{ setRows(visibleRows); },[visibleRows]);

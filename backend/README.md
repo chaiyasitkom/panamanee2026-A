@@ -7,6 +7,7 @@
 | Sheet หลัก | `1TK9qhEbPhMNjygRD2dvibW2IY8MrSI0ORqW2nIbbUFw` | Repairs · Machines · Categories · Timeline |
 | Sheet Users | `1CngMtXwDz8v0whavy_8bC481-npc3hROPpjk6tTHv4w` | Users |
 | Drive Folder | `1jZPV5NDh374VMnm4H_hOLkA6tWArjIQW` | รูปภาพก่อน/หลังซ่อม (แยกโฟลเดอร์ตามเลข RE-69/xxx) |
+| Drive Folder ปจ2 | `1VmAbHD3wktQ0vqcpixnDXGVf4mWwXqiD` | เอกสารรับรองการตรวจสอบและทดสอบ ปจ2 |
 
 ## 1. สร้างโปรเจค Apps Script
 1. เปิด https://script.google.com → **New project**
@@ -38,7 +39,7 @@
 เปิด `src/config.jsx` แก้ค่า `APPS_SCRIPT_URL` เป็น URL ใหม่ที่ได้
 
 ```js
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/XXXXXXXXXXXX/exec";
+const CONFIG_APPS_SCRIPT_URL = "https://script.google.com/macros/s/XXXXXXXXXXXX/exec";
 ```
 
 ## 6. ถ้าแก้โค้ดแล้วไม่อัพเดต
@@ -51,7 +52,7 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/XXXXXXXXXXXX/exec";
 ---
 
 ## API Actions
-`ping` · `login` · `bootstrap` · `listRepairs` · `createRepair` · `updateRepairStatus` · `uploadAfterPhotos` ·
+`ping` · `login` · `bootstrap` · `listRepairs` · `createRepair` · `updateRepairStatus` · `uploadAfterPhotos` · `uploadPJ2Document` ·
 `listUsers` / `createUser` / `updateUser` / `deleteUser` ·
 `listCategories` / `createCategory` / `updateCategory` / `deleteCategory` ·
 `listMachines` / `createMachine` / `updateMachine` / `deleteMachine`

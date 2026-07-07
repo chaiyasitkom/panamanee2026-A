@@ -12,9 +12,7 @@ function Dashboard({user,goTo}){
   },[]);
 
   const repairs = React.useMemo(()=>{
-    if(window.userCanSeeAllProjects(user)) return window.__DATA.repairs;
-    const allowed = new Set(user.projects||[]);
-    return window.__DATA.repairs.filter(r=>!r.project || allowed.has(r.project));
+    return window.filterByUserProjects(user, window.__DATA.repairs, "project");
   },[user]);
 
   // ====== Cost analytics ======

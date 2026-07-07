@@ -25,6 +25,9 @@ const SHEET_ID_MAIN  = '1TK9qhEbPhMNjygRD2dvibW2IY8MrSI0ORqW2nIbbUFw';
 // Sheet สำหรับเก็บ User แยกต่างหาก
 const SHEET_ID_USERS = '1CngMtXwDz8v0whavy_8bC481-npc3hROPpjk6tTHv4w';
 const FOLDER_ID      = '1jZPV5NDh374VMnm4H_hOLkA6tWArjIQW';
+const PJ2_FOLDER_ID  = '1VmAbHD3wktQ0vqcpixnDXGVf4mWwXqiD';
+// Drive folder สำหรับเอกสารประกัน (PL)
+const PL_FOLDER_ID   = '1xNxRoBKbjvu-bVl-C8_Rin2etfFEcSuD';
 
 // map แต่ละ tab ไปยัง spreadsheet ที่ต้องการ
 const TAB_SHEET = {
@@ -49,7 +52,7 @@ const HEADERS = {
                'status','reporterId','reporterName','assignedId','cost','machineCode',
                'photos','afterPhotos','updatedAt'],
   Categories: ['id','name','color','icon'],
-  Machines:   ['id','project','code','name','brand','model','size','serial','ownership','categoryId','note','status','location','lastService','hours','icon','photo','driveId'],
+  Machines:   ['id','project','code','name','brand','model','size','serial','ownership','categoryId','note','status','location','lastService','hours','icon','photo','driveId','driverName','drivePhoto','driveLink1','driveLink2','driveLinkPL','inspectionDate','nextInspectionDate'],
   Timeline:   ['id','repairId','status','when','by','note'],
 };
 
@@ -63,6 +66,9 @@ function handle_(e, method) {
     let body = {};
     if (method === 'POST' && e.postData && e.postData.contents) {
       try { body = JSON.parse(e.postData.contents); } catch (err) { body = {}; }
+    }
+    if (method === 'POST' && p.payload && !Object.keys(body).length) {
+      try { body = JSON.parse(p.payload); } catch (err) { body = {}; }
     }
     const action = body.action || p.action || 'ping';
     const fn = ACTIONS[action];
@@ -279,7 +285,7 @@ const ACTIONS = {
       const folder = getOrCreateMachineFolder_(m.code || m.id);
       const blob = Utilities.newBlob(Utilities.base64Decode(photoUpload.data), photoUpload.mimeType, photoUpload.name);
       const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      safeShareFile_(file);
       m.photo = file.getUrl();
     }
     appendRow_(TABS.MACHINES, m);
@@ -290,7 +296,7 @@ const ACTIONS = {
       const folder = getOrCreateMachineFolder_(patch.code || id);
       const blob = Utilities.newBlob(Utilities.base64Decode(photoUpload.data), photoUpload.mimeType, photoUpload.name);
       const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      safeShareFile_(file);
       patch.photo = file.getUrl();
     }
     return { updated: updateRow_(TABS.MACHINES, id, patch), photo: patch.photo };
@@ -322,7 +328,7 @@ const ACTIONS = {
       uploads.forEach(u => {
         const blob = Utilities.newBlob(Utilities.base64Decode(u.data), u.mimeType, u.name);
         const file = folder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        safeShareFile_(file);
         photoUrls.push(file.getUrl());
       });
     }
@@ -391,13 +397,41 @@ const ACTIONS = {
     (uploads || []).forEach(u => {
       const blob = Utilities.newBlob(Utilities.base64Decode(u.data), u.mimeType, 'after-' + u.name);
       const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      safeShareFile_(file);
       urls.push(file.getUrl());
     });
     const rows = readAll_(TABS.REPAIRS).find(r => r.id === repairId);
     const prev = rows && Array.isArray(rows.afterPhotos) ? rows.afterPhotos : [];
     updateRow_(TABS.REPAIRS, repairId, { afterPhotos: prev.concat(urls) });
     return { urls };
+  },
+
+  uploadPJ2Document: ({ machineId, machineCode, slot, upload }) => {
+    if (!upload || !upload.data) throw new Error('Missing upload data');
+    const isPL = String(slot || '').toUpperCase() === 'PL';
+    const cleanSlot = isPL ? 'PL' : (String(slot || '').replace(/[^12]/g, '') || '1');
+    const folder = isPL
+      ? getOrCreatePLFolder_(machineCode || machineId || 'PL')
+      : getOrCreatePJ2Folder_(machineCode || machineId || 'PJ2');
+    const safeName = String(upload.name || ('document-' + cleanSlot))
+      .replace(/[\\/:*?"<>|#%{}]/g, '-');
+    const fileName = (isPL ? 'PL-doc-' : ('PJ2-doc' + cleanSlot + '-')) + safeName;
+    const blob = Utilities.newBlob(
+      Utilities.base64Decode(upload.data),
+      upload.mimeType || 'application/octet-stream',
+      fileName
+    );
+    const file = folder.createFile(blob);
+    const sharing = safeShareFile_(file);
+    return {
+      url: file.getUrl(),
+      id: file.getId(),
+      name: file.getName(),
+      sharing,
+      machineId,
+      machineCode,
+      slot: cleanSlot,
+    };
   },
 };
 
@@ -412,6 +446,74 @@ function getOrCreateMachineFolder_(code) {
   const name = 'Machine-' + code;
   const it = root.getFoldersByName(name);
   return it.hasNext() ? it.next() : root.createFolder(name);
+}
+function getOrCreatePJ2Folder_(code) {
+  const parent = getPJ2RootFolder_();
+  const name = 'Machine-' + code;
+  const it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+/**
+ * หา "โฟลเดอร์แม่" สำหรับเก็บเอกสาร ปจ2
+ * ลำดับ fallback (กันปัญหา "Access denied: DriveApp"):
+ *  1) ใช้ PJ2_FOLDER_ID ถ้าบัญชีที่รัน Apps Script เข้าถึงได้
+ *  2) ถ้าเข้าไม่ได้ → ใช้ FOLDER_ID (โฟลเดอร์เดียวกับที่อัปโหลดรูปซ่อม) โดยสร้างซับโฟลเดอร์ "PJ2"
+ *  3) ถ้ายังไม่ได้ → สร้างโฟลเดอร์ "PJ2 Documents (ปจ2)" ไว้ใน Drive ของบัญชีที่รันเอง
+ * ทำให้ไฟล์ถูกบันทึกลง Drive ของบัญชีเจ้าของเสมอ ไม่พังเพราะสิทธิ์โฟลเดอร์
+ */
+function getPJ2RootFolder_() {
+  if (PJ2_FOLDER_ID) {
+    try { return DriveApp.getFolderById(PJ2_FOLDER_ID); }
+    catch (err) { /* เข้าไม่ได้ → ลอง fallback ถัดไป */ }
+  }
+  if (FOLDER_ID) {
+    try {
+      const base = DriveApp.getFolderById(FOLDER_ID);
+      const it = base.getFoldersByName('PJ2');
+      return it.hasNext() ? it.next() : base.createFolder('PJ2');
+    } catch (err) { /* เข้าไม่ได้ → ลอง fallback ถัดไป */ }
+  }
+  const name = 'PJ2 Documents (ปจ2)';
+  const it = DriveApp.getRootFolder().getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+/**
+ * โฟลเดอร์เก็บเอกสารประกัน (PL) — แยกซับโฟลเดอร์ตามรหัสเครื่องจักร
+ * ใช้ fallback แบบเดียวกับ ปจ2 กันปัญหาสิทธิ์เข้าถึง
+ */
+function getOrCreatePLFolder_(code) {
+  const parent = getPLRootFolder_();
+  const name = 'Machine-' + code;
+  const it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : parent.createFolder(name);
+}
+function getPLRootFolder_() {
+  if (PL_FOLDER_ID) {
+    try { return DriveApp.getFolderById(PL_FOLDER_ID); }
+    catch (err) { /* เข้าไม่ได้ → ลอง fallback ถัดไป */ }
+  }
+  if (FOLDER_ID) {
+    try {
+      const base = DriveApp.getFolderById(FOLDER_ID);
+      const it = base.getFoldersByName('PL');
+      return it.hasNext() ? it.next() : base.createFolder('PL');
+    } catch (err) { /* เข้าไม่ได้ → ลอง fallback ถัดไป */ }
+  }
+  const name = 'PL Documents (ประกัน)';
+  const it = DriveApp.getRootFolder().getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+function safeShareFile_(file) {
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return { ok:true, access:'ANYONE_WITH_LINK' };
+  } catch (err) {
+    return {
+      ok:false,
+      access:'PRIVATE',
+      error:String(err && err.message || err),
+    };
+  }
 }
 
 // ========== SETUP / SEED (run manually once) ==========

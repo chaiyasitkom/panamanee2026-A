@@ -4,7 +4,7 @@ function ReporterDashboard({user,goTo}){
     if(user.role==="Engineer"){
       return window.filterByUserProjects(user, window.__DATA.repairs, "project");
     }
-    return window.__DATA.repairs.filter(r=>r.reporterId===user.id);
+    return window.filterByUserProjects(user, window.__DATA.repairs.filter(r=>r.reporterId===user.id), "project");
   },[user]);
   const counts = {
     all: mine.length,
@@ -82,13 +82,10 @@ function ReporterDashboard({user,goTo}){
 function NewRequest({user,goTo}){
   // โครงการ: ดึงเฉพาะจาก machines + จำกัดตามสิทธิ์ของ user
   const allProjects = React.useMemo(()=>{
-    const all = Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean)));
-    if(window.userCanSeeAllProjects(user)) return all;
-    const allowed = new Set(user.projects||[]);
-    return all.filter(p=>allowed.has(p));
+    return window.userProjects(user);
   },[user]);
 
-  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:"",machineCode:"",siteId:""});
+  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:window.getActiveProject(user)||"",machineCode:"",siteId:""});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{
@@ -275,7 +272,7 @@ function MyRepairs({user}){
     if(user.role==="Engineer"){
       return window.filterByUserProjects(user, window.__DATA.repairs, "project");
     }
-    return window.__DATA.repairs.filter(r=>r.reporterId===user.id);
+    return window.filterByUserProjects(user, window.__DATA.repairs.filter(r=>r.reporterId===user.id), "project");
   });
   const [detail,setDetail] = React.useState(null);
 
