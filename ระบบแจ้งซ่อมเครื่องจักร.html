@@ -81,6 +81,51 @@ a{color:inherit;text-decoration:none}
 .login-btn:hover{background:var(--primary-dark)}
 .login-btn:active{transform:translateY(1px)}
 @media (max-width:900px){.login-wrap{grid-template-columns:1fr}.login-brand{padding:32px;min-height:200px}.login-hero h1{font-size:28px}.login-hero p{font-size:15px}}
+/* ===== One Workspace Login ===== */
+.ow-login{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:1.05fr .95fr;background:var(--bg)}
+.ow-brand{position:relative;overflow:hidden;padding:56px 60px;color:#fff;display:flex;flex-direction:column;justify-content:space-between;gap:40px;background:radial-gradient(125% 125% at 0% 0%,#1E3A8A 0%,#172554 55%,#0B1220 100%);}
+.ow-aurora{position:absolute;inset:0;pointer-events:none;background:radial-gradient(40% 40% at 16% 12%,rgba(59,130,246,.45),transparent 60%),radial-gradient(46% 46% at 86% 86%,rgba(139,92,246,.34),transparent 60%),radial-gradient(30% 30% at 78% 14%,rgba(14,165,233,.28),transparent 60%);}
+.ow-grid-bg{position:absolute;inset:0;opacity:.06;background-image:linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px);background-size:52px 52px;-webkit-mask-image:radial-gradient(120% 100% at 50% 0%,#000 42%,transparent 100%);mask-image:radial-gradient(120% 100% at 50% 0%,#000 42%,transparent 100%);}
+.ow-top,.ow-hero,.ow-foot{position:relative;z-index:1}
+.ow-logo{display:flex;align-items:center;gap:13px}
+.ow-logo-mark{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:20px;background:linear-gradient(145deg,rgba(255,255,255,.22),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.25);box-shadow:0 8px 24px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.3)}
+.ow-logo-name{font-size:19px;font-weight:600;letter-spacing:.2px}
+.ow-logo-sub{font-size:12px;font-weight:300;color:rgba(255,255,255,.55);margin-top:1px;letter-spacing:.3px}
+.ow-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:#BFDBFE;padding:6px 13px;border-radius:999px;background:rgba(59,130,246,.16);border:1px solid rgba(147,197,253,.28);margin-bottom:22px}
+.ow-hero h1{font-size:46px;line-height:1.12;margin:0 0 18px;font-weight:600;letter-spacing:-.02em}
+.ow-accent{background:linear-gradient(90deg,#60A5FA,#A78BFA);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ow-hero p{font-size:16px;color:rgba(255,255,255,.72);max-width:460px;margin:0 0 30px;line-height:1.6}
+.ow-modules{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-width:480px}
+.ow-mod{display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:13px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);transition:transform .2s,background .2s,border-color .2s}
+.ow-mod.is-ready:hover{background:rgba(255,255,255,.11);border-color:rgba(147,197,253,.4);transform:translateY(-2px)}
+.ow-mod-icon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:14px;flex:0 0 auto;background:rgba(59,130,246,.2);color:#93C5FD}
+.ow-mod.is-soon .ow-mod-icon{background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)}
+.ow-mod-name{flex:1;min-width:0;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ow-mod.is-soon .ow-mod-name{color:rgba(255,255,255,.6)}
+.ow-mod-dot{width:8px;height:8px;border-radius:50%;background:#34D399;box-shadow:0 0 0 3px rgba(52,211,153,.2);flex:0 0 auto}
+.ow-mod-soon{font-size:10.5px;color:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.16);padding:2px 7px;border-radius:999px;flex:0 0 auto;white-space:nowrap}
+.ow-foot{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:rgba(255,255,255,.5);gap:12px}
+.ow-foot i{margin-right:6px}
+.ow-auth{display:grid;place-items:center;padding:40px}
+.ow-card{width:100%;max-width:400px}
+.ow-card-badge{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;font-size:22px;color:#fff;margin-bottom:20px;background:linear-gradient(145deg,var(--accent),var(--primary));box-shadow:0 12px 28px -8px rgba(30,64,175,.55)}
+.ow-card h2{font-size:27px;margin:0 0 7px;font-weight:600;letter-spacing:-.01em}
+.ow-card-sub{color:var(--muted);margin:0 0 30px;font-size:14.5px;line-height:1.5}
+.ow-field{display:block;margin-bottom:18px}
+.ow-field-label{display:block;font-size:13px;color:var(--text);font-weight:500;margin-bottom:8px}
+.ow-input{position:relative;display:flex;align-items:center}
+.ow-input>i{position:absolute;left:15px;color:var(--muted);font-size:14px;pointer-events:none}
+.ow-input input{width:100%;padding:14px 15px 14px 44px;border:1.5px solid var(--line);border-radius:12px;background:#fff;outline:none;font-size:14.5px;transition:border-color .15s,box-shadow .15s}
+.ow-input input:focus{border-color:var(--accent);box-shadow:0 0 0 4px rgba(59,130,246,.12)}
+.ow-eye{position:absolute;right:8px;width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
+.ow-eye:hover{background:var(--line-soft);color:var(--text)}
+.ow-submit{width:100%;padding:14px;border-radius:12px;color:#fff;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;gap:9px;margin-top:6px;background:linear-gradient(135deg,var(--accent),var(--primary));box-shadow:0 10px 24px -8px rgba(30,64,175,.5);transition:filter .15s,transform .05s,box-shadow .15s}
+.ow-submit:hover{filter:brightness(1.06);box-shadow:0 14px 30px -8px rgba(30,64,175,.6)}
+.ow-submit:active{transform:translateY(1px)}
+.ow-hint{margin-top:22px;padding:13px 15px;border-radius:12px;background:var(--line-soft);border:1px solid var(--line);font-size:12.5px;color:var(--muted);line-height:1.5;display:flex;gap:9px;align-items:flex-start}
+.ow-hint>i{color:var(--primary);margin-top:2px;flex:0 0 auto}
+@media (max-width:960px){.ow-login{grid-template-columns:1fr}.ow-brand{padding:36px 30px;gap:28px}.ow-hero h1{font-size:33px}}
+@media (max-width:600px){.ow-brand{padding:28px 22px}.ow-hero h1{font-size:27px}.ow-hero p{font-size:14px}.ow-modules{grid-template-columns:1fr}.ow-auth{padding:28px 20px}.ow-foot{flex-direction:column;align-items:flex-start;gap:6px}}
 .shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh;min-height:100dvh}
 .sidebar{background:linear-gradient(180deg,#1E3A8A 0%,#172554 100%);color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:20;}
 .sidebar .brand{padding:22px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.08)}
@@ -406,6 +451,68 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 
 const _db = firebase.database();
+const CONFIG_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyOLdoS83MVCh5ThGUf7WbR3IrNU2dfKL2P-dcde4PjJ8o6-tsb7ZItHdo8TmVBn_w6/exec';
+
+async function getAppsScriptUrl() {
+  const current = window.APPS_SCRIPT_URL || localStorage.getItem('APPS_SCRIPT_URL') || CONFIG_APPS_SCRIPT_URL;
+  if (current) return current;
+  if (!window.Swal) return '';
+  const r = await Swal.fire({
+    icon: 'info',
+    title: 'ตั้งค่า Google Apps Script URL',
+    input: 'url',
+    inputPlaceholder: 'https://script.google.com/macros/s/XXXXXXXXXXXX/exec',
+    text: 'วาง Web app URL ที่ Deploy จาก backend/Code.gs เพื่อให้อัปโหลดไฟล์ไป Google Drive ได้',
+    showCancelButton: true,
+    confirmButtonText: 'บันทึก',
+    cancelButtonText: 'ยกเลิก',
+    inputValidator: (v) => {
+      if (!v) return 'กรุณาวาง Web app URL';
+      if (!String(v).includes('script.google.com') || !String(v).includes('/exec')) return 'URL ต้องเป็น Google Apps Script Web app ที่ลงท้าย /exec';
+      return null;
+    }
+  });
+  if (!r.isConfirmed) return '';
+  localStorage.setItem('APPS_SCRIPT_URL', r.value);
+  window.APPS_SCRIPT_URL = r.value;
+  return r.value;
+}
+
+async function callAppsScript(action, payload = {}) {
+  const APPS_SCRIPT_URL = await getAppsScriptUrl();
+  if (!APPS_SCRIPT_URL) {
+    throw new Error('ยังไม่ได้ตั้งค่า APPS_SCRIPT_URL สำหรับอัปโหลดไฟล์ไป Google Drive');
+  }
+  const body = JSON.stringify({ action, ...payload });
+  let res;
+  try {
+    res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+    });
+  } catch (firstErr) {
+    try {
+      const form = new FormData();
+      form.append('payload', body);
+      res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: form });
+    } catch (secondErr) {
+      throw new Error('เชื่อมต่อ Apps Script ไม่สำเร็จ: ตรวจสอบว่า Web app URL ลงท้าย /exec, Deploy เป็น New version แล้ว, Execute as: Me และ Who has access: Anyone');
+    }
+  }
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('Apps Script ตอบ 401 Unauthorized: Deployment ยังบังคับให้ login อยู่ กรุณาตั้ง Who has access: Anyone');
+    }
+    if (res.status === 403) {
+      throw new Error('Apps Script ตอบ 403 Forbidden: กรุณา Deploy เป็น Web app โดยตั้ง Execute as: Me และ Who has access: Anyone');
+    }
+    throw new Error(`Apps Script HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || 'Apps Script error');
+  return json.data;
+}
 
 async function _nextId(collection, prefix, pad) {
   const snap = await _db.ref('/' + collection).get();
@@ -608,6 +715,10 @@ async function api(action, payload = {}) {
       return { deleted: true };
     }
 
+    case 'uploadPJ2Document': {
+      return callAppsScript('uploadPJ2Document', payload);
+    }
+
     case 'createRepair': {
       const { repair } = payload;
       if (!repair.id) repair.id = await _nextId('repairs', 'R', 4);
@@ -684,6 +795,14 @@ const STATUSES = [
   { key:"cancel",   label:"ยกเลิก",           className:"b-cancel",   icon:"fa-ban" },
 ];
 
+const ERP_SYSTEMS = [
+  { id:"repairs", name:"งานซ่อม", desc:"แจ้งซ่อม ติดตามงาน และบริหารงานซ่อม", icon:"fa-screwdriver-wrench", status:"ready", startPage:"dashboard" },
+  { id:"production", name:"Production", desc:"รอพัฒนา", icon:"fa-industry", status:"soon" },
+  { id:"assets", name:"Asset", desc:"ทะเบียนและข้อมูลทรัพย์สิน/เครื่องจักร", icon:"fa-boxes-stacked", status:"ready", startPage:"machines" },
+  { id:"consume", name:"Consume", desc:"สำหรับเบิกจ่ายเช็คสต๊อก (รอพัฒนา)", icon:"fa-box-open", status:"soon" },
+  { id:"pc", name:"PC (Petty Cash)", desc:"รอพัฒนา", icon:"fa-money-bill-wave", status:"soon" },
+  { id:"hr-time", name:"บุคลากร/เวลาทำงาน", desc:"รอพัฒนา", icon:"fa-users", status:"soon" },
+];
 
 function fmtDate(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function fmtDateTime(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${fmtDate(d)} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
@@ -696,6 +815,9 @@ window.__DATA = {
   projects: [],
   withdrawals: [],
   statuses: STATUSES,
+  erpSystems: ERP_SYSTEMS,
+  activeErp: null,
+  activeProject: "",
   fmtDate, fmtDateTime
 };
 
@@ -720,26 +842,36 @@ window.__DATA.bootstrap = async function(){
 window.getStatus = (key) => STATUSES.find(s=>s.key===key) || STATUSES[0];
 window.getCategory = (id) => window.__DATA.categories.find(c=>c.id===id) || {name:"-",color:"#64748B",icon:"fa-circle"};
 window.getUser = (id) => window.__DATA.users.find(u=>u.id===id);
+window.getActiveProject = (user) => user?.activeProject || window.__DATA.activeProject || "";
+window.getActiveErp = (user) => user?.activeErp || window.__DATA.activeErp || null;
 
 window.userCanSeeAllProjects = (user) => {
   if(!user) return false;
+  if(window.getActiveProject(user)) return false;
   if(["Admin","Director"].includes(user.role)) return true;
   if(user.role==="Engineer") return false;
   return !user.projects || !Array.isArray(user.projects) || user.projects.length===0;
 };
 window.userProjects = (user) => {
   if(!user) return [];
-  const allNames = (window.__DATA.projects||[]).map(p=>p.name).filter(Boolean);
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return [activeProject];
+  const fromProjects = (window.__DATA.projects||[]).map(p => typeof p === "string" ? p : p.name).filter(Boolean);
+  const allNames = fromProjects.length ? fromProjects : Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean)));
   if(window.userCanSeeAllProjects(user)) return allNames;
   return (Array.isArray(user.projects) ? user.projects : []).filter(p=>allNames.includes(p));
 };
 window.getProject = (name) => (window.__DATA.projects||[]).find(p=>p.name===name) || null;
 window.userCanSeeProject = (user, project) => {
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return !project || project === activeProject;
   if(window.userCanSeeAllProjects(user)) return true;
   if(!project) return true;
   return (user.projects||[]).includes(project);
 };
 window.filterByUserProjects = (user, items, projectKey="project") => {
+  const activeProject = window.getActiveProject(user);
+  if(activeProject) return items.filter(x => !x[projectKey] || x[projectKey] === activeProject);
   if(window.userCanSeeAllProjects(user)) return items;
   const allowed = new Set(user.projects||[]);
   return items.filter(x => !x[projectKey] || allowed.has(x[projectKey]));
@@ -813,44 +945,92 @@ function Login({onLogin}){
     }
   };
 
+  const [showPw,setShowPw] = React.useState(false);
+  const modules = (window.__DATA && window.__DATA.erpSystems) || [];
+
   return (
-    <div className="login-wrap">
+    <div className="ow-login">
       <Loading show={loading} text="กำลังเข้าสู่ระบบ..." />
-      <div className="login-brand">
-        <div className="grid-bg"></div>
-        <div className="login-logo">
-          <div className="mark"><i className="fa-solid fa-screwdriver-wrench"></i></div>
-          <div style={{lineHeight:1.3}}>
-            <div>ระบบแจ้งซ่อมเครื่องจักร</div>
-            <div style={{fontSize:12,fontWeight:300,color:"rgba(255,255,255,.6)",marginTop:2}}>Machine Repair Management</div>
+
+      {/* ===== Concept side: One Workspace ===== */}
+      <div className="ow-brand">
+        <div className="ow-aurora"></div>
+        <div className="ow-grid-bg"></div>
+
+        <div className="ow-top">
+          <div className="ow-logo">
+            <div className="ow-logo-mark"><i className="fa-solid fa-layer-group"></i></div>
+            <div>
+              <div className="ow-logo-name">One Workspace</div>
+              <div className="ow-logo-sub">Unified Operations Platform</div>
+            </div>
           </div>
         </div>
-        <div className="login-hero">
-          <h1>จัดการงานซ่อมบำรุง<br/>ครบในที่เดียว</h1>
-          <p>แจ้งซ่อม ติดตามสถานะ และวิเคราะห์งานบำรุงรักษาเครื่องจักร เชื่อมต่อ Firebase Realtime Database โดยตรง</p>
-          <div className="chips">
-            <span className="chip"><i className="fa-solid fa-bolt" style={{marginRight:6}}></i>Real-time</span>
-            <span className="chip"><i className="fa-solid fa-database" style={{marginRight:6}}></i>Cloud Sync</span>
-            <span className="chip"><i className="fa-solid fa-chart-line" style={{marginRight:6}}></i>Analytics</span>
+
+        <div className="ow-hero">
+          <span className="ow-eyebrow"><i className="fa-solid fa-sparkles"></i> ระบบเดียว ครบทุกงาน</span>
+          <h1>ทุกระบบงาน<br/>รวมไว้ใน<span className="ow-accent"> ที่เดียว</span></h1>
+          <p>แจ้งซ่อม ทรัพย์สิน คลัง จัดซื้อ และบุคลากร เชื่อมต่อกันบนพื้นที่ทำงานเดียว — เข้าสู่ระบบครั้งเดียว เลือกใช้ได้ทุกโมดูล</p>
+
+          <div className="ow-modules">
+            {modules.map(m=>{
+              const ready = m.status==="ready";
+              return (
+                <div key={m.id} className={`ow-mod ${ready?"is-ready":"is-soon"}`}>
+                  <span className="ow-mod-icon"><i className={`fa-solid ${m.icon}`}></i></span>
+                  <span className="ow-mod-name">{m.name}</span>
+                  {ready
+                    ? <span className="ow-mod-dot" title="พร้อมใช้งาน"></span>
+                    : <span className="ow-mod-soon">เร็วๆนี้</span>}
+                </div>
+              );
+            })}
           </div>
         </div>
-        <div className="login-foot">© 2026 Repair Management System · v3.011 Firebase &nbsp;|&nbsp; อัปเดต 28 พ.ค. 2569 เวลา 12:00 น.</div>
+
+        <div className="ow-foot">
+          <span><i className="fa-solid fa-shield-halved"></i> เชื่อมต่อ Firebase แบบเรียลไทม์</span>
+          <span>© 2026 · v3.011</span>
+        </div>
       </div>
-      <div className="login-card-wrap">
-        <form className="login-card" onSubmit={submit}>
-          <h2>เข้าสู่ระบบ</h2>
-          <p className="sub">กรุณาใส่ข้อมูลบัญชีผู้ใช้งานของคุณ</p>
-          <div className="field">
-            <label>Username</label>
-            <i className="fa-solid fa-user"></i>
-            <input type="text" value={username} onChange={e=>setUsername(e.target.value)} placeholder="ชื่อผู้ใช้" autoComplete="username" />
+
+      {/* ===== Auth side ===== */}
+      <div className="ow-auth">
+        <form className="ow-card" onSubmit={submit}>
+          <div className="ow-card-badge"><i className="fa-solid fa-layer-group"></i></div>
+          <h2>เข้าสู่พื้นที่ทำงาน</h2>
+          <p className="ow-card-sub">ลงชื่อเข้าใช้เพื่อเลือกระบบงานและโครงการของคุณ</p>
+
+          <label className="ow-field">
+            <span className="ow-field-label">ชื่อผู้ใช้</span>
+            <span className="ow-input">
+              <i className="fa-solid fa-user"></i>
+              <input type="text" value={username} onChange={e=>setUsername(e.target.value)}
+                placeholder="ชื่อผู้ใช้" autoComplete="username" />
+            </span>
+          </label>
+
+          <label className="ow-field">
+            <span className="ow-field-label">รหัสผ่าน</span>
+            <span className="ow-input">
+              <i className="fa-solid fa-lock"></i>
+              <input type={showPw?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)}
+                placeholder="รหัสผ่าน" autoComplete="current-password" />
+              <button type="button" className="ow-eye" onClick={()=>setShowPw(v=>!v)}
+                title={showPw?"ซ่อนรหัสผ่าน":"แสดงรหัสผ่าน"} aria-label="สลับการแสดงรหัสผ่าน">
+                <i className={`fa-solid ${showPw?"fa-eye-slash":"fa-eye"}`}></i>
+              </button>
+            </span>
+          </label>
+
+          <button className="ow-submit" type="submit">
+            <i className="fa-solid fa-arrow-right-to-bracket"></i> เข้าสู่ระบบ
+          </button>
+
+          <div className="ow-hint">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>หลังเข้าสู่ระบบ คุณจะเลือกระบบงานและโครงการที่ต้องการทำงานได้ทันที</span>
           </div>
-          <div className="field">
-            <label>Password</label>
-            <i className="fa-solid fa-lock"></i>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="รหัสผ่าน" autoComplete="current-password" />
-          </div>
-          <button className="login-btn" type="submit"><i className="fa-solid fa-right-to-bracket"></i> เข้าสู่ระบบ</button>
         </form>
       </div>
     </div>
@@ -922,14 +1102,10 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const [changePwModal,setChangePwModal] = React.useState(false);
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
   const isTech = ["Technician","Engineer"].includes(user.role);
+  const systemId = user.activeErp?.id || "repairs";
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
-    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
-    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
-    { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
-    { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
-    { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
     ...(user.role==="Admin" ? [{ key:"login-logs", icon:"fa-shield-halved", label:"ประวัติการล็อกอิน" }] : []),
@@ -937,30 +1113,29 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
-    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
-    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
-    { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
-    { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
-    { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
   ];
   const reporterNav = [
     { key:"r-dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"r-mine", icon:"fa-clipboard-check", label:"ติดตามสถานะ" },
+  ];
+  const assetNav = [
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
-    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
   ];
-  const nav = isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const consumeNav = [
+    { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
+  ];
+  const nav = systemId==="assets" ? assetNav : systemId==="consume" ? consumeNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
   return (
     <>
       {open && <div className="sidebar-scrim show" onClick={onClose}></div>}
       <aside className={`sidebar ${open?"open":""}`}>
         <div className="brand">
-          <div className="mark"><i className="fa-solid fa-screwdriver-wrench"></i></div>
-          <div className="t">ระบบแจ้งซ่อม<small>เครื่องจักร · Machine Repair</small></div>
+          <div className="mark"><i className={`fa-solid ${user.activeErp?.icon || "fa-screwdriver-wrench"}`}></i></div>
+          <div className="t">{user.activeErp?.name || "ระบบแจ้งซ่อม"}<small>{systemId==="assets" ? "Asset Management" : systemId==="consume" ? "Consume / Stock" : "Machine Repair"}</small></div>
         </div>
         <nav className="nav">
           <div className="section">เมนูหลัก</div>
@@ -1169,9 +1344,7 @@ function Dashboard({user,goTo}){
   },[]);
 
   const repairs = React.useMemo(()=>{
-    if(window.userCanSeeAllProjects(user)) return window.__DATA.repairs;
-    const allowed = new Set(user.projects||[]);
-    return window.__DATA.repairs.filter(r=>!r.project || allowed.has(r.project));
+    return window.filterByUserProjects(user, window.__DATA.repairs, "project");
   },[user]);
 
   const costStats = React.useMemo(()=>{
@@ -1385,11 +1558,9 @@ window.Dashboard = Dashboard;
 
 <script type="text/babel">
 function Repairs({user}){
-  const allowAll = window.userCanSeeAllProjects(user);
-  const allowed = new Set(user.projects||[]);
   const visibleRows = React.useMemo(()=>(
-    allowAll ? window.__DATA.repairs : window.__DATA.repairs.filter(r=>!r.project || allowed.has(r.project))
-  ),[allowAll]);
+    window.filterByUserProjects(user, window.__DATA.repairs, "project")
+  ),[user]);
 
   const [rows,setRows] = React.useState(visibleRows);
   React.useEffect(()=>{ setRows(visibleRows); },[visibleRows]);
@@ -2097,9 +2268,7 @@ function gdriveThumb(url, sz=600){
   return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${sz}`;
 }
 function Machines({user}){
-  const allowAll = window.userCanSeeAllProjects(user);
-  const allowed = new Set(user.projects||[]);
-  const visibleRows = React.useMemo(()=>(allowAll ? window.__DATA.machines : window.__DATA.machines.filter(m=>!m.project||allowed.has(m.project))),[allowAll]);
+  const visibleRows = React.useMemo(()=>(window.filterByUserProjects(user, window.__DATA.machines, "project")),[user]);
   const [rows,setRows] = React.useState(visibleRows);
   const [q,setQ] = React.useState("");
   const [statusF,setStatusF] = React.useState("all");
@@ -2165,7 +2334,7 @@ function Machines({user}){
         <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
         <div className="spacer"></div>
         {["Admin","Officer","Engineer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",inspectionDate:"",nextInspectionDate:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",driveLinkPL:"",inspectionDate:"",nextInspectionDate:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2274,6 +2443,10 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field" style={{gridColumn:"1/-1"}}>
             <label><i className="fa-brands fa-google-drive" style={{marginRight:6,color:"#4285F4"}}></i>ลิงค์ไฟล์ Google Drive (2) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>เช่น แบบแปลน, ประวัติซ่อมบำรุง</span></label>
             <input value={f.driveLink2||""} onChange={e=>up("driveLink2",e.target.value)} placeholder="https://drive.google.com/..." />
+          </div>
+          <div className="form-field" style={{gridColumn:"1/-1"}}>
+            <label><i className="fa-solid fa-shield-halved" style={{marginRight:6,color:"#059669"}}></i>PL (ประกัน) <span style={{fontWeight:400,fontSize:12,color:"var(--muted)"}}>ลิงค์ไฟล์เอกสารประกัน</span></label>
+            <input value={f.driveLinkPL||""} onChange={e=>up("driveLinkPL",e.target.value)} placeholder="https://drive.google.com/..." />
           </div>
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>หมายเหตุ</label><textarea rows="3" value={f.note||""} onChange={e=>up("note",e.target.value)} placeholder="หมายเหตุเพิ่มเติม..."></textarea></div>
         </div>
@@ -2446,10 +2619,11 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
               </div>
             </div>
           </div>
-          {(m.driveLink1||m.driveLink2) && <div style={{marginTop:14,display:"grid",gap:8}}>
+          {(m.driveLink1||m.driveLink2||m.driveLinkPL) && <div style={{marginTop:14,display:"grid",gap:8}}>
             <div style={{fontSize:12,fontWeight:500,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4",marginRight:6}}></i>ไฟล์เอกสาร Google Drive</div>
             {m.driveLink1 && <a href={m.driveLink1} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:13,textDecoration:"none"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>ไฟล์เอกสาร (1)<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:10,opacity:.6,marginLeft:"auto"}}></i></a>}
             {m.driveLink2 && <a href={m.driveLink2} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:13,textDecoration:"none"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>ไฟล์เอกสาร (2)<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:10,opacity:.6,marginLeft:"auto"}}></i></a>}
+            {m.driveLinkPL && <a href={m.driveLinkPL} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,background:"#ECFDF5",border:"1px solid #A7F3D0",color:"#047857",fontSize:13,textDecoration:"none"}}><i className="fa-solid fa-shield-halved" style={{color:"#059669"}}></i>PL (ประกัน)<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:10,opacity:.6,marginLeft:"auto"}}></i></a>}
           </div>}
           {m.note && <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}><div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div><div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div></div>}
           {m.transferHistory && m.transferHistory.length>0 && (
@@ -2627,9 +2801,49 @@ function DocPJ2({user}){
   const [q,setQ] = React.useState("");
   const [filterProj,setFilterProj] = React.useState("all");
   const [editCell,setEditCell] = React.useState(null); // {id,field,value}
+  const [uploading,setUploading] = React.useState(null); // machineId:slot
   const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
   const today = React.useMemo(()=>{ const d=new Date(); d.setHours(0,0,0,0); return d; },[]);
   const toDateStr = (d) => { try{ return new Date(d).toISOString().slice(0,10); }catch(e){ return ""; } };
+
+  const fileToUpload = (file) => new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      resolve({
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        data: dataUrl.includes(",") ? dataUrl.split(",").pop() : dataUrl,
+      });
+    };
+    reader.onerror = () => reject(reader.error || new Error("อ่านไฟล์ไม่สำเร็จ"));
+    reader.readAsDataURL(file);
+  });
+
+  const uploadDoc = async (m, slot, file) => {
+    if(!file) return;
+    const field = slot==="PL" ? "driveLinkPL" : (slot===2 ? "driveLink2" : "driveLink1");
+    const key = `${m.id}:${slot}`;
+    setUploading(key);
+    try{
+      const upload = await fileToUpload(file);
+      const saved = await window.api("uploadPJ2Document",{machineId:m.id,machineCode:m.code,slot,upload});
+      const patch = {[field]:saved.url};
+      await window.api("updateMachine",{id:m.id,patch});
+      const upd = rows.map(x=>x.id===m.id?{...x,...patch}:x);
+      setRows(upd);
+      window.__DATA.machines = window.__DATA.machines.map(x=>x.id===m.id?{...x,...patch}:x);
+      if(saved.sharing && saved.sharing.ok===false){
+        Swal.fire({icon:"warning",title:"อัปโหลดสำเร็จ แต่แชร์ลิงก์ไม่ได้",text:"ไฟล์ถูกบันทึกใน Drive แล้ว แต่บัญชี Google/Workspace ไม่อนุญาตให้แชร์ Anyone with link",confirmButtonColor:"#1E40AF"});
+      } else {
+        Swal.fire({icon:"success",title:"อัปโหลดเอกสารสำเร็จ",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+      }
+    }catch(err){
+      Swal.fire({icon:"error",title:"อัปโหลดไม่สำเร็จ",text:err.message});
+    }finally{
+      setUploading(null);
+    }
+  };
 
   const projects = React.useMemo(()=>[...new Set(rows.map(m=>m.project).filter(Boolean))].sort(),[rows]);
   const filtered = React.useMemo(()=>rows.filter(m=>{
@@ -2694,9 +2908,23 @@ function DocPJ2({user}){
     );
   };
 
-  const linkBtn = (url) => url
-    ? <a href={url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:6,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:12,textDecoration:"none",whiteSpace:"nowrap"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>เปิดไฟล์<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.6}}></i></a>
-    : <span style={{color:"var(--muted)"}}>—</span>;
+  const linkBtn = (m, slot) => {
+    const url = slot==="PL" ? m.driveLinkPL : (slot===2 ? m.driveLink2 : m.driveLink1);
+    const key = `${m.id}:${slot}`;
+    return (
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        {url
+          ? <a href={url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:6,background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontSize:12,textDecoration:"none",whiteSpace:"nowrap"}}><i className="fa-brands fa-google-drive" style={{color:"#4285F4"}}></i>เปิดไฟล์<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.6}}></i></a>
+          : <span style={{color:"var(--muted)"}}>—</span>}
+        {canEdit && (
+          <label className="btn btn-sm btn-ghost" style={{padding:"4px 8px",fontSize:12,cursor:uploading?"not-allowed":"pointer",opacity:uploading&&uploading!==key ? .7 : 1}}>
+            {uploading===key ? <><span className="spinner" style={{width:12,height:12,borderWidth:2}}></span> อัปโหลด...</> : <><i className="fa-solid fa-upload"></i> อัปโหลด</>}
+            <input type="file" style={{display:"none"}} disabled={!!uploading} onChange={e=>{ const file=e.target.files&&e.target.files[0]; e.target.value=""; uploadDoc(m,slot,file); }} />
+          </label>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="card">
@@ -2721,6 +2949,7 @@ function DocPJ2({user}){
             <th>รหัส</th>
             <th>เอกสาร (1)</th>
             <th>เอกสาร (2)</th>
+            <th>PL (ประกัน)</th>
             <th>ชื่อเครื่องจักร</th>
             <th className="hide-on-mobile">โครงการ</th>
             <th>วันที่ตรวจสอบ</th>
@@ -2729,16 +2958,20 @@ function DocPJ2({user}){
           <tbody>
             {filtered.map(m=>(
               <tr key={m.id}>
-                <td><span className="mono" style={{fontSize:12}}>{m.code||"—"}</span></td>
-                <td>{linkBtn(m.driveLink1)}</td>
-                <td>{linkBtn(m.driveLink2)}</td>
+                <td>
+                  <div className="mono" style={{fontSize:12,fontWeight:600}}>{m.code||"—"}</div>
+                  {m.serial && <div className="mono" style={{fontSize:11,color:"var(--muted)",marginTop:3}}>SN: {m.serial}</div>}
+                </td>
+                <td>{linkBtn(m,1)}</td>
+                <td>{linkBtn(m,2)}</td>
+                <td>{linkBtn(m,"PL")}</td>
                 <td><div style={{fontWeight:500,fontSize:13}}>{m.name}</div>{m.brand&&<div style={{fontSize:11,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{m.project||"—"}</td>
                 <td>{renderDateCell(m,"inspectionDate")}</td>
                 <td>{renderDateCell(m,"nextInspectionDate")}</td>
               </tr>
             ))}
-            {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
+            {filtered.length===0&&(<tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
           </tbody>
         </table>
       </div>
@@ -2943,7 +3176,7 @@ function MachineTransferHistory({user}){
 function ReporterDashboard({user,goTo}){
   const mine = React.useMemo(()=>{
     if(user.role==="Engineer") return window.filterByUserProjects(user,window.__DATA.repairs,"project");
-    return window.__DATA.repairs.filter(r=>r.reporterId===user.id);
+    return window.filterByUserProjects(user,window.__DATA.repairs.filter(r=>r.reporterId===user.id),"project");
   },[user]);
   const counts = { all:mine.length, progress:mine.filter(r=>["progress","assess","new"].includes(r.status)).length, parts:mine.filter(r=>r.status==="parts").length, done:mine.filter(r=>r.status==="done").length };
   const recent = mine.slice(0,5);
@@ -2986,7 +3219,7 @@ function NewRequest({user,goTo}){
     return window.userProjects(user);
   },[user]);
 
-  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:"",machineCode:"",siteId:""});
+  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:window.getActiveProject(user)||"",machineCode:"",siteId:""});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{ if(!f.project) return []; return (window.__DATA.machines||[]).filter(m=>m.project===f.project); },[f.project]);
@@ -3057,7 +3290,7 @@ function NewRequest({user,goTo}){
 }
 
 function MyRepairs({user}){
-  const [rows,setRows] = React.useState(()=>{ if(user.role==="Engineer") return window.filterByUserProjects(user,window.__DATA.repairs,"project"); return window.__DATA.repairs.filter(r=>r.reporterId===user.id); });
+  const [rows,setRows] = React.useState(()=>{ if(user.role==="Engineer") return window.filterByUserProjects(user,window.__DATA.repairs,"project"); return window.filterByUserProjects(user,window.__DATA.repairs.filter(r=>r.reporterId===user.id),"project"); });
   const [detail,setDetail] = React.useState(null);
 
   const cancel = (r) => {
@@ -3098,8 +3331,161 @@ Object.assign(window,{ReporterDashboard,NewRequest,MyRepairs});
 </script>
 
 <script type="text/babel">
+function WorkspacePicker({user,onContinue,onLogout}){
+  const erpSystems = window.__DATA.erpSystems || [];
+  const projects = window.userProjects(user);
+  const [step,setStep] = React.useState("system");
+  const [erpId,setErpId] = React.useState("");
+  const [project,setProject] = React.useState("");
+  const selected = erpSystems.find(x=>x.id===erpId);
+  const readySystems = erpSystems.filter(x=>x.status==="ready");
+  const inProject = (item, projectName) => !projectName || !item?.project || item.project === projectName;
+  const rowsForSystem = (sys, projectName="") => {
+    const id = sys?.id;
+    let rows = [];
+    if(id==="repairs") rows = window.__DATA.repairs||[];
+    else if(id==="assets") rows = window.__DATA.machines||[];
+    else if(id==="consume") rows = window.__DATA.withdrawals||[];
+    else if(id==="hr-time") return window.__DATA.users||[];
+    else return [];
+    if(projectName) return rows.filter(x=>inProject(x, projectName));
+    return window.filterByUserProjects(user, rows, "project");
+  };
+  const linkedStats = (projectName="") => ({
+    repairs:(window.__DATA.repairs||[]).filter(x=>inProject(x, projectName)).length,
+    assets:(window.__DATA.machines||[]).filter(x=>inProject(x, projectName)).length,
+    users:(window.__DATA.users||[]).length,
+    withdrawals:(window.__DATA.withdrawals||[]).filter(x=>inProject(x, projectName)).length,
+  });
+  const systemLine = (sys) => {
+    const stats = linkedStats("");
+    if(sys.id==="repairs") return `${stats.repairs} ใบงาน · เชื่อม Asset ${stats.assets} รายการ`;
+    if(sys.id==="assets") return `${stats.assets} รายการ · เชื่อมงานซ่อม ${stats.repairs} ใบงาน`;
+    if(sys.id==="production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
+    if(sys.id==="consume") return `เตรียมเชื่อมสต๊อก/เบิกจ่าย ${stats.withdrawals} รายการ`;
+    if(sys.id==="pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
+    if(sys.id==="hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
+    return "พร้อมเชื่อมข้อมูล";
+  };
+  const optionCount = (projectName) => selected ? rowsForSystem(selected, projectName).length : 0;
+  const projectOptions = [{value:"",label:`ดูจัดการทั้งหมด${selected ? ` (${optionCount("")} รายการ)` : ""}`}].concat(
+    projects.map(p=>({value:p,label:`${p}${selected ? ` (${optionCount(p)} รายการ)` : ""}`}))
+  );
+  const selectedProjectLabel = projectOptions.find(p=>p.value===project)?.label || "ดูจัดการทั้งหมด";
+  const currentStats = linkedStats(project);
+
+  const submit = (e) => {
+    e.preventDefault();
+    if(!selected || selected.status!=="ready"){
+      Swal.fire({icon:"warning",title:"กรุณาเลือกระบบงานที่พร้อมใช้งาน"});
+      return;
+    }
+    onContinue({erp:selected, project, projectLabel:selectedProjectLabel});
+  };
+
+  const selectSystem = (sys) => {
+    if(sys.status!=="ready"){
+      Swal.fire({icon:"info",title:"ระบบนี้รอพัฒนา",text:sys.name});
+      return;
+    }
+    setErpId(sys.id);
+    setStep("project");
+  };
+
+  return (
+    <div className="login-wrap">
+      <div className="login-brand">
+        <div className="grid-bg"></div>
+        <div className="login-logo">
+          <div className="mark"><i className="fa-solid fa-layer-group"></i></div>
+          <div style={{lineHeight:1.3}}>
+            <div>ศูนย์ระบบงาน</div>
+            <div style={{fontSize:12,fontWeight:300,color:"rgba(255,255,255,.6)",marginTop:2}}>เลือกงานและโครงการ</div>
+          </div>
+        </div>
+        <div className="login-hero">
+          <h1>{step==="system" ? "เลือกระบบงาน" : "เลือกโครงการ"}<br/>ก่อนเข้าใช้งาน</h1>
+          <p>{step==="system" ? "เลือกว่าจะเข้าใช้งานระบบใด รายการที่รอพัฒนาจะแสดงไว้เพื่อเตรียมต่อยอดในอนาคต" : "เลือกโครงการที่ต้องการทำงาน หรือเลือกดูจัดการทั้งหมดตามสิทธิ์ของบัญชีนี้"}</p>
+          <div className="chips">
+            <span className="chip"><i className="fa-solid fa-user-check" style={{marginRight:6}}></i>{user.name}</span>
+            <span className="chip"><i className="fa-solid fa-shield-halved" style={{marginRight:6}}></i>{user.role}</span>
+            {selected && <span className="chip"><i className={`fa-solid ${selected.icon}`} style={{marginRight:6}}></i>{selected.name}</span>}
+          </div>
+        </div>
+        <div className="login-foot">Repair Management System</div>
+      </div>
+      <div className="login-card-wrap">
+        <form className="login-card" onSubmit={submit}>
+          {step==="system" ? (
+            <>
+              <h2>เลือกระบบงาน</h2>
+              <p className="sub">ระบบที่พร้อมใช้งานเลือกต่อได้ทันที</p>
+              <div style={{display:"grid",gap:10,marginBottom:16}}>
+                {erpSystems.map(s=>{
+                  const ready = s.status==="ready";
+                  return (
+                    <button key={s.id} type="button" onClick={()=>selectSystem(s)}
+                      style={{display:"flex",alignItems:"center",gap:12,textAlign:"left",padding:"13px 14px",border:"1.5px solid var(--line)",borderRadius:10,background:ready?"#fff":"#F8FAFC",color:ready?"var(--text)":"var(--muted)",opacity:ready?1:.75}}>
+                      <span style={{width:38,height:38,borderRadius:10,display:"grid",placeItems:"center",background:ready?"var(--accent-soft)":"var(--line-soft)",color:ready?"var(--primary)":"var(--muted)",flex:"0 0 auto"}}>
+                        <i className={`fa-solid ${s.icon}`}></i>
+                      </span>
+                      <span style={{flex:1,minWidth:0}}>
+                        <span style={{display:"flex",alignItems:"center",gap:8,fontWeight:600}}>
+                          {s.name}
+                          {!ready && <span className="badge" style={{fontSize:11,background:"#FEF3C7",color:"#92400E"}}>รอพัฒนา</span>}
+                        </span>
+                        <span style={{display:"block",fontSize:12.5,color:"var(--muted)",marginTop:2}}>{s.desc}</span>
+                        <span style={{display:"block",fontSize:12,color:ready?"var(--primary)":"var(--muted)",marginTop:4}}>
+                          <i className="fa-solid fa-link" style={{marginRight:5}}></i>{systemLine(s)}
+                        </span>
+                      </span>
+                      {ready && <i className="fa-solid fa-chevron-right" style={{color:"var(--muted)"}}></i>}
+                    </button>
+                  );
+                })}
+              </div>
+              {readySystems.length===0 && <div style={{fontSize:13,color:"var(--danger)",marginBottom:14}}>ยังไม่มีระบบที่พร้อมใช้งาน</div>}
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn btn-ghost" onClick={()=>setStep("system")} style={{marginBottom:14}}>
+                <i className="fa-solid fa-arrow-left"></i> กลับไปเลือกระบบงาน
+              </button>
+              <h2>{selected?.name || "เลือกระบบงาน"}</h2>
+              <p className="sub">เลือกโครงการที่จะเข้าใช้งาน หรือดูจัดการทั้งหมด</p>
+              <div className="field">
+                <label>โครงการ</label>
+                <i className="fa-solid fa-diagram-project"></i>
+                <select value={project} onChange={e=>setProject(e.target.value)} style={{width:"100%",padding:"13px 14px 13px 42px",border:"1.5px solid var(--line)",borderRadius:10,background:"#fff",outline:"none"}}>
+                  {projectOptions.map(p=><option key={p.value || "__all"} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+              {projects.length===0 && <div style={{fontSize:13,color:"var(--muted)",marginBottom:14}}>ไม่มีโครงการแยกในระบบ จะเข้าเป็นมุมมองจัดการทั้งหมด</div>}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,margin:"0 0 14px"}}>
+                {[
+                  {label:"งานซ่อม",value:currentStats.repairs,icon:"fa-screwdriver-wrench"},
+                  {label:"Asset",value:currentStats.assets,icon:"fa-boxes-stacked"},
+                  {label:"ผู้ใช้งาน",value:currentStats.users,icon:"fa-users"},
+                ].map(x=>(
+                  <div key={x.label} style={{border:"1px solid var(--line)",borderRadius:10,padding:"10px 11px",background:"#fff"}}>
+                    <div style={{fontSize:12,color:"var(--muted)",display:"flex",alignItems:"center",gap:6}}><i className={`fa-solid ${x.icon}`}></i>{x.label}</div>
+                    <div style={{fontSize:20,fontWeight:700,marginTop:2}}>{x.value.toLocaleString("th-TH")}</div>
+                  </div>
+                ))}
+              </div>
+              <button className="login-btn" type="submit"><i className="fa-solid fa-arrow-right-to-bracket"></i> เข้าใช้งาน</button>
+            </>
+          )}
+          <button className="btn btn-ghost" type="button" onClick={onLogout} style={{width:"100%",marginTop:10}}>ออกจากระบบ</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const [user,setUser] = React.useState(null);
+  const [workspace,setWorkspace] = React.useState(null);
   const [page,setPage] = React.useState("dashboard");
   const [sbOpen,setSbOpen] = React.useState(false);
   const [booting,setBooting] = React.useState(true);
@@ -3118,23 +3504,58 @@ function App(){
   },[]);
 
   React.useEffect(()=>{
+    if(booting) return;
     const s = localStorage.getItem("rms_user");
     if(s){
       try{
         const u = JSON.parse(s);
         const fresh = window.__DATA.users.find(x=>x.id===u.id);
-        if(fresh) setUser(fresh);
+        if(fresh) {
+          setUser(fresh);
+          const ws = localStorage.getItem("rms_workspace");
+          if(ws) {
+            const parsed = JSON.parse(ws);
+            window.__DATA.activeErp = parsed.erp;
+            window.__DATA.activeProject = parsed.project;
+            setWorkspace(parsed);
+          }
+        }
       }catch(e){}
     }
-  },[]);
+  },[booting]);
 
   const login = (u) => {
     setUser(u); localStorage.setItem("rms_user",JSON.stringify(u));
+    setWorkspace(null); localStorage.removeItem("rms_workspace");
     setPage(["Admin","Officer","Director"].includes(u.role) ? "dashboard" : u.role==="Technician" ? "dashboard" : "r-dashboard");
+  };
+  const enterWorkspace = (ws) => {
+    window.__DATA.activeErp = ws.erp;
+    window.__DATA.activeProject = ws.project;
+    setWorkspace(ws);
+    localStorage.setItem("rms_workspace", JSON.stringify(ws));
+    if(ws.erp?.startPage) {
+      setPage(ws.erp.startPage);
+    } else {
+      setPage(["Admin","Officer","Director"].includes(user.role) ? "dashboard" : user.role==="Technician" ? "dashboard" : "r-dashboard");
+    }
+  };
+  const clearWorkspace = () => {
+    window.__DATA.activeErp = null;
+    window.__DATA.activeProject = "";
+    setWorkspace(null);
+    localStorage.removeItem("rms_workspace");
   };
   const logout = () => {
     Swal.fire({title:"ออกจากระบบ?",icon:"question",showCancelButton:true,confirmButtonText:"ออกจากระบบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#EF4444"}).then(r=>{
-      if(r.isConfirmed){ setUser(null); localStorage.removeItem("rms_user"); }
+      if(r.isConfirmed){
+        setUser(null);
+        setWorkspace(null);
+        localStorage.removeItem("rms_user");
+        localStorage.removeItem("rms_workspace");
+        window.__DATA.activeErp = null;
+        window.__DATA.activeProject = "";
+      }
     });
   };
 
@@ -3159,6 +3580,16 @@ function App(){
   </div>;
 
   if(!user) return <Login onLogin={login}/>;
+  if(!workspace) return <WorkspacePicker user={user} onContinue={enterWorkspace} onLogout={()=>{setUser(null);setWorkspace(null);localStorage.removeItem("rms_user");localStorage.removeItem("rms_workspace");window.__DATA.activeErp=null;window.__DATA.activeProject="";}}/>;
+
+  const activeUser = {...user, activeErp:workspace.erp, activeProject:workspace.project};
+  const systemId = workspace.erp?.id || "repairs";
+  const allowedPages = systemId==="assets"
+    ? ["machines","doc-pj2","transfer-history","projects"]
+    : systemId==="consume"
+      ? ["withdrawals"]
+      : ["dashboard","repairs","users","categories","login-logs","r-dashboard","r-new","r-mine"];
+  const safePage = allowedPages.includes(page) ? page : (workspace.erp?.startPage || allowedPages[0]);
 
   const pageTitles = {
     "dashboard":{t:"แดชบอร์ด",c:"ภาพรวมและสถิติงานซ่อม"},
@@ -3175,35 +3606,38 @@ function App(){
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},
   };
-  const pt = pageTitles[page] || pageTitles.dashboard;
+  const pt = pageTitles[safePage] || pageTitles.dashboard;
 
   const renderPage = () => {
-    if(page==="dashboard") return <Dashboard user={user} goTo={setPage}/>;
-    if(page==="repairs") return <Repairs user={user}/>;
-    if(page==="users") return <Users user={user}/>;
-    if(page==="categories") return <Categories user={user}/>;
-    if(page==="machines") return <Machines user={user}/>;
-    if(page==="withdrawals") return <Withdrawals user={user}/>;
-    if(page==="doc-pj2") return <DocPJ2 user={user}/>;
-    if(page==="transfer-history") return <MachineTransferHistory user={user}/>;
-    if(page==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
-    if(page==="projects") return <Projects user={user}/>;
-    if(page==="r-dashboard") return <ReporterDashboard user={user} goTo={setPage}/>;
-    if(page==="r-new") return <NewRequest user={user} goTo={setPage}/>;
-    if(page==="r-mine") return <MyRepairs user={user}/>;
+    if(safePage==="dashboard") return <Dashboard user={activeUser} goTo={setPage}/>;
+    if(safePage==="repairs") return <Repairs user={activeUser}/>;
+    if(safePage==="users") return <Users user={activeUser}/>;
+    if(safePage==="categories") return <Categories user={activeUser}/>;
+    if(safePage==="machines") return <Machines user={activeUser}/>;
+    if(safePage==="withdrawals") return <Withdrawals user={activeUser}/>;
+    if(safePage==="doc-pj2") return <DocPJ2 user={activeUser}/>;
+    if(safePage==="transfer-history") return <MachineTransferHistory user={activeUser}/>;
+    if(safePage==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
+    if(safePage==="projects") return <Projects user={activeUser}/>;
+    if(safePage==="r-dashboard") return <ReporterDashboard user={activeUser} goTo={setPage}/>;
+    if(safePage==="r-new") return <NewRequest user={activeUser} goTo={setPage}/>;
+    if(safePage==="r-mine") return <MyRepairs user={activeUser}/>;
     return null;
   };
 
   return (
     <div className="shell">
       <button className="sidebar-toggle" onClick={()=>setSbOpen(true)}><i className="fa-solid fa-bars"></i></button>
-      <Sidebar user={user} active={page} onNav={setPage} onLogout={logout} open={sbOpen} onClose={()=>setSbOpen(false)}/>
+      <Sidebar user={activeUser} active={safePage} onNav={setPage} onLogout={logout} open={sbOpen} onClose={()=>setSbOpen(false)}/>
       <main className="main">
         <div className="topbar">
           <div className="title"><h1>{pt.t}</h1><div className="crumb">{pt.c}</div></div>
           <div className="actions">
             <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหาทั้งระบบ..."/></div>
-            {(page==="repairs" && ["Admin","Officer","Engineer"].includes(user.role)) && (
+            <button className="btn btn-ghost" title={`${workspace.erp?.name || "ระบบงาน"} · ${workspace.projectLabel || workspace.project || "ดูจัดการทั้งหมด"}`} onClick={clearWorkspace} style={{maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              <i className={`fa-solid ${workspace.erp?.icon || "fa-layer-group"}`}></i> {workspace.erp?.name || "ระบบงาน"} · {workspace.projectLabel || workspace.project || "ดูจัดการทั้งหมด"}
+            </button>
+            {(safePage==="repairs" && systemId==="repairs" && ["Admin","Officer","Engineer"].includes(user.role)) && (
               <button className="btn btn-primary" onClick={()=>setPage("r-new")}><i className="fa-solid fa-plus"></i> แจ้งซ่อมใหม่</button>
             )}
           </div>
