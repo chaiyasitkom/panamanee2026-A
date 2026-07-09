@@ -61,6 +61,10 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
   const [loading, setLoading] = useState(false);
   const [f, setF] = useState({ project: '', categoryId: '', machineCode: '', title: '', desc: '', siteId: '' });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const [problems, setProblems] = useState(['']);
+  const setProblemAt = (i, v) => setProblems(prev => prev.map((x, idx) => (idx === i ? v : x)));
+  const addProblem = () => setProblems(prev => [...prev, '']);
+  const removeProblem = (i) => setProblems(prev => { const a = prev.filter((_, idx) => idx !== i); return a.length ? a : ['']; });
 
   const allProjects = useMemo(() => {
     const all = [...new Set((data.machines || []).map(m => m.project).filter(Boolean))];
@@ -85,14 +89,17 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
   }, [f.categoryId, projectMachines]);
 
   const submit = async () => {
+    const cleanProblems = problems.map(s => s.trim()).filter(Boolean);
     if (!f.project) { Alert.alert('กรอกไม่ครบ', 'กรุณาเลือกโครงการ/หน่วยงานก่อน'); return; }
     if (!f.categoryId) { Alert.alert('กรอกไม่ครบ', 'กรุณาเลือกหมวดหมู่'); return; }
-    if (!f.title.trim() || !f.desc.trim()) { Alert.alert('กรอกไม่ครบ', 'กรุณาระบุอาการและรายละเอียดเพิ่มเติม'); return; }
+    if (!cleanProblems.length || !f.desc.trim()) { Alert.alert('กรอกไม่ครบ', 'กรุณาระบุอาการและรายละเอียดเพิ่มเติม'); return; }
 
     setLoading(true);
     try {
+      const title = cleanProblems.join('\n');
       const repair = {
-        siteId: f.siteId, title: f.title, desc: f.desc,
+        siteId: f.siteId, title, desc: f.desc,
+        problems: cleanProblems.map(t => ({ text: t, status: 'new' })),
         project: f.project, categoryId: f.categoryId,
         status: 'new', reporterId: user.id, reporterName: user.name,
         assignedId: '', cost: '', machineCode: f.machineCode,
@@ -151,14 +158,31 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
       />
 
       <View style={styles.field}>
-        <Text style={styles.label}>4. อาการ/ปัญหา *</Text>
-        <TextInput
-          style={styles.input}
-          value={f.title}
-          onChangeText={v => set('title', v)}
-          placeholder="เช่น มอเตอร์ไหม้ ใช้งานไม่ได้"
-          placeholderTextColor={Colors.muted}
-        />
+        <Text style={styles.label}>4. อาการ/ปัญหา *  <Text style={styles.labelHint}>(เพิ่มได้หลายรายการ)</Text></Text>
+        {problems.map((p, i) => (
+          <View key={i} style={styles.problemRow}>
+            <Text style={styles.problemNo}>{i + 1}.</Text>
+            <TextInput
+              style={[styles.input, { flex: 1 }]}
+              value={p}
+              onChangeText={v => setProblemAt(i, v)}
+              placeholder="เช่น มอเตอร์ไหม้ ใช้งานไม่ได้"
+              placeholderTextColor={Colors.muted}
+            />
+            <TouchableOpacity
+              onPress={() => removeProblem(i)}
+              disabled={problems.length <= 1}
+              style={[styles.problemDel, problems.length <= 1 && { opacity: 0.3 }]}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            >
+              <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+            </TouchableOpacity>
+          </View>
+        ))}
+        <TouchableOpacity style={styles.addProblem} onPress={addProblem} activeOpacity={0.7}>
+          <Ionicons name="add" size={16} color={Colors.primary} />
+          <Text style={styles.addProblemText}>เพิ่มอาการ</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.field}>
@@ -207,6 +231,12 @@ const styles = StyleSheet.create({
   pageSub:         { fontSize: 12, color: Colors.muted, marginBottom: 20 },
   field:           { marginBottom: 16 },
   label:           { fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 6 },
+  labelHint:       { fontSize: 11, fontWeight: '400', color: Colors.muted },
+  problemRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  problemNo:       { fontSize: 13, color: Colors.muted, width: 18, textAlign: 'right' },
+  problemDel:      { padding: 4 },
+  addProblem:      { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.line },
+  addProblemText:  { fontSize: 13, fontWeight: '600', color: Colors.primary },
   input:           { backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: Colors.text },
   textarea:        { minHeight: 100 },
   select:          { backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

@@ -220,13 +220,39 @@ function Repairs({user}){
 function RepairDetail({r,onClose,user,onQuick,onEdit}){
   const cat = window.getCategory(r.categoryId);
   const canAct = ["Admin","Officer","Technician"].includes(user.role);
+  const [probs,setProbs] = React.useState(()=>window.getProblems(r));
+  const setProbStatus = async (i, st) => {
+    const next = probs.map((p,idx)=> idx===i?{...p,status:st}:p);
+    setProbs(next);
+    try{
+      await window.api("updateRepairProblems",{id:r.id, problems:next, by:user.name, note:`ปรับสถานะ "${next[i].text}" → ${window.getStatus(st).label}`});
+      const idx = window.__DATA.repairs.findIndex(x=>x.id===r.id);
+      if(idx>-1) window.__DATA.repairs[idx].problems = next;
+      r.problems = next;
+    }catch(err){
+      setProbs(probs);
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
+    }
+  };
+  const doneCount = probs.filter(p=>p.status==="done").length;
+  const [place,setPlace] = React.useState(()=>window.getRepairPlace(r));
+  const setPl = (k,v)=>setPlace(p=>({...p,[k]:v}));
+  const savePlace = async () => {
+    try{
+      await window.api("updateRepairPlace",{id:r.id, repairPlace:place, by:user.name});
+      const idx = window.__DATA.repairs.findIndex(x=>x.id===r.id);
+      if(idx>-1) window.__DATA.repairs[idx].repairPlace = place;
+      r.repairPlace = place;
+      Swal.fire({icon:"success",title:"บันทึกสถานที่ซ่อมแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+  };
 
   return (
     <Modal open={true} onClose={onClose} title={<>ใบแจ้งซ่อม <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>} size="lg"
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
         {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i> แก้ไขข้อมูล</button>}
-        <button className="btn btn-ghost"><i className="fa-solid fa-print"></i> พิมพ์ใบงาน</button>
+        <button className="btn btn-ghost" onClick={()=>window.shareRepairImage(r,user)}><i className="fa-solid fa-share-nodes"></i> แชร์รูปภาพ</button>
       </>}>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
         <Badge status={r.status}/>
@@ -238,8 +264,22 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
 
       <div className="detail-grid">
         <div className="full">
-          <div className="k">อาการ/ปัญหา</div>
-          <div className="v" style={{fontSize:16,fontWeight:500}}>{r.title}</div>
+          <div className="k" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span>อาการ/ปัญหา</span>
+            {probs.length>1 && <span style={{color:doneCount===probs.length?"#047857":"var(--muted)",fontSize:12,fontWeight:500}}>เสร็จ {doneCount}/{probs.length} รายการ</span>}
+          </div>
+          <div style={{display:"grid",gap:8,margin:"6px 0 4px"}}>
+            {probs.map((p,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"6px 0",borderBottom:i<probs.length-1?"1px dashed var(--line)":"none"}}>
+                <span style={{width:18,textAlign:"right",color:"var(--muted)",fontSize:13,flexShrink:0}}>{i+1}.</span>
+                <span style={{flex:1,minWidth:120,fontSize:15,fontWeight:500}}>{p.text}</span>
+                <Badge status={p.status}/>
+                <select className="inp" style={{width:"auto",padding:"4px 8px",fontSize:13,flexShrink:0}} value={p.status} onChange={e=>setProbStatus(i,e.target.value)}>
+                  {window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}
+                </select>
+              </div>
+            ))}
+          </div>
           <div style={{color:"var(--muted)",fontSize:13,marginTop:4,lineHeight:1.5}}>{r.desc}</div>
         </div>
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
@@ -251,6 +291,31 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
         <div><div className="k">ค่าใช้จ่าย</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{r.cost.toLocaleString()} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
         <div><div className="k">สถานะปัจจุบัน</div><div className="v"><Badge status={r.status}/></div></div>
       </div>
+
+      {canAct && <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
+        <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</div>
+        <div style={{display:"grid",gap:10}}>
+          <div><label className="k">แจ้งซ่อมที่</label><input className="inp" value={place.reportAt} onChange={e=>setPl("reportAt",e.target.value)} /></div>
+          <div style={{display:"grid",gap:8}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <input type="radio" name={"rp-"+r.id} checked={place.mode==="onsite"} onChange={()=>setPl("mode","onsite")} />
+              <span>ส่งช่างซ่อมหน้างาน ที่</span>
+              <input className="inp" style={{flex:1,minWidth:120}} value={place.onsite} onChange={e=>setPl("onsite",e.target.value)} placeholder="ระบุสถานที่" />
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="radio" name={"rp-"+r.id} checked={place.mode==="workshop"} onChange={()=>setPl("mode","workshop")} />
+              <span>โรงซ่อมของบริษัทที่แจ้งซ่อม</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <input type="radio" name={"rp-"+r.id} checked={place.mode==="other"} onChange={()=>setPl("mode","other")} />
+              <span>อื่นๆ</span>
+              <input className="inp" style={{flex:1,minWidth:120}} value={place.other} onChange={e=>setPl("other",e.target.value)} placeholder="ระบุ" />
+            </label>
+          </div>
+          <div><label className="k">หมายเหตุ</label><textarea className="inp" rows="2" value={place.note} onChange={e=>setPl("note",e.target.value)} /></div>
+          <div><button className="btn btn-primary btn-sm" onClick={savePlace}><i className="fa-solid fa-floppy-disk"></i> บันทึกสถานที่ซ่อม</button></div>
+        </div>
+      </div>}
 
       <div style={{marginTop:22}}>
         <div className="k" style={{color:"var(--muted)",fontSize:12,marginBottom:8}}>รูปภาพ "ก่อนซ่อม"</div>
@@ -327,7 +392,10 @@ function EditRepairModal({r,onClose,onSave}){
   });
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
   const submit = () => {
-    const patch = {...f, cost: f.cost===""?"":Number(f.cost)||0};
+    const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n");
+    const existing = window.getProblems(r);
+    const problems = title.split("\n").filter(Boolean).map((t,i)=>({text:t, status:(existing[i]&&existing[i].status)||r.status||"new"}));
+    const patch = {...f, title, problems, cost: f.cost===""?"":Number(f.cost)||0};
     onSave(r, patch);
   };
   const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin"].includes(u.role));
@@ -345,7 +413,7 @@ function EditRepairModal({r,onClose,onSave}){
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
         <div style={{gridColumn:"1 / -1"}}>
           <label className="k">อาการ/ปัญหา</label>
-          <input className="inp" value={f.title} onChange={e=>set("title",e.target.value)} />
+          <ProblemsField value={f.title} onChange={v=>set("title",v)} />
         </div>
         <div style={{gridColumn:"1 / -1"}}>
           <label className="k">รายละเอียด</label>

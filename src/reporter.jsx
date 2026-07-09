@@ -116,7 +116,8 @@ function NewRequest({user,goTo}){
       Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาเลือกหมวดหมู่"});
       return;
     }
-    if(!f.title || !f.desc){
+    const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n");
+    if(!title || !f.desc){
       Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาระบุอาการและรายละเอียดเพิ่มเติม"});
       return;
     }
@@ -124,7 +125,8 @@ function NewRequest({user,goTo}){
     try{
       const repair = {
         siteId:f.siteId,
-        title:f.title, desc:f.desc,
+        title, desc:f.desc,
+        problems: title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),
         project:f.project, categoryId:f.categoryId,
         status:"new", reporterId:user.id, reporterName:user.name,
         assignedId:"", cost:"", machineCode:f.machineCode,
@@ -163,7 +165,7 @@ function NewRequest({user,goTo}){
             {n:1,l:"เลือกโครงการ",done:!!f.project},
             {n:2,l:"เลือกหมวดหมู่",done:!!f.categoryId,disabled:!f.project},
             {n:3,l:"เลือกเครื่องจักร",done:!!f.machineCode,disabled:!f.categoryId},
-            {n:4,l:"รายละเอียดอาการ",done:!!f.title && !!f.desc,disabled:!f.machineCode},
+            {n:4,l:"รายละเอียดอาการ",done:(f.title||"").split("\n").some(s=>s.trim()) && !!f.desc,disabled:!f.machineCode},
           ].map(s=>(
             <div key={s.n} style={{
               display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:999,
@@ -243,8 +245,8 @@ function NewRequest({user,goTo}){
 
           {/* STEP 4: รายละเอียด */}
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
-            <label>อาการ/ปัญหา *</label>
-            <input value={f.title} onChange={e=>setF({...f,title:e.target.value})} placeholder="เช่น มอเตอร์ไหม้ ใช้งานไม่ได้" />
+            <label>อาการ/ปัญหา * <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(เพิ่มได้หลายรายการ)</span></label>
+            <ProblemsField value={f.title} onChange={v=>setF({...f,title:v})} />
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
             <label>เลขที่ใบแจ้งซ่อม (ที่ไซต์งาน)</label>

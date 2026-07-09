@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  ScrollView, Platform,
+  ScrollView, Platform, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme/colors';
@@ -9,6 +9,7 @@ import { useAppData } from '../context/AppContext';
 import Badge from '../components/Badge';
 import CategoryChip from '../components/CategoryChip';
 import { fmtDate } from '../utils/helpers';
+import { api } from '../api/firebase';
 
 const STATUS_FILTERS = [
   { key: 'all',      label: 'ทั้งหมด' },
@@ -21,9 +22,21 @@ const STATUS_FILTERS = [
 ];
 
 export default function RepairsScreen({ navigation, user }) {
-  const { data } = useAppData();
+  const { data, setData } = useAppData();
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+
+  const del = (r) => {
+    Alert.alert('ลบใบแจ้งซ่อมนี้?', `เลขที่ ${r.running}\nการลบไม่สามารถกู้คืนได้`, [
+      { text: 'ยกเลิก', style: 'cancel' },
+      { text: 'ลบ', style: 'destructive', onPress: async () => {
+        try {
+          await api('deleteRepair', { id: r.id, role: user.role });
+          setData(prev => ({ ...prev, repairs: prev.repairs.filter(x => x.id !== r.id) }));
+        } catch (e) { Alert.alert('ลบไม่สำเร็จ', e.message); }
+      } },
+    ]);
+  };
 
   const rows = useMemo(() => {
     let base = data.repairs;
@@ -53,7 +66,14 @@ export default function RepairsScreen({ navigation, user }) {
     >
       <View style={styles.cardTop}>
         <Text style={styles.runId}>{r.running}</Text>
-        <Badge status={r.status} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Badge status={r.status} />
+          {['Admin', 'Officer'].includes(user.role) && (
+            <TouchableOpacity onPress={() => del(r)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="trash-outline" size={17} color={Colors.danger} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
       <Text style={styles.title} numberOfLines={2}>{r.title}</Text>
       {r.siteId ? <Text style={styles.siteId}>ไซต์: {r.siteId}</Text> : null}

@@ -21,6 +21,21 @@ export function initials(name) {
   return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 }
 
+// อาการ/ปัญหา หลายรายการ + สถานะรายอาการ (backcompat: ใบเก่าที่มีแต่ title)
+export function getProblems(r) {
+  if (Array.isArray(r.problems) && r.problems.length) {
+    return r.problems.map(p => ({ text: String(p.text || ''), status: p.status || r.status || 'new' }));
+  }
+  return String(r.title || '').split('\n').map(s => s.trim()).filter(Boolean)
+    .map(t => ({ text: t, status: r.status || 'new' }));
+}
+
+export function getRepairPlace(r) {
+  const base = { mode: '', onsite: '', other: '', reportAt: '', note: '' };
+  const p = r.repairPlace;
+  return (p && typeof p === 'object' && !Array.isArray(p)) ? { ...base, ...p } : base;
+}
+
 const PALETTE = ['#3B82F6','#8B5CF6','#EF4444','#10B981','#F59E0B','#06B6D4','#EC4899'];
 export function avatarColor(name) {
   if (!name) return PALETTE[0];

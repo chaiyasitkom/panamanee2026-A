@@ -95,6 +95,34 @@ export async function api(action, payload = {}) {
       return { ok: true };
     }
 
+    case 'updateRepairProblems': {
+      const { id, problems, by, note } = payload;
+      const tlRef = push(ref(db, '/repairs/' + id + '/timeline'));
+      await update(ref(db, '/repairs/' + id), {
+        problems: problems || [],
+        updatedAt: new Date().toISOString(),
+        ['timeline/' + tlRef.key]: { id: tlRef.key, status: '', when: new Date().toISOString(), by: by || '', note: note || 'อัปเดตสถานะรายอาการ' },
+      });
+      return { ok: true };
+    }
+
+    case 'updateRepairPlace': {
+      const { id, repairPlace, by } = payload;
+      const tlRef = push(ref(db, '/repairs/' + id + '/timeline'));
+      await update(ref(db, '/repairs/' + id), {
+        repairPlace: repairPlace || {},
+        updatedAt: new Date().toISOString(),
+        ['timeline/' + tlRef.key]: { id: tlRef.key, status: '', when: new Date().toISOString(), by: by || '', note: 'อัปเดตสถานที่ทำการซ่อม' },
+      });
+      return { ok: true };
+    }
+
+    case 'deleteRepair': {
+      const { id } = payload;
+      await remove(ref(db, '/repairs/' + id));
+      return { deleted: true };
+    }
+
     case 'createUser': {
       const { user } = payload;
       if (!user.id) user.id = await nextId('users', 'U', 3);

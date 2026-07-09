@@ -50,7 +50,7 @@ const HEADERS = {
   Users:      ['id','username','password','name','role','dept','email','projects','createdAt'],
   Repairs:    ['id','running','siteId','createdAt','title','desc','project','categoryId',
                'status','reporterId','reporterName','assignedId','cost','machineCode',
-               'photos','afterPhotos','updatedAt'],
+               'photos','afterPhotos','updatedAt','problems','repairPlace'],
   Categories: ['id','name','color','icon'],
   Machines:   ['id','project','code','name','brand','model','size','serial','ownership','categoryId','note','status','location','lastService','hours','icon','photo','driveId','driverName','drivePhoto','driveLink1','driveLink2','driveLinkPL','inspectionDate','nextInspectionDate'],
   Timeline:   ['id','repairId','status','when','by','note'],
@@ -167,6 +167,8 @@ function readAll_(name) {
     if (obj.photos      && typeof obj.photos === 'string')      obj.photos      = safeJson_(obj.photos, []);
     if (obj.afterPhotos && typeof obj.afterPhotos === 'string') obj.afterPhotos = safeJson_(obj.afterPhotos, []);
     if (obj.projects    && typeof obj.projects === 'string')    obj.projects    = safeJson_(obj.projects, []);
+    if (obj.problems    && typeof obj.problems === 'string')    obj.problems    = safeJson_(obj.problems, []);
+    if (obj.repairPlace && typeof obj.repairPlace === 'string') obj.repairPlace = safeJson_(obj.repairPlace, {});
     return obj;
   });
 }
@@ -176,8 +178,8 @@ function appendRow_(name, obj) {
   const headers = HEADERS[name];
   const row = headers.map(h => {
     let v = obj[h];
-    if (Array.isArray(v)) v = JSON.stringify(v);
     if (v instanceof Date) v = v.toISOString();
+    else if (v && typeof v === 'object') v = JSON.stringify(v);
     return v == null ? '' : v;
   });
   sh.appendRow(row);
@@ -194,9 +196,9 @@ function updateRow_(name, id, patch) {
       headers.forEach((h, c) => {
         if (patch[h] !== undefined) {
           let v = patch[h];
-          if (Array.isArray(v)) v = JSON.stringify(v);
           if (v instanceof Date) v = v.toISOString();
-          sh.getRange(r+1, c+1).setValue(v);
+          else if (v && typeof v === 'object') v = JSON.stringify(v);
+          sh.getRange(r+1, c+1).setValue(v == null ? '' : v);
         }
       });
       return true;
@@ -373,7 +375,7 @@ const ACTIONS = {
   updateRepairStatus: ({ id, status, by, note, cost, patch }) => {
     const extra = Object.assign({}, patch || {});
     // allow-list fields that may be patched together with a status update
-    const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId'];
+    const ALLOW = ['title','desc','siteId','machineCode','project','categoryId','reporterName','assignedId','problems'];
     const clean = {};
     ALLOW.forEach(k => { if (extra[k] !== undefined) clean[k] = extra[k]; });
     clean.updatedAt = new Date().toISOString();
@@ -387,6 +389,34 @@ const ACTIONS = {
       when:     new Date().toISOString(),
       by:       by || '',
       note:     note || '',
+    });
+    return { ok:true };
+  },
+
+  // Any role — update the per-problem status list of a repair
+  updateRepairProblems: ({ id, problems, by, note }) => {
+    updateRow_(TABS.REPAIRS, id, { problems: problems || [], updatedAt: new Date().toISOString() });
+    appendRow_(TABS.TIMELINE, {
+      id:       nextId_(TABS.TIMELINE, 'T', 5),
+      repairId: id,
+      status:   '',
+      when:     new Date().toISOString(),
+      by:       by || '',
+      note:     note || 'อัปเดตสถานะรายอาการ',
+    });
+    return { ok:true };
+  },
+
+  // Any role — set the repair-location section (สถานที่ทำการซ่อม)
+  updateRepairPlace: ({ id, repairPlace, by }) => {
+    updateRow_(TABS.REPAIRS, id, { repairPlace: repairPlace || {}, updatedAt: new Date().toISOString() });
+    appendRow_(TABS.TIMELINE, {
+      id:       nextId_(TABS.TIMELINE, 'T', 5),
+      repairId: id,
+      status:   '',
+      when:     new Date().toISOString(),
+      by:       by || '',
+      note:     'อัปเดตสถานที่ทำการซ่อม',
     });
     return { ok:true };
   },
