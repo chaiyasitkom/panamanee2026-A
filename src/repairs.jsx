@@ -113,6 +113,32 @@ function Repairs({user}){
     }
   };
 
+  const deleteRepair = async (r) => {
+    if(user.role!=="Admin") return;
+    const { isConfirmed } = await Swal.fire({
+      title:"ลบใบแจ้งซ่อมนี้?",
+      html:`เลขที่ <b>${r.running}</b><br/><span style="color:#64748B">การลบไม่สามารถกู้คืนได้</span>`,
+      icon:"warning",
+      showCancelButton:true,
+      confirmButtonText:"ใช่, ลบเลย",
+      cancelButtonText:"ยกเลิก",
+      confirmButtonColor:"#EF4444"
+    });
+    if(!isConfirmed) return;
+    setLoading(true);
+    try{
+      await window.api("deleteRepair", { id:r.id, role:user.role });
+      const newRows = rows.filter(x=>x.id!==r.id);
+      setRows(newRows);
+      window.__DATA.repairs = window.__DATA.repairs.filter(x=>x.id!==r.id);
+      setLoading(false);
+      Swal.fire({icon:"success",title:"ลบข้อมูลแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){
+      setLoading(false);
+      Swal.fire({icon:"error",title:"ลบไม่สำเร็จ",text:err.message});
+    }
+  };
+
   return (
     <>
       <Loading show={loading} text="กำลังบันทึก..."/>
@@ -164,6 +190,8 @@ function Repairs({user}){
                         <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>openStatusMenu(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
                       {user.role==="Admin" &&
                         <button className="ia" title="แก้ไขข้อมูล (Admin)" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
+                      {user.role==="Admin" &&
+                        <button className="ia" title="ลบข้อมูล (Admin)" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash"></i></button>}
                     </div>
                   </td>
                 </tr>

@@ -391,6 +391,21 @@ const ACTIONS = {
     return { ok:true };
   },
 
+  // Admin only — delete a repair and its timeline rows
+  deleteRepair: ({ id }) => {
+    // remove all timeline rows for this repair
+    const sh = sheet_(TABS.TIMELINE);
+    const values = sh.getDataRange().getValues();
+    const headers = values[0];
+    const ridIdx = headers.indexOf('repairId');
+    if (ridIdx > -1) {
+      for (let r = values.length - 1; r >= 1; r--) {
+        if (String(values[r][ridIdx]) === String(id)) sh.deleteRow(r + 1);
+      }
+    }
+    return { deleted: deleteRow_(TABS.REPAIRS, id) };
+  },
+
   uploadAfterPhotos: ({ repairId, running, uploads }) => {
     const folder = getOrCreateRepairFolder_(running);
     const urls = [];
