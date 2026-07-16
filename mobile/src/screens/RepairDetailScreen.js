@@ -6,6 +6,7 @@ import { useAppData } from '../context/AppContext';
 import Badge from '../components/Badge';
 import CategoryChip from '../components/CategoryChip';
 import LoadingOverlay from '../components/LoadingOverlay';
+import ShareWorkOrder from '../components/ShareWorkOrder';
 import { fmtDate, fmtDateTime, getProblems, getRepairPlace } from '../utils/helpers';
 import { api } from '../api/firebase';
 
@@ -93,6 +94,9 @@ export default function RepairDetailScreen({ route }) {
         {repair.desc ? <Text style={styles.desc}>{repair.desc}</Text> : null}
         <Text style={styles.headerDate}><Ionicons name="calendar-outline" size={12} /> {fmtDate(repair.createdAt)}</Text>
       </View>
+
+      {/* ใบงาน — แชร์รูปฟอร์ม A4 (เหมือนเว็บ) */}
+      <ShareWorkOrder repair={repair} data={data} />
 
       {/* Problems + per-item status */}
       <View style={styles.card}>
