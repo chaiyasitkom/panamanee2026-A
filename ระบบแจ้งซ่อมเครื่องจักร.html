@@ -108,6 +108,7 @@ a{color:inherit;text-decoration:none}
 .ow-foot i{margin-right:6px}
 .ow-auth{display:grid;place-items:center;padding:40px}
 .ow-card{width:100%;max-width:400px}
+.ow-logo-mark.is-img,.ow-card-badge.is-img{background:#fff;padding:7px;overflow:hidden}.ow-logo-mark.is-img img,.ow-card-badge.is-img img{width:100%;height:100%;object-fit:contain;display:block}.ow-logo-mark.is-img{width:88px;height:88px;border-radius:20px}.ow-card-badge.is-img{width:96px;height:96px;border-radius:22px}@media (max-width:600px){.ow-logo-mark.is-img{width:64px;height:64px;border-radius:16px}.ow-card-badge.is-img{width:72px;height:72px;border-radius:18px}}
 .ow-card-badge{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;font-size:22px;color:#fff;margin-bottom:20px;background:linear-gradient(145deg,var(--accent),var(--primary));box-shadow:0 12px 28px -8px rgba(30,64,175,.55)}
 .ow-card h2{font-size:27px;margin:0 0 7px;font-weight:600;letter-spacing:-.01em}
 .ow-card-sub{color:var(--muted);margin:0 0 30px;font-size:14.5px;line-height:1.5}
@@ -448,9 +449,24 @@ const firebaseConfig = {
   measurementId: "G-NKDMSMYGSX"
 };
 
+// ฐานข้อมูลที่ 2 — ทะเบียนทรัพย์สิน (นำเข้าจาก "สร้างข้อมูล asset.xlsx") อยู่คนละ Firebase project
+const assetFirebaseConfig = {
+  apiKey: "AIzaSyA9mmyYLiK_bhMFH7CJafC81d8OfaY4myw",
+  authDomain: "panamanee-3a15a.firebaseapp.com",
+  databaseURL: "https://panamanee-3a15a-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "panamanee-3a15a",
+  storageBucket: "panamanee-3a15a.firebasestorage.app",
+  messagingSenderId: "71431313537",
+  appId: "1:71431313537:web:2ff3a2a959a1875375d580",
+  measurementId: "G-S8K1KMT9JN"
+};
+
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 
 const _db = firebase.database();
+// แยก app instance ชื่อ "assets" ไม่ให้ชนกับ default app ของระบบแจ้งซ่อม
+const _assetApp = firebase.apps.find(a => a.name === 'assets') || firebase.initializeApp(assetFirebaseConfig, 'assets');
+const _assetDb = _assetApp.database();
 const CONFIG_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyOLdoS83MVCh5ThGUf7WbR3IrNU2dfKL2P-dcde4PjJ8o6-tsb7ZItHdo8TmVBn_w6/exec';
 
 async function getAppsScriptUrl() {
@@ -523,6 +539,25 @@ async function _nextId(collection, prefix, pad) {
     if (m) max = Math.max(max, parseInt(m[0], 10));
   });
   return prefix + String(max + 1).padStart(pad, '0');
+}
+
+// เลขที่ใบแจ้งซ่อม: RE-<รหัสโครงการ>-<ปีพ.ศ.><เดือน>/<ลำดับ>  เช่น RE-PRJ-A1-256807/001
+// ลำดับเริ่มนับใหม่ทุกเดือน แยกตามโครงการ
+function _buildRunning(projectName, repairs, projects) {
+  const proj = (projects || []).find(p => p && p.name === projectName);
+  const code = String((proj && proj.code) || projectName || 'GEN').trim().replace(/\s+/g, '-').toUpperCase();
+  const d = new Date();
+  const ym = String(d.getFullYear() + 543) + String(d.getMonth() + 1).padStart(2, '0');
+  const prefix = 'RE-' + code + '-' + ym + '/';
+  let max = 0;
+  (repairs || []).forEach(r => {
+    const s = String((r && r.running) || '');
+    if (s.slice(0, prefix.length) === prefix) {
+      const n = parseInt(s.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(3, '0');
 }
 
 async function _seedIfEmpty() {
@@ -723,9 +758,11 @@ async function api(action, payload = {}) {
       const { repair } = payload;
       if (!repair.id) repair.id = await _nextId('repairs', 'R', 4);
       if (!repair.running) {
-        const snap = await _db.ref('/repairs').get();
-        const count = Object.keys(snap.val() || {}).length + 1;
-        repair.running = 'RE-69/' + String(count).padStart(3, '0');
+        const [repSnap, projSnap] = await Promise.all([
+          _db.ref('/repairs').get(),
+          _db.ref('/projects').get(),
+        ]);
+        repair.running = _buildRunning(repair.project, Object.values(repSnap.val() || {}), Object.values(projSnap.val() || {}));
       }
       repair.createdAt = repair.createdAt || new Date().toISOString();
       repair.updatedAt = new Date().toISOString();
@@ -737,6 +774,111 @@ async function api(action, payload = {}) {
       };
       await _db.ref('/repairs/' + repair.id).set(repair);
       return { ...repair, timeline: Object.values(repair.timeline) };
+    }
+
+    case 'loadAssetRegistry': {
+      const snap = await _assetDb.ref('/assets').get();
+      return Object.entries(snap.val() || {}).map(([key, v]) => ({ key, ...(v || {}) }));
+    }
+
+    case 'saveAssetRegistry': {
+      const { key, asset } = payload;
+      const clean = { ...(asset || {}) };
+      delete clean.key;
+      // เพิ่มใหม่ = ให้ Firebase ออก key ให้ (รหัสทรัพย์สินมีอักขระที่ใช้เป็น key ไม่ได้)
+      const ref = key ? _assetDb.ref('/assets/' + key) : _assetDb.ref('/assets').push();
+      const id = key || ref.key;
+      clean.id = clean.id || clean.assetCode || id;
+      clean.quantity = Number(clean.quantity) || 0;
+      clean.updatedAt = new Date().toISOString();
+      await ref.set(clean);
+      return { key: id, ...clean };
+    }
+
+    case 'deleteAssetRegistry': {
+      const { key } = payload;
+      await _assetDb.ref('/assets/' + key).remove();
+      return { deleted: true };
+    }
+
+    // ย้ายทรัพย์สินไปโครงการปลายทาง + ออกใบส่งของ (DO) ในคราวเดียว
+    // moves: [{key, qty}] — ย้ายไม่ครบจำนวนได้ (เช่น แผ่นเหล็ก 10 แผ่น ย้ายแค่ 4)
+    // ย้ายครบ = ย้ายทั้งรายการ · ย้ายบางส่วน = ตัดจำนวนต้นทางลง แล้วแตกรายการใหม่ที่ปลายทาง
+    case 'transferAssets': {
+      const { moves, toProject, note, by, doc } = payload;
+      const when = new Date().toISOString();
+      const snap = await _assetDb.ref('/assets').get();
+      const all = snap.val() || {};
+      const updates = {};
+      const items = [];
+      (moves || []).forEach(mv => {
+        const k = mv && mv.key;
+        const a = k && all[k];
+        if (!a) return;
+        const total = Number(a.quantity) || 0;
+        const qty = Math.min(Math.max(Number(mv.qty) || 0, 0), total || Number(mv.qty) || 0);
+        if (qty <= 0) return;
+        const from = a.site || '';
+        const partial = total > 0 && qty < total;
+        const entry = { from, to: toProject, when, by: by || '', note: note || '', docNo: (doc && doc.docNo) || '', qty, partial };
+        const hist = Array.isArray(a.transferHistory) ? a.transferHistory.slice() : [];
+
+        if (!partial) {
+          updates['/assets/' + k + '/site'] = toProject;
+          updates['/assets/' + k + '/transferHistory'] = hist.concat([entry]);
+          updates['/assets/' + k + '/updatedAt'] = when;
+        } else {
+          // ต้นทางเหลือของเดิม, ปลายทางเป็นรายการใหม่ (รหัสทรัพย์สินเดิม อาจว่างได้)
+          updates['/assets/' + k + '/quantity'] = total - qty;
+          updates['/assets/' + k + '/transferHistory'] = hist.concat([{ ...entry, splitOut: qty }]);
+          updates['/assets/' + k + '/updatedAt'] = when;
+          const newKey = _assetDb.ref('/assets').push().key;
+          updates['/assets/' + newKey] = {
+            ...a, quantity: qty, site: toProject, updatedAt: when,
+            splitFrom: k, transferHistory: hist.concat([entry]),
+          };
+        }
+        items.push({
+          key: k, assetCode: a.assetCode || a.id || '', name: a.name || '',
+          brand: a.brand || '', model: a.model || '', serial: a.serial || '',
+          quantity: qty, totalBefore: total, partial, unit: a.unit || '', from,
+        });
+      });
+      if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
+      const docKey = String((doc && doc.docNo) || ('DO-' + when)).replace(/[.#$/\[\]]/g, '-');
+      const record = { ...(doc || {}), key: docKey, toProject, note: note || '', by: by || '', when, items };
+      updates['/deliveryOrders/' + docKey] = record;
+      await _assetDb.ref().update(updates);
+      return { doc: record, when, items };
+    }
+
+    case 'loadDeliveryOrders': {
+      const snap = await _assetDb.ref('/deliveryOrders').get();
+      return Object.entries(snap.val() || {}).map(([key, v]) => ({ key, ...(v || {}) }));
+    }
+
+    case 'deleteDeliveryOrder': {
+      const { key } = payload;
+      await _assetDb.ref('/deliveryOrders/' + key).remove();
+      return { deleted: true };
+    }
+
+    case 'deleteRepair': {
+      const { id, role } = payload;
+      if (role !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ลบใบแจ้งซ่อมได้');
+      await _db.ref('/repairs/' + id).remove();
+      return { deleted: true };
+    }
+
+    case 'updateRepairProblems': {
+      const { id, problems, by, note } = payload;
+      const tlKey = _db.ref('/repairs/' + id + '/timeline').push().key;
+      await _db.ref('/repairs/' + id).update({
+        problems: problems || [],
+        updatedAt: new Date().toISOString(),
+        ['timeline/' + tlKey]: { id: tlKey, status: '', when: new Date().toISOString(), by: by || '', note: note || 'ปรับสถานะรายการอาการ' },
+      });
+      return { ok: true };
     }
 
     case 'updateRepair': {
@@ -799,7 +941,7 @@ const ERP_SYSTEMS = [
   { id:"repairs", name:"งานซ่อม", desc:"แจ้งซ่อม ติดตามงาน และบริหารงานซ่อม", icon:"fa-screwdriver-wrench", status:"ready", startPage:"dashboard" },
   { id:"production", name:"Production", desc:"รอพัฒนา", icon:"fa-industry", status:"soon" },
   { id:"assets", name:"Asset", desc:"ทะเบียนและข้อมูลทรัพย์สิน/เครื่องจักร", icon:"fa-boxes-stacked", status:"ready", startPage:"machines" },
-  { id:"consume", name:"Consume", desc:"สำหรับเบิกจ่ายเช็คสต๊อก (รอพัฒนา)", icon:"fa-box-open", status:"soon" },
+  { id:"consume", name:"Consume", desc:"เบิกจ่าย/เช็คสต๊อก · เปิดใช้เฉพาะผู้ดูแลระบบ (Admin)", icon:"fa-box-open", status:"ready", startPage:"withdrawals", roles:["Admin"] },
   { id:"pc", name:"PC (Petty Cash)", desc:"รอพัฒนา", icon:"fa-money-bill-wave", status:"soon" },
   { id:"hr-time", name:"บุคลากร/เวลาทำงาน", desc:"รอพัฒนา", icon:"fa-users", status:"soon" },
 ];
@@ -814,6 +956,8 @@ window.__DATA = {
   repairs: [],
   projects: [],
   withdrawals: [],
+  assetRegistry: null,   // โหลดแบบ lazy ตอนเปิดหน้าทะเบียนทรัพย์สิน (คนละ Firebase project)
+  deliveryOrders: null,  // ใบส่งของ (DO) — โหลดแบบ lazy เช่นกัน
   statuses: STATUSES,
   erpSystems: ERP_SYSTEMS,
   activeErp: null,
@@ -842,8 +986,21 @@ window.__DATA.bootstrap = async function(){
 window.getStatus = (key) => STATUSES.find(s=>s.key===key) || STATUSES[0];
 window.getCategory = (id) => window.__DATA.categories.find(c=>c.id===id) || {name:"-",color:"#64748B",icon:"fa-circle"};
 window.getUser = (id) => window.__DATA.users.find(u=>u.id===id);
+// รหัสโครงการจากชื่อโครงการ (โครงการที่ยังไม่ได้ตั้งรหัสจะได้ "")
+window.getProjectCode = (name) => {
+  if(!name) return "";
+  const p = (window.__DATA.projects||[]).find(x => (typeof x==="string" ? x : x.name) === name);
+  return (p && p.code) ? String(p.code) : "";
+};
 window.getActiveProject = (user) => user?.activeProject || window.__DATA.activeProject || "";
 window.getActiveErp = (user) => user?.activeErp || window.__DATA.activeErp || null;
+
+// ระบบงานที่จำกัดสิทธิ์ตาม role — ใส่ roles:[...] ไว้ใน ERP_SYSTEMS (ไม่ใส่ = ทุก role ที่ล็อกอินได้)
+window.canUseErp = (user, sys) => {
+  if(!sys || sys.status !== "ready") return false;
+  if(Array.isArray(sys.roles) && sys.roles.length) return sys.roles.includes(user?.role);
+  return true;
+};
 
 window.userCanSeeAllProjects = (user) => {
   if(!user) return false;
@@ -900,6 +1057,12 @@ function Avatar({name,size=28}){
   const bg = window.avatarColor(name);
   return <span className="avatar-xs" style={{background:bg,width:size,height:size}}>{window.initials(name)}</span>;
 }
+// ชื่อโครงการ + รหัสโครงการ (รหัสเดียวกับที่ใช้ออกเลขที่ใบแจ้งซ่อม)
+function ProjectLabel({name}){
+  const code = window.getProjectCode(name);
+  if(!name) return <span style={{color:"var(--muted)"}}>—</span>;
+  return <>{code && <span className="mono" style={{color:"var(--muted)",marginRight:6}}>[{code}]</span>}{name}</>;
+}
 function Modal({open,onClose,title,children,footer,size=""}){
   useEffect(()=>{
     if(!open) return;
@@ -923,7 +1086,7 @@ function Loading({show,text="กำลังโหลด..."}){
   return <div className="loading-scrim"><div className="loading-box"><div className="spinner"></div><span>{text}</span></div></div>;
 }
 function simulate(ms=500){ return new Promise(r=>setTimeout(r,ms)); }
-Object.assign(window, { Badge, CategoryChip, Avatar, Modal, Loading, simulate });
+Object.assign(window, { Badge, CategoryChip, Avatar, ProjectLabel, Modal, Loading, simulate });
 </script>
 
 <script type="text/babel">
@@ -959,7 +1122,7 @@ function Login({onLogin}){
 
         <div className="ow-top">
           <div className="ow-logo">
-            <div className="ow-logo-mark"><i className="fa-solid fa-layer-group"></i></div>
+            <div className="ow-logo-mark is-img"><img src={window.PNM_LOGO_DATAURL} alt="โลโก้ พานามณี" /></div>
             <div>
               <div className="ow-logo-name">One Workspace</div>
               <div className="ow-logo-sub">Unified Operations Platform</div>
@@ -997,7 +1160,7 @@ function Login({onLogin}){
       {/* ===== Auth side ===== */}
       <div className="ow-auth">
         <form className="ow-card" onSubmit={submit}>
-          <div className="ow-card-badge"><i className="fa-solid fa-layer-group"></i></div>
+          <div className="ow-card-badge is-img"><img src={window.PNM_LOGO_DATAURL} alt="โลโก้ พานามณี" /></div>
           <h2>เข้าสู่พื้นที่ทำงาน</h2>
           <p className="ow-card-sub">ลงชื่อเข้าใช้เพื่อเลือกระบบงานและโครงการของคุณ</p>
 
@@ -1106,6 +1269,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
+    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
     ...(user.role==="Admin" ? [{ key:"login-logs", icon:"fa-shield-halved", label:"ประวัติการล็อกอิน" }] : []),
@@ -1113,6 +1277,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
+    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   const reporterNav = [
     { key:"r-dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
@@ -1121,6 +1286,8 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   ];
   const assetNav = [
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"asset-registry", icon:"fa-boxes-stacked", label:"ทะเบียนทรัพย์สิน" },
+    { key:"asset-do", icon:"fa-file-export", label:"ใบส่งของ (DO)" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
     { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
@@ -1570,7 +1737,6 @@ function Repairs({user}){
   const [filterProj,setFilterProj] = React.useState("all");
   const [filterMachType,setFilterMachType] = React.useState("all");
   const [detail,setDetail] = React.useState(null);
-  const [statusFor,setStatusFor] = React.useState(null);
   const [editFor,setEditFor] = React.useState(null);
   const [loading,setLoading] = React.useState(false);
 
@@ -1746,15 +1912,13 @@ function Repairs({user}){
                   <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
                   <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td style={{fontSize:13}}>{r.project}</td>
+                  <td style={{fontSize:13}}><ProjectLabel name={r.project}/></td>
                   <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
                   <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
-                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>setStatusFor(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
-                      {["Admin","Officer","Engineer"].includes(user.role) && <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
                       {user.role==="Admin" && <button className="ia" title="ลบข้อมูล (Admin)" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash"></i></button>}
                     </div>
                   </td>
@@ -1766,7 +1930,6 @@ function Repairs({user}){
         </div>
       </div>
       {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
-      {statusFor && <StatusMenu r={statusFor} onClose={()=>setStatusFor(null)} onPick={(next,label)=>{setStatusFor(null);quickAction(statusFor,next,label);}} />}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
       {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
       {editPartsFor && <AssessModal r={editPartsFor} mode="edit" onClose={()=>setEditPartsFor(null)} onSave={saveEditParts}/>}
@@ -1788,17 +1951,6 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
     }catch(err){ setProbs(probs); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
   const doneCount = probs.filter(p=>p.status==="done").length;
-  const [place,setPlace] = React.useState(()=>window.getRepairPlace(r));
-  const setPl = (k,v)=>setPlace(p=>({...p,[k]:v}));
-  const savePlace = async () => {
-    try{
-      await window.api("updateRepairPlace",{id:r.id, repairPlace:place, by:user.name});
-      const idx = window.__DATA.repairs.findIndex(x=>x.id===r.id);
-      if(idx>-1) window.__DATA.repairs[idx].repairPlace = place;
-      r.repairPlace = place;
-      Swal.fire({icon:"success",title:"บันทึกสถานที่ซ่อมแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
-    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
-  };
   return (
     <Modal open={true} onClose={onClose} title={<>ใบแจ้งซ่อม <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>} size="lg"
       footer={<>
@@ -1831,7 +1983,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
         {r.repairNote && <div className="full"><div className="k" style={{color:"var(--primary)"}}><i className="fa-solid fa-screwdriver-wrench" style={{marginRight:5}}></i>รายละเอียดการซ่อม</div><div className="v" style={{fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 12px",marginTop:4}}>{r.repairNote}</div></div>}
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
         <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
-        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v">{r.project}</div></div>
+        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v"><ProjectLabel name={r.project}/></div></div>
         <div><div className="k">หมวดหมู่</div><div className="v"><CategoryChip categoryId={r.categoryId}/></div></div>
         <div><div className="k">ผู้แจ้ง</div><div className="v"><Avatar name={r.reporterName}/>{r.reporterName}</div></div>
         <div><div className="k">ผู้รับผิดชอบ</div><div className="v">{r.assignedId ? <><Avatar name={window.getUser(r.assignedId)?.name}/>{window.getUser(r.assignedId)?.name}</> : <span style={{color:"var(--muted)"}}>ยังไม่มอบหมาย</span>}</div></div>
@@ -1839,21 +1991,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
         <div><div className="k">สถานะปัจจุบัน</div><div className="v"><Badge status={r.status}/></div></div>
       </div>
 
-      {canAct && <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
-        <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</div>
-        <div style={{display:"grid",gap:10}}>
-          <div><label className="k">แจ้งซ่อมที่</label><input className="inp" value={place.reportAt} onChange={e=>setPl("reportAt",e.target.value)} /></div>
-          <div style={{display:"grid",gap:8}}>
-            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><input type="radio" name={"rp-"+r.id} checked={place.mode==="onsite"} onChange={()=>setPl("mode","onsite")} /><span>ส่งช่างซ่อมหน้างาน ที่</span><input className="inp" style={{flex:1,minWidth:120}} value={place.onsite} onChange={e=>setPl("onsite",e.target.value)} placeholder="ระบุสถานที่" /></label>
-            <label style={{display:"flex",alignItems:"center",gap:8}}><input type="radio" name={"rp-"+r.id} checked={place.mode==="workshop"} onChange={()=>setPl("mode","workshop")} /><span>โรงซ่อมของบริษัทที่แจ้งซ่อม</span></label>
-            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><input type="radio" name={"rp-"+r.id} checked={place.mode==="other"} onChange={()=>setPl("mode","other")} /><span>อื่นๆ</span><input className="inp" style={{flex:1,minWidth:120}} value={place.other} onChange={e=>setPl("other",e.target.value)} placeholder="ระบุ" /></label>
-          </div>
-          <div><label className="k">หมายเหตุ</label><textarea className="inp" rows="2" value={place.note} onChange={e=>setPl("note",e.target.value)} /></div>
-          <div><button className="btn btn-primary btn-sm" onClick={savePlace}><i className="fa-solid fa-floppy-disk"></i> บันทึกสถานที่ซ่อม</button></div>
-        </div>
-      </div>}
-
-      {(r.parts && r.parts.length>0) && <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+      {(r.parts && r.parts.length>0) &&<div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
         <div style={{padding:"12px 16px",background:"#FAFBFC",borderBottom:"1px solid var(--line)",fontWeight:500,fontSize:13,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่ ({r.parts.length} รายการ)</span>
           <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString()}</span>
@@ -1912,28 +2050,6 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
   );
 }
 
-function StatusMenu({r,onClose,onPick}){
-  const opts = [
-    {k:"assess",l:"ประเมินราคา",i:"fa-magnifying-glass-dollar"},
-    {k:"progress",l:"อนุมัติและเริ่มซ่อม",i:"fa-screwdriver-wrench"},
-    {k:"parts",l:"รออะไหล่",i:"fa-box-open"},
-    {k:"done",l:"ปิดงาน",i:"fa-flag-checkered"},
-    {k:"cancel",l:"ยกเลิกงาน",i:"fa-ban"},
-  ];
-  return (
-    <Modal open={true} onClose={onClose} title={`เปลี่ยนสถานะ · ${r.running}`}>
-      <div style={{color:"var(--muted)",fontSize:13,marginBottom:14}}>สถานะปัจจุบัน: <Badge status={r.status}/></div>
-      <div style={{display:"grid",gap:8}}>
-        {opts.filter(o=>o.k!==r.status).map(o=>(
-          <button key={o.k} className="quick-action" style={{justifyContent:"flex-start",padding:"12px 14px"}} onClick={()=>onPick(o.k,o.l)}>
-            <i className={`fa-solid ${o.i}`} style={{width:16}}></i><span>{o.l}</span>
-          </button>
-        ))}
-      </div>
-    </Modal>
-  );
-}
-
 window.getProblems = function(r){
   if(Array.isArray(r.problems) && r.problems.length){
     return r.problems.map(p=>({text:String(p.text||""),status:p.status||r.status||"new"}));
@@ -1947,6 +2063,9 @@ window.getRepairPlace = function(r){
   return (p && typeof p==="object" && !Array.isArray(p)) ? Object.assign(base, p) : base;
 };
 
+// โลโก้บริษัท พานามณี (base64 JPEG) — ใช้ร่วมกันทั้งใบงานและหน้า Login
+window.PNM_LOGO_DATAURL = "data:image/jpeg;base64,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";
+
 window.buildRepairFormDoc = function(r, user){
   const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const m = (window.__DATA.machines||[]).find(x=>x.code===r.machineCode) || {};
@@ -1954,13 +2073,16 @@ window.buildRepairFormDoc = function(r, user){
   const probs = window.getProblems(r);
   const fmtDate = d => { if(!d) return ""; const dt=new Date(d); if(isNaN(dt)) return ""; const y=(dt.getFullYear()+543)%100; return dt.getDate()+"/"+(dt.getMonth()+1)+"/"+String(y).padStart(2,"0"); };
   const dateStr = fmtDate(r.createdAt);
-  const fill = v => v?esc(v):"";
+  // ข้อมูลที่กรอก = ตัวอักษรสีน้ำเงิน (แยกจากตัวฟอร์มที่เป็นสีดำ)
+  const fill = v => v?("<span class='fld'>"+esc(v)+"</span>"):"";
   const rp = window.getRepairPlace(r);
+  const projCode = window.getProjectCode ? window.getProjectCode(r.project) : "";
+  const projLabel = r.project ? (projCode ? "["+projCode+"] "+r.project : r.project) : "";
   const box = on => "<span class='chk'>"+(on?"✓":"")+"</span>";
   const rowCount = Math.max(5, probs.length);
   let rows = "";
-  for(let i=0;i<rowCount;i++){ const p=probs[i]; rows += "<tr><td class='c-no'>"+(i+1)+"</td><td class='c-item'>"+(p?esc(p.text):"")+"</td><td class='c-insp'></td></tr>"; }
-  const logo = "<img src='data:image/jpeg;base64,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' width='92' alt='' style='display:block'>";
+  for(let i=0;i<rowCount;i++){ const p=probs[i]; rows += "<tr><td class='c-no'>"+(i+1)+"</td><td class='c-item'>"+fill(p&&p.text)+"</td><td class='c-insp'></td></tr>"; }
+  const logo = "<img src='"+window.PNM_LOGO_DATAURL+"' width='92' alt='' style='display:block'>";
   const html = "<!doctype html><html lang='th'><head><meta charset='utf-8'><title>ใบแจ้งซ่อม "+esc(r.running)+"</title><style>"
     + "@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Sarabun',Tahoma,Arial,sans-serif;color:#000;font-size:13px;margin:0}"
     + ".sheet{width:186mm;margin:0 auto}.hd{display:flex;align-items:center;gap:14px;margin-bottom:2px}.hd-title{flex:1;text-align:center}.cn-th{font-size:22px;font-weight:700}.cn-en{font-size:15px;font-weight:700;letter-spacing:.5px}.hd-sp{width:92px}"
@@ -1975,6 +2097,7 @@ window.buildRepairFormDoc = function(r, user){
     + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}"
     + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}"
     + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}"
+    + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}"
     + "</style></head><body><div class='sheet'>"
     + "<div class='hd'><div>"+logo+"</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>"
     + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>"
@@ -1984,7 +2107,7 @@ window.buildRepairFormDoc = function(r, user){
     + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>"+fill(m.brand)+"</span><b>รุ่น</b><span class='dot f1'>"+fill(m.model)+"</span><b>ขนาด</b><span class='dot f1'>"+fill(m.size)+"</span><b>ปี</b><span class='dot f1'></span><b>ทะเบียน</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>Serial No.</b><span class='dot f1'>"+fill(m.serial)+"</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'></span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>"+fill(m.hours)+"</span></div>"
-    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>"+fill(r.project)+"</span><b>สถานที่</b><span class='dot f1'>"+fill(m.location)+"</span></div>"
+    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>"+fill(projLabel)+"</span><b>สถานที่</b><span class='dot f1'>"+fill(m.location)+"</span></div>"
     + "</div>"
     + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>"+rows+"</tbody></table></div>"
     + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>"
@@ -2026,7 +2149,10 @@ window.shareRepairImage = async function(r, user){
     const doc = iframe.contentDocument || iframe.contentWindow.document;
     doc.open(); doc.write(window.buildRepairFormDoc(r,user)); doc.close();
     await new Promise(res=>setTimeout(res, 500));
-    const node = doc.querySelector(".sheet") || doc.body;
+    // เว้นขอบขาวรอบใบงานก่อนแปลงเป็นรูป (แคปทั้ง body ที่ใส่ padding ไว้ — ไม่กระทบตอนสั่งพิมพ์)
+    doc.body.style.padding = "28px 24px";
+    doc.body.style.background = "#ffffff";
+    const node = doc.body;
     const canvas = await H2C(node, {scale:2, backgroundColor:"#ffffff", useCORS:true, windowWidth:node.scrollWidth||760});
     const blob = await new Promise(res=>canvas.toBlob(res,"image/png"));
     const dataUrl = canvas.toDataURL("image/png");
@@ -3469,30 +3595,42 @@ function NewRequest({user,goTo}){
     return window.userProjects(user);
   },[user]);
 
-  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:window.getActiveProject(user)||"",machineCode:"",siteId:""});
+  const initProject = window.getActiveProject(user)||"";
+  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",placeMode:"onsite",placeOnsite:initProject,placeOther:""});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{ if(!f.project) return []; return (window.__DATA.machines||[]).filter(m=>m.project===f.project); },[f.project]);
   const filteredMachines = React.useMemo(()=>{ if(!f.categoryId) return projectMachines; return projectMachines.filter(m=>m.categoryId===f.categoryId); },[projectMachines,f.categoryId]);
   const projectCategories = React.useMemo(()=>{ const ids=new Set(projectMachines.map(m=>m.categoryId).filter(Boolean)); return (window.__DATA.categories||[]).filter(c=>ids.has(c.id)); },[projectMachines]);
 
-  const onProjectChange = (p) => setF(prev=>({...prev,project:p,categoryId:"",machineCode:""}));
+  // เปลี่ยนโครงการ → เติมชื่อโครงการลงช่อง "ส่งช่างซ่อมหน้างาน ที่" ให้ (ถ้าผู้ใช้ยังไม่ได้แก้เอง)
+  const onProjectChange = (p) => setF(prev=>({...prev,project:p,categoryId:"",machineCode:"",placeOnsite:(!prev.placeOnsite||prev.placeOnsite===prev.project)?p:prev.placeOnsite}));
   const onCategoryChange = (cid) => setF(prev=>({...prev,categoryId:cid,machineCode:""}));
 
   const submit = async () => {
     if(!f.project){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาเลือกโครงการ/หน่วยงานก่อน"}); return; }
     if(!f.categoryId){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาเลือกหมวดหมู่"}); return; }
     const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n");
-    if(!title||!f.desc){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาระบุอาการและรายละเอียดเพิ่มเติม"}); return; }
+    if(!title){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาระบุอาการ/ปัญหาอย่างน้อย 1 รายการ"}); return; }
     setLoading(true);
     try{
-      const repair = {siteId:f.siteId,title,desc:f.desc,problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode};
+      const repairPlace = {
+        mode: f.placeMode,
+        onsite: f.placeMode==="onsite" ? (f.placeOnsite||f.project) : "",
+        other:  f.placeMode==="other"  ? f.placeOther : "",
+        reportAt: "", note: "",
+      };
+      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace};
       const saved = await window.api("createRepair",{repair});
       saved.createdAt = new Date(saved.createdAt);
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
       window.__DATA.repairs = [saved,...window.__DATA.repairs];
       setLoading(false);
-      Swal.fire({icon:"success",title:"แจ้งซ่อมสำเร็จ!",html:`เลขที่ใบแจ้งซ่อม: <strong class="mono" style="color:#1E40AF">${saved.running}</strong>`,confirmButtonColor:"#1E40AF"}).then(()=>goTo(["Admin","Officer","Engineer"].includes(user.role)?"repairs":"r-mine"));
+      Swal.fire({icon:"success",title:"แจ้งซ่อมสำเร็จ!",html:`เลขที่ใบแจ้งซ่อม: <strong class="mono" style="color:#1E40AF">${saved.running}</strong>`,confirmButtonColor:"#1E40AF"}).then(async ()=>{
+        // เปิดหน้าแชร์รูปใบงานให้เลย (shareRepairImage จัดการ error ของตัวเองแล้ว)
+        await window.shareRepairImage(saved,user);
+        goTo(["Admin","Officer","Engineer"].includes(user.role)?"repairs":"r-mine");
+      });
     }catch(err){ setLoading(false); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
 
@@ -3503,7 +3641,7 @@ function NewRequest({user,goTo}){
       <div className="card-h"><div><h3>แบบฟอร์มแจ้งซ่อม</h3><div className="sub">ระบบจะออกเลขที่ใบแจ้งซ่อมให้อัตโนมัติหลังส่งแบบฟอร์ม</div></div></div>
       <div className="card-body">
         <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
-          {[{n:1,l:"เลือกโครงการ",done:!!f.project},{n:2,l:"เลือกหมวดหมู่",done:!!f.categoryId,disabled:!f.project},{n:3,l:"เลือกเครื่องจักร",done:!!f.machineCode,disabled:!f.categoryId},{n:4,l:"รายละเอียดอาการ",done:(f.title||"").split("\n").some(s=>s.trim())&&!!f.desc,disabled:!f.machineCode}].map(s=>(
+          {[{n:1,l:"เลือกโครงการ",done:!!f.project},{n:2,l:"เลือกหมวดหมู่",done:!!f.categoryId,disabled:!f.project},{n:3,l:"เลือกเครื่องจักร",done:!!f.machineCode,disabled:!f.categoryId},{n:4,l:"รายละเอียดอาการ",done:(f.title||"").split("\n").some(s=>s.trim()),disabled:!f.machineCode}].map(s=>(
             <div key={s.n} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:999,background:s.done?"rgba(16,185,129,.1)":s.disabled?"var(--bg)":"var(--accent-soft)",border:`1px solid ${s.done?"rgba(16,185,129,.3)":s.disabled?"var(--line)":"rgba(30,64,175,.2)"}`,color:s.done?"#047857":s.disabled?"var(--muted)":"var(--primary)",fontSize:13,fontWeight:500,opacity:s.disabled?0.55:1}}>
               <span style={{width:22,height:22,borderRadius:"50%",display:"grid",placeItems:"center",fontSize:11,background:s.done?"#10B981":s.disabled?"var(--line)":"var(--primary)",color:"#fff"}}>{s.done?<i className="fa-solid fa-check"></i>:s.n}</span>
               {s.l}
@@ -3528,7 +3666,26 @@ function NewRequest({user,goTo}){
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>อาการ/ปัญหา * <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(เพิ่มได้หลายรายการ)</span></label><ProblemsField value={f.title} onChange={v=>setF({...f,title:v})} /></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>เลขที่ใบแจ้งซ่อม (ที่ไซต์งาน)</label><input value={f.siteId} onChange={e=>setF({...f,siteId:e.target.value})} placeholder="เช่น WR-1234" /><div className="hint">ไม่บังคับ · กรอกเลขที่จากใบงานจริงที่ไซต์</div></div>
-          <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>รายละเอียดเพิ่มเติม *</label><textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="อธิบายอาการ ลักษณะปัญหา ช่วงเวลาที่เกิด ผลกระทบต่อการผลิต..." /></div>
+          <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
+            <label><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</label>
+            <div style={{display:"grid",gap:10,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="onsite"} onChange={()=>setF({...f,placeMode:"onsite"})} />
+                <span style={{whiteSpace:"nowrap"}}>ส่งช่างซ่อมหน้างาน ที่</span>
+                <input className="inp" style={{flex:1,minWidth:150}} value={f.placeOnsite} onChange={e=>setF({...f,placeOnsite:e.target.value})} placeholder="ชื่อโครงการ/สถานที่หน้างาน" />
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="workshop"} onChange={()=>setF({...f,placeMode:"workshop"})} />
+                <span>โรงซ่อมของบริษัทที่แจ้งซ่อม</span>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="other"} onChange={()=>setF({...f,placeMode:"other"})} />
+                <span>อื่นๆ</span>
+                <input className="inp" style={{flex:1,minWidth:150}} value={f.placeOther} onChange={e=>setF({...f,placeOther:e.target.value})} placeholder="ระบุสถานที่" />
+              </label>
+            </div>
+            <div className="hint">ระบบเติมชื่อโครงการให้อัตโนมัติ · แก้ไขได้</div>
+          </div>
         </div>
       </div>
       <div style={{padding:"14px 22px",borderTop:"1px solid var(--line)",display:"flex",justifyContent:"flex-end",gap:10,background:"#FAFBFC"}}>
@@ -3582,6 +3739,665 @@ Object.assign(window,{ReporterDashboard,NewRequest,MyRepairs});
 </script>
 
 <script type="text/babel">
+// ทะเบียนทรัพย์สิน — ข้อมูลจาก Firebase project "panamanee-3a15a" (/assets)
+function AssetRegistry({user}){
+  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const [rows,setRows] = React.useState(()=>window.__DATA.assetRegistry || null);
+  const [err,setErr] = React.useState("");
+  const [q,setQ] = React.useState("");
+  const [site,setSite] = React.useState("");
+  const [owner,setOwner] = React.useState("");
+  const [edit,setEdit] = React.useState(null);   // {mode:"add"|"edit", data:{...}}
+  const [history,setHistory] = React.useState(null);   // ทรัพย์สินที่กำลังดูประวัติการย้าย
+
+  React.useEffect(()=>{
+    if(rows) return;
+    let alive = true;
+    window.api("loadAssetRegistry")
+      .then(list=>{
+        if(!alive) return;
+        const sorted = list.slice().sort((a,b)=>String(a.assetCode||a.id||"").localeCompare(String(b.assetCode||b.id||""),"th"));
+        window.__DATA.assetRegistry = sorted;
+        setRows(sorted);
+      })
+      .catch(e=>{ if(alive) setErr(e.message||String(e)); });
+    return ()=>{ alive = false; };
+  },[rows]);
+
+  const sites = React.useMemo(()=>[...new Set((rows||[]).map(r=>r.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[rows]);
+  const owners = React.useMemo(()=>[...new Set((rows||[]).map(r=>r.ownership).filter(Boolean))].sort(),[rows]);
+
+  const filtered = React.useMemo(()=>{
+    const kw = q.trim().toLowerCase();
+    return (rows||[]).filter(r=>{
+      if(site && r.site!==site) return false;
+      if(owner && r.ownership!==owner) return false;
+      if(!kw) return true;
+      return [r.assetCode,r.name,r.brand,r.model,r.serial,r.site,r.holder,r.note]
+        .some(v=>String(v||"").toLowerCase().includes(kw));
+    });
+  },[rows,q,site,owner]);
+
+  const totalQty = React.useMemo(()=>filtered.reduce((s,r)=>s+(Number(r.quantity)||0),0),[filtered]);
+
+  const sortRows = (list) => list.slice().sort((a,b)=>String(a.assetCode||a.id||"").localeCompare(String(b.assetCode||b.id||""),"th"));
+  const commit = (list) => { const sorted = sortRows(list); window.__DATA.assetRegistry = sorted; setRows(sorted); };
+
+  const save = async (form) => {
+    const saved = await window.api("saveAssetRegistry",{ key: form.key || "", asset: form });
+    const base = rows || [];
+    commit(base.some(x=>x.key===saved.key) ? base.map(x=>x.key===saved.key?saved:x) : base.concat([saved]));
+    setEdit(null);
+    Swal.fire({icon:"success",title:form.key?"บันทึกการแก้ไขแล้ว":"เพิ่มทรัพย์สินแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+  };
+
+  const remove = async (r) => {
+    const { isConfirmed } = await Swal.fire({
+      title:"ลบทรัพย์สินนี้?",
+      html:`<b>${(r.assetCode||r.id||"")}</b> ${(r.name||"")}<br/><span style="color:#64748B">การลบไม่สามารถกู้คืนได้</span>`,
+      icon:"warning", showCancelButton:true,
+      confirmButtonText:"ใช่, ลบเลย", cancelButtonText:"ยกเลิก", confirmButtonColor:"#EF4444"
+    });
+    if(!isConfirmed) return;
+    try{
+      await window.api("deleteAssetRegistry",{ key:r.key });
+      commit((rows||[]).filter(x=>x.key!==r.key));
+      Swal.fire({icon:"success",title:"ลบข้อมูลแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(e){ Swal.fire({icon:"error",title:"ลบไม่สำเร็จ",text:e.message}); }
+  };
+
+  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",receivedAt:"",note:""};
+
+  if(err) return (
+    <div className="card"><div className="card-body">
+      <div className="empty">
+        <i className="fa-solid fa-triangle-exclamation" style={{color:"#EF4444"}}></i>
+        <div className="t">โหลดทะเบียนทรัพย์สินไม่สำเร็จ</div>
+        <div>{err}</div>
+        <button className="btn btn-primary btn-sm" style={{marginTop:12}} onClick={()=>{setErr("");setRows(null);}}><i className="fa-solid fa-rotate"></i> ลองใหม่</button>
+      </div>
+    </div></div>
+  );
+  if(!rows) return <Loading show={true} text="กำลังโหลดทะเบียนทรัพย์สิน..."/>;
+
+  return (
+    <>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i>
+          <input placeholder="ค้นหารหัส / ชื่อ / ยี่ห้อ / รุ่น / Serial / สถานที่..." value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+        <select value={site} onChange={e=>setSite(e.target.value)}>
+          <option value="">ทุกสถานที่</option>
+          {sites.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={owner} onChange={e=>setOwner(e.target.value)}>
+          <option value="">ทุกกรรมสิทธิ์</option>
+          {owners.map(o=><option key={o} value={o}>{o}</option>)}
+        </select>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
+          {filtered.length.toLocaleString("th-TH")} / {rows.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
+        </div>
+        {canEdit && <button className="btn btn-primary" onClick={()=>setEdit({mode:"add",data:{...blank}})}><i className="fa-solid fa-plus"></i> เพิ่มทรัพย์สิน</button>}
+      </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead><tr>
+            <th>รหัสทรัพย์สิน</th><th>ชื่อทรัพย์สิน</th>
+            <th className="hide-on-mobile">ยี่ห้อ / รุ่น</th><th className="hide-on-mobile">ขนาด</th>
+            <th>จำนวน</th><th className="hide-on-mobile">กรรมสิทธิ์</th>
+            <th className="hide-on-mobile">ผู้ถือครอง</th><th>สถานที่ (โครงการ)</th>
+            {canEdit && <th>จัดการ</th>}
+          </tr></thead>
+          <tbody>
+            {filtered.map(r=>(
+              <tr key={r.key}>
+                <td><span className="ticket-id">{r.assetCode||r.id||"—"}</span></td>
+                <td><div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div></td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
+                <td style={{whiteSpace:"nowrap"}}>{(Number(r.quantity)||0).toLocaleString("th-TH")} {r.unit||""}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{r.ownership||"—"}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{r.holder||"—"}</td>
+                <td style={{fontSize:13}}>
+                  {r.site ? <ProjectLabel name={r.site}/> : <span style={{color:"var(--muted)"}}>—</span>}
+                  {(r.transferHistory||[]).length>0 && (
+                    <button className="ia" title="ประวัติการย้าย" onClick={()=>setHistory(r)} style={{color:"#7C3AED",marginLeft:4}}>
+                      <i className="fa-solid fa-clock-rotate-left"></i>
+                    </button>
+                  )}
+                </td>
+                {canEdit && <td><div className="row-actions">
+                  <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
+                  <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
+                </div></td>}
+              </tr>
+            ))}
+            {filtered.length===0 && (<tr><td colSpan={canEdit?9:8}><div className="empty">
+              <i className="fa-solid fa-boxes-stacked"></i>
+              <div className="t">ไม่พบข้อมูล</div>
+              <div>{rows.length===0 ? "ยังไม่มีทรัพย์สินในทะเบียน" : "ลองเปลี่ยนเงื่อนไขการค้นหา"}</div>
+            </div></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {edit && <AssetForm mode={edit.mode} initial={edit.data} sites={sites} owners={owners} onClose={()=>setEdit(null)} onSave={save}/>}
+    {history && <AssetHistoryModal asset={history} onClose={()=>setHistory(null)}/>}
+    </>
+  );
+}
+
+// ประวัติการย้ายโครงการของทรัพย์สินชิ้นหนึ่ง
+function AssetHistoryModal({asset,onClose}){
+  const list = (asset.transferHistory||[]).slice().reverse();
+  return (
+    <Modal open={true} onClose={onClose} size="sm"
+      title={<><i className="fa-solid fa-clock-rotate-left" style={{color:"#7C3AED",marginRight:8}}></i>ประวัติการย้ายโครงการ</>}
+      footer={<button className="btn btn-ghost" onClick={onClose}>ปิด</button>}>
+      <div style={{marginBottom:12,fontSize:13,color:"var(--muted)"}}>
+        <span className="ticket-id">{asset.assetCode||asset.id}</span> {asset.name}
+      </div>
+      <div style={{display:"grid",gap:8}}>
+        {list.map((t,i)=>(
+          <div key={i} style={{border:"1px solid var(--line)",borderRadius:8,padding:"10px 12px"}}>
+            <div style={{fontSize:13,fontWeight:500}}>
+              {t.from||"— ไม่ระบุ —"} <i className="fa-solid fa-arrow-right" style={{color:"#7C3AED",margin:"0 6px"}}></i> {t.to}
+            </div>
+            <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>
+              {window.__DATA.fmtDateTime(t.when)} · โดย {t.by||"—"}
+              {t.docNo && <> · ใบส่งของ <span className="mono">{t.docNo}</span></>}
+            </div>
+            {t.note && <div style={{fontSize:12,marginTop:4}}>{t.note}</div>}
+          </div>
+        ))}
+        {list.length===0 && <div style={{color:"var(--muted)",fontSize:13}}>ยังไม่มีประวัติการย้าย</div>}
+      </div>
+    </Modal>
+  );
+}
+
+// เลือกโครงการปลายทาง + ข้อมูลใบส่งของ
+// ย้ายโครงการ + ออกใบส่งของ — เลือกทรัพย์สินได้ในตัว (เรียกจากหน้าใบส่งของ)
+function TransferAssetsModal({user,onClose,onSaved}){
+  const projects = React.useMemo(()=>(window.__DATA.projects||[]).filter(p=>p.status!=="inactive"),[]);
+  const [assets,setAssets] = React.useState(()=>window.__DATA.assetRegistry || null);
+  const [loadErr,setLoadErr] = React.useState("");
+  const [toProject,setToProject] = React.useState("");
+  const [docNo,setDocNo] = React.useState("");
+  const [docDate,setDocDate] = React.useState(()=>window.__DATA.fmtDate(new Date()));
+  const [sender,setSender] = React.useState(user.name||"");
+  const [receiver,setReceiver] = React.useState("");
+  const [note,setNote] = React.useState("");
+  const [busy,setBusy] = React.useState(false);
+  const [q,setQ] = React.useState("");
+  const [fromFilter,setFromFilter] = React.useState("");
+  const [qty,setQty] = React.useState({});   // {assetKey: จำนวนที่จะย้าย} — มีคีย์ = ถูกเลือก
+
+  React.useEffect(()=>{
+    if(assets) return;
+    let alive = true;
+    window.api("loadAssetRegistry")
+      .then(list=>{ if(!alive) return; window.__DATA.assetRegistry = list; setAssets(list); })
+      .catch(e=>{ if(alive) setLoadErr(e.message||String(e)); });
+    return ()=>{ alive=false; };
+  },[assets]);
+
+  // เลขที่ใบส่งของ: DO-<รหัสโครงการปลายทาง>-<ปีพ.ศ.><เดือน>/<ลำดับ> — รูปแบบเดียวกับเลขที่ใบแจ้งซ่อม
+  React.useEffect(()=>{
+    if(!toProject){ setDocNo(""); return; }
+    let alive = true;
+    window.api("loadDeliveryOrders").then(list=>{
+      if(!alive) return;
+      const code = String(window.getProjectCode(toProject)||toProject).trim().replace(/\s+/g,"-").toUpperCase();
+      const d = new Date();
+      const prefix = "DO-"+code+"-"+String(d.getFullYear()+543)+String(d.getMonth()+1).padStart(2,"0")+"/";
+      let max = 0;
+      list.forEach(x=>{
+        const t = String(x.docNo||"");
+        if(t.slice(0,prefix.length)===prefix){ const n=parseInt(t.slice(prefix.length),10); if(!isNaN(n)&&n>max) max=n; }
+      });
+      setDocNo(prefix+String(max+1).padStart(3,"0"));
+    }).catch(()=>setDocNo(""));
+    return ()=>{ alive=false; };
+  },[toProject]);
+
+  const sites = React.useMemo(()=>[...new Set((assets||[]).map(a=>a.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[assets]);
+
+  // ซ่อนรายการที่อยู่โครงการปลายทางอยู่แล้ว
+  const candidates = React.useMemo(()=>{
+    const kw = q.trim().toLowerCase();
+    return (assets||[]).filter(a=>{
+      if(toProject && a.site===toProject) return false;
+      if(fromFilter && a.site!==fromFilter) return false;
+      if(!kw) return true;
+      return [a.assetCode,a.name,a.brand,a.model,a.serial,a.site].some(v=>String(v||"").toLowerCase().includes(kw));
+    });
+  },[assets,q,fromFilter,toProject]);
+
+  const picked = React.useMemo(()=>(assets||[]).filter(a=>qty[a.key]!==undefined),[assets,qty]);
+  const totalMoving = picked.reduce((s,a)=>s+(Number(qty[a.key])||0),0);
+
+  const toggle = (a) => setQty(prev=>{
+    const n = {...prev};
+    if(n[a.key]!==undefined) delete n[a.key];
+    else n[a.key] = Number(a.quantity)||0;
+    return n;
+  });
+  const setQtyFor = (a,v) => {
+    const max = Number(a.quantity)||0;
+    setQty(prev=>({...prev,[a.key]: v==="" ? "" : Math.min(Math.max(Number(v)||0,0),max)}));
+  };
+  const allShown = candidates.length>0 && candidates.every(a=>qty[a.key]!==undefined);
+  const pickAllShown = () => setQty(prev=>{
+    const n = {...prev};
+    candidates.forEach(a=>{ if(allShown) delete n[a.key]; else n[a.key] = Number(a.quantity)||0; });
+    return n;
+  });
+
+  const submit = async () => {
+    if(!toProject){ Swal.fire({icon:"warning",title:"กรุณาเลือกโครงการปลายทาง"}); return; }
+    if(!docNo){ Swal.fire({icon:"warning",title:"ยังออกเลขที่ใบส่งของไม่สำเร็จ",text:"กรุณารอสักครู่แล้วลองใหม่"}); return; }
+    const moves = picked.map(a=>({key:a.key, qty:Number(qty[a.key])||0})).filter(x=>x.qty>0);
+    if(!moves.length){ Swal.fire({icon:"warning",title:"ยังไม่ได้เลือกทรัพย์สิน",text:"เลือกรายการและระบุจำนวนที่จะย้ายอย่างน้อย 1 รายการ"}); return; }
+    const froms = [...new Set(picked.map(a=>a.site||"ไม่ระบุ"))].join(", ");
+    setBusy(true);
+    try{
+      const res = await window.api("transferAssets",{
+        moves, toProject, note, by:user.name,
+        doc:{ docNo, docDate, sender, receiver, fromProjectLabel:froms },
+      });
+      // ย้ายบางส่วนจะแตกรายการใหม่ที่ปลายทาง — ล้าง cache ให้ทั้งสองหน้าโหลดใหม่
+      window.__DATA.assetRegistry = null;
+      window.__DATA.deliveryOrders = null;
+      onSaved && onSaved(res);
+      const { isConfirmed } = await Swal.fire({
+        icon:"success",
+        title:"ย้ายโครงการสำเร็จ",
+        html:"ย้าย <b>"+res.items.length+"</b> รายการ ไปยัง <b>"+toProject+"</b><br/>ออกใบส่งของเลขที่ <b class='mono'>"+docNo+"</b>",
+        showCancelButton:true,
+        confirmButtonText:"<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลดใบส่งของ",
+        cancelButtonText:"ปิด", confirmButtonColor:"#1E40AF"
+      });
+      if(isConfirmed) window.downloadDeliveryOrderPdf(res.doc);
+    }catch(err){ Swal.fire({icon:"error",title:"ย้ายไม่สำเร็จ",text:err.message}); }
+    finally{ setBusy(false); }
+  };
+
+  const inSt = {width:"100%",padding:"9px 11px",border:"1px solid var(--line)",borderRadius:8,fontFamily:"Kanit",fontSize:13.5,background:"#fff"};
+
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className="fa-solid fa-right-left" style={{color:"#7C3AED",marginRight:8}}></i>ย้ายโครงการ / ออกใบส่งของ</>}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose} disabled={busy}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={submit} disabled={busy}>
+          {busy ? <><div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> กำลังบันทึก...</> : <><i className="fa-solid fa-check"></i> ยืนยันการย้าย + ออกใบส่งของ</>}
+        </button>
+      </>}>
+      <div style={{display:"grid",gap:14}}>
+        <div className="form-grid">
+          <div className="form-field full">
+            <label>ย้ายไปยังโครงการ *</label>
+            <select style={inSt} value={toProject} onChange={e=>setToProject(e.target.value)}>
+              <option value="">— เลือกโครงการปลายทาง —</option>
+              {projects.map(p=>(<option key={p.id} value={p.name}>{p.code?`[${p.code}] `:""}{p.name}</option>))}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>เลขที่ใบส่งของ</label>
+            <input value={docNo} onChange={e=>setDocNo(e.target.value)} placeholder={toProject?"กำลังออกเลขที่...":"เลือกโครงการปลายทางก่อน"} />
+          </div>
+          <div className="form-field">
+            <label>วันที่</label>
+            <input type="date" value={docDate} onChange={e=>setDocDate(e.target.value)} />
+          </div>
+          <div className="form-field"><label>ผู้ส่งมอบ</label><input value={sender} onChange={e=>setSender(e.target.value)} /></div>
+          <div className="form-field"><label>ผู้รับมอบ</label><input value={receiver} onChange={e=>setReceiver(e.target.value)} /></div>
+          <div className="form-field full"><label>เหตุผล / หมายเหตุ</label><textarea rows="2" value={note} onChange={e=>setNote(e.target.value)} placeholder="เช่น ย้ายตามแผนงาน, ส่งมอบให้โครงการปลายทาง..."></textarea></div>
+        </div>
+
+        <div>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+            <div className="search-input" style={{flex:1,minWidth:180}}>
+              <i className="fa-solid fa-magnifying-glass"></i>
+              <input placeholder="ค้นหารหัส / ชื่อ / ยี่ห้อ / Serial..." value={q} onChange={e=>setQ(e.target.value)} />
+            </div>
+            <select style={{...inSt,width:"auto"}} value={fromFilter} onChange={e=>setFromFilter(e.target.value)}>
+              <option value="">ทุกโครงการต้นทาง</option>
+              {sites.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div style={{fontSize:12,color:"var(--muted)",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <span>เลือกทรัพย์สินที่จะย้าย · ระบุจำนวนได้ ย้ายไม่ครบจำนวนก็ได้</span>
+            <span>เลือกแล้ว <b style={{color:"var(--primary)"}}>{picked.length}</b> รายการ · รวม <b style={{color:"var(--primary)"}}>{totalMoving.toLocaleString("th-TH")}</b> หน่วย</span>
+          </div>
+          {loadErr && <div style={{fontSize:13,color:"#B91C1C",marginBottom:8}}>โหลดทะเบียนทรัพย์สินไม่สำเร็จ: {loadErr}</div>}
+          {!assets ? <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:13}}>กำลังโหลดทะเบียนทรัพย์สิน...</div> : (
+            <div style={{maxHeight:260,overflow:"auto",border:"1px solid var(--line)",borderRadius:8}}>
+              <table className="data" style={{fontSize:13}}>
+                <thead><tr>
+                  <th style={{width:36}}><input type="checkbox" checked={allShown} onChange={pickAllShown} title="เลือกทั้งหมดที่แสดง" /></th>
+                  <th>รหัส</th><th>รายการ</th><th style={{width:60}}>มีอยู่</th><th style={{width:110}}>ย้ายจำนวน</th><th>โครงการปัจจุบัน</th>
+                </tr></thead>
+                <tbody>
+                  {candidates.map(a=>{
+                    const max = Number(a.quantity)||0;
+                    const on = qty[a.key]!==undefined;
+                    const v = qty[a.key];
+                    const partial = on && Number(v)>0 && Number(v)<max;
+                    return (
+                      <tr key={a.key} style={on?{background:"var(--accent-soft)"}:null}>
+                        <td><input type="checkbox" checked={on} onChange={()=>toggle(a)} /></td>
+                        <td>{a.assetCode ? <span className="ticket-id">{a.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
+                        <td>{a.name||"—"}</td>
+                        <td style={{whiteSpace:"nowrap"}}>{max.toLocaleString("th-TH")} {a.unit||""}</td>
+                        <td>
+                          {on ? (<>
+                            <input type="number" min="0" max={max} value={v} onChange={e=>setQtyFor(a,e.target.value)}
+                              style={{width:"100%",padding:"5px 8px",border:"1px solid var(--line)",borderRadius:6,fontFamily:"Kanit",fontSize:13}} />
+                            {partial && <div style={{fontSize:11,color:"#B45309",marginTop:2}}>แบ่งย้าย · เหลือต้นทาง {(max-Number(v)).toLocaleString("th-TH")}</div>}
+                          </>) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
+                        </td>
+                        <td style={{color:"var(--muted)"}}>{a.site||"—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {candidates.length===0 && (<tr><td colSpan="6"><div className="empty" style={{padding:"18px 10px"}}>
+                    <div className="t">ไม่พบทรัพย์สิน</div>
+                    <div>{toProject ? "ลองเปลี่ยนคำค้นหรือโครงการต้นทาง (รายการที่อยู่โครงการปลายทางแล้วจะถูกซ่อน)" : "ลองเปลี่ยนคำค้น"}</div>
+                  </div></td></tr>)}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AssetForm({mode,initial,sites,owners,onClose,onSave}){
+  const [f,setF] = React.useState(initial);   // เก็บทุกฟิลด์เดิมไว้ (source/sourceRow ฯลฯ) ไม่ให้หายตอนบันทึกทับ
+  const [busy,setBusy] = React.useState(false);
+  const projects = React.useMemo(()=>(window.__DATA.projects||[]).filter(p=>p.status!=="inactive"),[]);
+  const up = (k,v) => setF(p=>({...p,[k]:v}));
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    if(!String(f.assetCode||"").trim() || !String(f.name||"").trim()){
+      Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณากรอก รหัสทรัพย์สิน และ ชื่อทรัพย์สิน"});
+      return;
+    }
+    setBusy(true);
+    try{ await onSave(f); }
+    catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+    finally{ setBusy(false); }
+  };
+
+  const txt = (k,label,ph) => (
+    <div className="form-field">
+      <label>{label}</label>
+      <input value={f[k]||""} onChange={e=>up(k,e.target.value)} placeholder={ph||""} />
+    </div>
+  );
+
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className={`fa-solid ${mode==="edit"?"fa-pen-to-square":"fa-plus"}`} style={{marginRight:8,color:"var(--primary)"}}></i>{mode==="edit"?"แก้ไขทรัพย์สิน":"เพิ่มทรัพย์สินใหม่"}</>}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose} disabled={busy}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={submit} disabled={busy}>
+          {busy ? <><div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> กำลังบันทึก...</> : <><i className="fa-solid fa-floppy-disk"></i> บันทึก</>}
+        </button>
+      </>}>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          {txt("assetCode","รหัสทรัพย์สิน *","เช่น ASSET-0123")}
+          {txt("name","ชื่อทรัพย์สิน *","เช่น ถังไซโล")}
+          {txt("brand","ยี่ห้อ")}
+          {txt("model","รุ่น")}
+          {txt("serial","Serial No.")}
+          {txt("size","ขนาด")}
+          <div className="form-field">
+            <label>จำนวน</label>
+            <input type="number" min="0" value={f.quantity ?? ""} onChange={e=>up("quantity",e.target.value)} />
+          </div>
+          {txt("unit","หน่วย","เช่น ถัง / ชุด / ตัว")}
+          <div className="form-field">
+            <label>กรรมสิทธิ์</label>
+            <input list="asset-owners" value={f.ownership||""} onChange={e=>up("ownership",e.target.value)} placeholder="เช่น PNM / TFB" />
+            <datalist id="asset-owners">{(owners||[]).map(o=><option key={o} value={o}/>)}</datalist>
+          </div>
+          {txt("holder","ผู้ถือครอง")}
+          <div className="form-field">
+            <label>สถานที่ (โครงการ)</label>
+            <select value={f.site||""} onChange={e=>up("site",e.target.value)}>
+              <option value="">— เลือกโครงการ —</option>
+              {projects.map(p=>(<option key={p.id} value={p.name}>{p.code?`[${p.code}] `:""}{p.name}</option>))}
+              {/* ข้อมูลเก่าที่ยังไม่ตรงกับชื่อโครงการ — คงค่าเดิมไว้ไม่ให้หายตอนแก้ไข */}
+              {f.site && !projects.some(p=>p.name===f.site) && <option value={f.site}>{f.site} (ข้อมูลเดิม)</option>}
+            </select>
+          </div>
+          <div className="form-field">
+            <label>วันที่รับเข้า</label>
+            <input type="date" value={String(f.receivedAt||"").slice(0,10)} onChange={e=>up("receivedAt",e.target.value)} />
+          </div>
+          <div className="form-field full">
+            <label>หมายเหตุ</label>
+            <textarea rows="2" value={f.note||""} onChange={e=>up("note",e.target.value)}></textarea>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+// ===== ใบส่งของ (Delivery Order) =====
+const DO_LOGO_SVG = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+
+window.buildDeliveryOrderHtml = function(doc){
+  const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const fmt = v => { const d=new Date(v); return v && !isNaN(d) ? d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"}) : (v||""); };
+  const items = (doc.items||[]).map((x,i)=>({...x,no:i+1}));
+  const rows = items.slice();
+  while(rows.length < 18) rows.push({no:rows.length+1});
+  const trs = rows.map(it=>`<tr>
+    <td>${it.no}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.assetCode||"")}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.name||"")}</td>
+    <td style="text-align:left;padding-left:6px">${esc([it.brand,it.model].filter(Boolean).join(" "))}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.serial||"")}</td>
+    <td>${it.quantity!=null?esc(it.quantity):""}</td>
+    <td>${esc(it.unit||"")}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.from||"")}</td>
+  </tr>`).join("");
+  const totalQty = items.reduce((s,x)=>s+(Number(x.quantity)||0),0);
+  return `<div style="font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:16mm 10mm 12mm;background:#fff;box-sizing:border-box">
+    <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:6mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:23px;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap}</style>
+    <div style="display:grid;grid-template-columns:38mm 1fr 40mm;gap:5mm;align-items:start;margin-bottom:4mm;position:relative;min-height:32mm">
+      <div>${DO_LOGO_SVG}</div>
+      <div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:110mm;text-align:center">
+        <div style="font-size:25px">บริษัท พานามณี จำกัด</div>
+        <div style="font-size:24px;margin-top:1mm">ใบส่งของ / Delivery Order</div>
+      </div><div></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;margin-bottom:4mm">
+      <div>เลขที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:52mm;text-align:center">${esc(doc.docNo||"")}</span></div>
+      <div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:40mm;text-align:center">${fmt(doc.docDate||doc.when)}</span></div>
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>จากโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.fromProjectLabel||"")}</span></div>
+    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.toProject||"")}</span></div>
+    <table class="do">
+      <thead><tr>
+        <th style="width:10mm">ลำดับ</th><th style="width:26mm">รหัสทรัพย์สิน</th><th>รายการ</th>
+        <th style="width:30mm">ยี่ห้อ / รุ่น</th><th style="width:26mm">Serial No.</th>
+        <th style="width:15mm">จำนวน</th><th style="width:16mm">หน่วย</th><th style="width:32mm">จากโครงการ</th>
+      </tr></thead>
+      <tbody>${trs}</tbody>
+      <tfoot><tr><td colspan="5" style="text-align:right;padding-right:6px">รวม</td><td>${totalQty.toLocaleString("th-TH")}</td><td colspan="2"></td></tr></tfoot>
+    </table>
+    ${doc.note?`<div style="font-size:16px;margin-top:3mm">หมายเหตุ: ${esc(doc.note)}</div>`:""}
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:10mm;font-size:17px;text-align:center">
+      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ส่งมอบ</div><div style="font-size:14px;color:#333">${esc(doc.sender||"")}</div></div>
+      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้รับมอบ</div><div style="font-size:14px;color:#333">${esc(doc.receiver||"")}</div></div>
+      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div><div style="font-size:14px;color:#333">&nbsp;</div></div>
+    </div>
+  </div>`;
+};
+
+window.downloadDeliveryOrderPdf = async function(doc){
+  if(!window.html2pdf){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF"}); return; }
+  const name = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-")+".pdf";
+  const el = document.createElement("div");
+  el.innerHTML = window.buildDeliveryOrderHtml(doc);
+  document.body.appendChild(el);
+  try{
+    await html2pdf().set({margin:0,filename:name,image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save();
+  }finally{ el.remove(); }
+};
+
+// หน้ารายการใบส่งของทั้งหมด
+function DeliveryOrders({user}){
+  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const [rows,setRows] = React.useState(()=>window.__DATA.deliveryOrders || null);
+  const [err,setErr] = React.useState("");
+  const [q,setQ] = React.useState("");
+  const [view,setView] = React.useState(null);
+  const [transferOpen,setTransferOpen] = React.useState(false);
+
+  React.useEffect(()=>{
+    if(rows) return;
+    let alive = true;
+    window.api("loadDeliveryOrders")
+      .then(list=>{
+        if(!alive) return;
+        const sorted = list.slice().sort((a,b)=>String(b.when||"").localeCompare(String(a.when||"")));
+        window.__DATA.deliveryOrders = sorted;
+        setRows(sorted);
+      })
+      .catch(e=>{ if(alive) setErr(e.message||String(e)); });
+    return ()=>{ alive = false; };
+  },[rows]);
+
+  const remove = async (doc) => {
+    const { isConfirmed } = await Swal.fire({
+      title:"ลบใบส่งของนี้?",
+      html:`เลขที่ <b>${doc.docNo||doc.key}</b><br/><span style="color:#64748B">ประวัติการย้ายของทรัพย์สินจะยังอยู่ · การลบไม่สามารถกู้คืนได้</span>`,
+      icon:"warning", showCancelButton:true, confirmButtonText:"ใช่, ลบเลย", cancelButtonText:"ยกเลิก", confirmButtonColor:"#EF4444"
+    });
+    if(!isConfirmed) return;
+    try{
+      await window.api("deleteDeliveryOrder",{key:doc.key});
+      const upd = rows.filter(x=>x.key!==doc.key);
+      window.__DATA.deliveryOrders = upd; setRows(upd);
+      Swal.fire({icon:"success",title:"ลบแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(e){ Swal.fire({icon:"error",title:"ลบไม่สำเร็จ",text:e.message}); }
+  };
+
+  if(err) return (
+    <div className="card"><div className="card-body"><div className="empty">
+      <i className="fa-solid fa-triangle-exclamation" style={{color:"#EF4444"}}></i>
+      <div className="t">โหลดใบส่งของไม่สำเร็จ</div><div>{err}</div>
+      <button className="btn btn-primary btn-sm" style={{marginTop:12}} onClick={()=>{setErr("");setRows(null);}}><i className="fa-solid fa-rotate"></i> ลองใหม่</button>
+    </div></div></div>
+  );
+  if(!rows) return <Loading show={true} text="กำลังโหลดใบส่งของ..."/>;
+
+  const filtered = rows.filter(d=>!q || [d.docNo,d.toProject,d.fromProjectLabel,d.sender,d.receiver,d.note].join(" ").toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i>
+          <input placeholder="ค้นหาเลขที่ / โครงการ / ผู้ส่ง / ผู้รับ..." value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length.toLocaleString("th-TH")} / {rows.length.toLocaleString("th-TH")} ใบ</div>
+        {canEdit && (
+          <button className="btn btn-primary" onClick={()=>setTransferOpen(true)}>
+            <i className="fa-solid fa-right-left"></i> ย้ายโครงการ / ออกใบส่งของ
+          </button>
+        )}
+      </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead><tr>
+            <th>เลขที่</th><th>วันที่</th><th className="hide-on-mobile">จากโครงการ</th><th>ไปยังโครงการ</th>
+            <th>รายการ</th><th className="hide-on-mobile">ผู้ส่งมอบ</th><th>PDF</th>{canEdit && <th>จัดการ</th>}
+          </tr></thead>
+          <tbody>
+            {filtered.map(d=>(
+              <tr key={d.key}>
+                <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setView(d)}>{d.docNo||d.key}</span></td>
+                <td style={{whiteSpace:"nowrap",color:"var(--muted)"}}>{d.docDate || window.__DATA.fmtDate(d.when)}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{d.fromProjectLabel||"—"}</td>
+                <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/></td>
+                <td style={{whiteSpace:"nowrap"}}>{(d.items||[]).length} รายการ · {(d.items||[]).reduce((s,x)=>s+(Number(x.quantity)||0),0).toLocaleString("th-TH")} หน่วย</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
+                <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
+                {canEdit && <td><div className="row-actions">
+                  <button className="ia danger" title="ลบใบส่งของ" onClick={()=>remove(d)}><i className="fa-solid fa-trash"></i></button>
+                </div></td>}
+              </tr>
+            ))}
+            {filtered.length===0 && (<tr><td colSpan={canEdit?8:7}><div className="empty">
+              <i className="fa-solid fa-file-export"></i>
+              <div className="t">ยังไม่มีใบส่งของ</div>
+              <div>กดปุ่ม "ย้ายโครงการ / ออกใบส่งของ" ด้านบนเพื่อเริ่มต้น</div>
+            </div></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {view && <DeliveryOrderView doc={view} onClose={()=>setView(null)}/>}
+    {transferOpen && <TransferAssetsModal user={user} onClose={()=>setTransferOpen(false)} onSaved={()=>{ setTransferOpen(false); setRows(null); }}/>}
+    </>
+  );
+}
+
+function DeliveryOrderView({doc,onClose}){
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className="fa-solid fa-file-export" style={{color:"var(--primary)",marginRight:8}}></i>ใบส่งของ <span className="ticket-id" style={{marginLeft:6}}>{doc.docNo||doc.key}</span></>}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
+        <button className="btn btn-primary" onClick={()=>window.downloadDeliveryOrderPdf(doc)}><i className="fa-solid fa-file-pdf"></i> ดาวน์โหลด PDF</button>
+      </>}>
+      <div className="detail-grid" style={{marginBottom:14}}>
+        <div><div className="k">วันที่</div><div className="v">{doc.docDate || window.__DATA.fmtDate(doc.when)}</div></div>
+        <div><div className="k">จากโครงการ</div><div className="v">{doc.fromProjectLabel||"—"}</div></div>
+        <div><div className="k">ไปยังโครงการ</div><div className="v"><ProjectLabel name={doc.toProject}/></div></div>
+        <div><div className="k">ผู้ส่งมอบ</div><div className="v">{doc.sender||"—"}</div></div>
+        <div><div className="k">ผู้รับมอบ</div><div className="v">{doc.receiver||"—"}</div></div>
+        <div><div className="k">บันทึกโดย</div><div className="v">{doc.by||"—"}</div></div>
+      </div>
+      {doc.note && <div style={{marginBottom:14,fontSize:13,background:"#F8FAFC",border:"1px solid var(--line)",borderRadius:8,padding:"10px 12px"}}>{doc.note}</div>}
+      <div className="table-wrap">
+        <table className="data" style={{fontSize:13}}>
+          <thead><tr><th>รหัส</th><th>รายการ</th><th>จำนวน</th><th>จากโครงการ</th></tr></thead>
+          <tbody>
+            {(doc.items||[]).map((it,i)=>(
+              <tr key={i}>
+                <td>{it.assetCode ? <span className="ticket-id">{it.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
+                <td>{it.name}{it.partial && <span style={{color:"#B45309",fontSize:11,marginLeft:6}}>(แบ่งย้ายจาก {it.totalBefore})</span>}</td>
+                <td style={{whiteSpace:"nowrap"}}>{(Number(it.quantity)||0).toLocaleString("th-TH")} {it.unit||""}</td>
+                <td style={{color:"var(--muted)"}}>{it.from||"—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+window.AssetRegistry = AssetRegistry;
+window.DeliveryOrders = DeliveryOrders;
+</script>
+
+<script type="text/babel">
 function WorkspacePicker({user,onContinue,onLogout}){
   const erpSystems = window.__DATA.erpSystems || [];
   const projects = window.userProjects(user);
@@ -3589,7 +4405,7 @@ function WorkspacePicker({user,onContinue,onLogout}){
   const [erpId,setErpId] = React.useState("");
   const [project,setProject] = React.useState("");
   const selected = erpSystems.find(x=>x.id===erpId);
-  const readySystems = erpSystems.filter(x=>x.status==="ready");
+  const readySystems = erpSystems.filter(x=>window.canUseErp(user,x));
   const inProject = (item, projectName) => !projectName || !item?.project || item.project === projectName;
   const rowsForSystem = (sys, projectName="") => {
     const id = sys?.id;
@@ -3627,7 +4443,7 @@ function WorkspacePicker({user,onContinue,onLogout}){
 
   const submit = (e) => {
     e.preventDefault();
-    if(!selected || selected.status!=="ready"){
+    if(!selected || !window.canUseErp(user,selected)){
       Swal.fire({icon:"warning",title:"กรุณาเลือกระบบงานที่พร้อมใช้งาน"});
       return;
     }
@@ -3635,8 +4451,9 @@ function WorkspacePicker({user,onContinue,onLogout}){
   };
 
   const selectSystem = (sys) => {
-    if(sys.status!=="ready"){
-      Swal.fire({icon:"info",title:"ระบบนี้รอพัฒนา",text:sys.name});
+    if(!window.canUseErp(user,sys)){
+      if(sys.status==="ready") Swal.fire({icon:"info",title:"ไม่มีสิทธิ์เข้าใช้ระบบนี้",text:`${sys.name} เปิดใช้เฉพาะ ${(sys.roles||[]).join(" / ")}`});
+      else Swal.fire({icon:"info",title:"ระบบนี้รอพัฒนา",text:sys.name});
       return;
     }
     setErpId(sys.id);
@@ -3673,7 +4490,8 @@ function WorkspacePicker({user,onContinue,onLogout}){
               <p className="sub">ระบบที่พร้อมใช้งานเลือกต่อได้ทันที</p>
               <div style={{display:"grid",gap:10,marginBottom:16}}>
                 {erpSystems.map(s=>{
-                  const ready = s.status==="ready";
+                  const ready = window.canUseErp(user,s);
+                  const restricted = !ready && s.status==="ready";
                   return (
                     <button key={s.id} type="button" onClick={()=>selectSystem(s)}
                       style={{display:"flex",alignItems:"center",gap:12,textAlign:"left",padding:"13px 14px",border:"1.5px solid var(--line)",borderRadius:10,background:ready?"#fff":"#F8FAFC",color:ready?"var(--text)":"var(--muted)",opacity:ready?1:.75}}>
@@ -3683,7 +4501,9 @@ function WorkspacePicker({user,onContinue,onLogout}){
                       <span style={{flex:1,minWidth:0}}>
                         <span style={{display:"flex",alignItems:"center",gap:8,fontWeight:600}}>
                           {s.name}
-                          {!ready && <span className="badge" style={{fontSize:11,background:"#FEF3C7",color:"#92400E"}}>รอพัฒนา</span>}
+                          {restricted
+                            ? <span className="badge" style={{fontSize:11,background:"#E0E7FF",color:"#3730A3"}}>เฉพาะ {(s.roles||[]).join(" / ")}</span>
+                            : !ready && <span className="badge" style={{fontSize:11,background:"#FEF3C7",color:"#92400E"}}>รอพัฒนา</span>}
                         </span>
                         <span style={{display:"block",fontSize:12.5,color:"var(--muted)",marginTop:2}}>{s.desc}</span>
                         <span style={{display:"block",fontSize:12,color:ready?"var(--primary)":"var(--muted)",marginTop:4}}>
@@ -3766,9 +4586,15 @@ function App(){
           const ws = localStorage.getItem("rms_workspace");
           if(ws) {
             const parsed = JSON.parse(ws);
-            window.__DATA.activeErp = parsed.erp;
-            window.__DATA.activeProject = parsed.project;
-            setWorkspace(parsed);
+            // สิทธิ์อาจถูกเปลี่ยนหลังบันทึก workspace ไว้ — ตรวจซ้ำก่อนเข้าใช้งาน
+            const erp = (window.__DATA.erpSystems||[]).find(x=>x.id===parsed.erp?.id) || parsed.erp;
+            if(window.canUseErp(fresh, erp)){
+              window.__DATA.activeErp = erp;
+              window.__DATA.activeProject = parsed.project;
+              setWorkspace({...parsed, erp});
+            }else{
+              localStorage.removeItem("rms_workspace");
+            }
           }
         }
       }catch(e){}
@@ -3836,10 +4662,10 @@ function App(){
   const activeUser = {...user, activeErp:workspace.erp, activeProject:workspace.project};
   const systemId = workspace.erp?.id || "repairs";
   const allowedPages = systemId==="assets"
-    ? ["machines","doc-pj2","transfer-history","projects"]
+    ? ["machines","asset-registry","asset-do","doc-pj2","transfer-history","projects"]
     : systemId==="consume"
       ? ["withdrawals"]
-      : ["dashboard","repairs","users","categories","login-logs","r-dashboard","r-new","r-mine"];
+      : ["dashboard","repairs","machines","users","categories","login-logs","r-dashboard","r-new","r-mine"];
   const safePage = allowedPages.includes(page) ? page : (workspace.erp?.startPage || allowedPages[0]);
 
   const pageTitles = {
@@ -3848,6 +4674,8 @@ function App(){
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
     "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
+    "asset-registry":{t:"ทะเบียนทรัพย์สิน",c:"Asset Registry · ข้อมูลจาก Firebase panamanee-3a15a"},
+    "asset-do":{t:"ใบส่งของ (DO)",c:"Delivery Order · บันทึกการย้ายทรัพย์สินระหว่างโครงการ"},
     "withdrawals":{t:"รายการเบิกของ",c:"ERP Withdrawal · ใบขอเบิก/ขอสั่งซื้อ 24 แถวต่อหน้า"},
     "doc-pj2":{t:"ปจ2 - เอกสารรับรองการตรวจสอบและทดสอบ",c:"ลิงค์ไฟล์เอกสารตามรายการเครื่องจักร"},
     "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
@@ -3865,7 +4693,9 @@ function App(){
     if(safePage==="users") return <Users user={activeUser}/>;
     if(safePage==="categories") return <Categories user={activeUser}/>;
     if(safePage==="machines") return <Machines user={activeUser}/>;
-    if(safePage==="withdrawals") return <Withdrawals user={activeUser}/>;
+    if(safePage==="asset-registry") return <AssetRegistry user={activeUser}/>;
+    if(safePage==="asset-do") return <DeliveryOrders user={activeUser}/>;
+    if(safePage==="withdrawals") return user.role==="Admin" ? <Withdrawals user={activeUser}/> : null;
     if(safePage==="doc-pj2") return <DocPJ2 user={activeUser}/>;
     if(safePage==="transfer-history") return <MachineTransferHistory user={activeUser}/>;
     if(safePage==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
