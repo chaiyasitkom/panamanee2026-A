@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme/colors';
 import { useAppData } from '../context/AppContext';
 import LoadingOverlay from '../components/LoadingOverlay';
+import ShareWorkOrder from '../components/ShareWorkOrder';
 import { api } from '../api/firebase';
 
 function SelectField({ label, value, options, onSelect, disabled, placeholder, hint }) {
@@ -59,7 +60,8 @@ function SelectField({ label, value, options, onSelect, disabled, placeholder, h
 export default function NewRepairScreen({ navigation, user, goToPage }) {
   const { data, addRepair } = useAppData();
   const [loading, setLoading] = useState(false);
-  const [f, setF] = useState({ project: '', categoryId: '', machineCode: '', title: '', desc: '', siteId: '' });
+  const [shareFor, setShareFor] = useState(null);
+  const [f, setF] = useState({ project: '', categoryId: '', machineCode: '', title: '', siteId: '', placeMode: 'onsite', placeOnsite: '', placeOther: '' });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
   const [problems, setProblems] = useState(['']);
   const setProblemAt = (i, v) => setProblems(prev => prev.map((x, idx) => (idx === i ? v : x)));
@@ -92,29 +94,31 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
     const cleanProblems = problems.map(s => s.trim()).filter(Boolean);
     if (!f.project) { Alert.alert('กรอกไม่ครบ', 'กรุณาเลือกโครงการ/หน่วยงานก่อน'); return; }
     if (!f.categoryId) { Alert.alert('กรอกไม่ครบ', 'กรุณาเลือกหมวดหมู่'); return; }
-    if (!cleanProblems.length || !f.desc.trim()) { Alert.alert('กรอกไม่ครบ', 'กรุณาระบุอาการและรายละเอียดเพิ่มเติม'); return; }
+    if (!cleanProblems.length) { Alert.alert('กรอกไม่ครบ', 'กรุณาระบุอาการ/ปัญหาอย่างน้อย 1 รายการ'); return; }
 
     setLoading(true);
     try {
       const title = cleanProblems.join('\n');
       const repair = {
-        siteId: f.siteId, title, desc: f.desc,
+        siteId: f.siteId, title, desc: '',
         problems: cleanProblems.map(t => ({ text: t, status: 'new' })),
         project: f.project, categoryId: f.categoryId,
         status: 'new', reporterId: user.id, reporterName: user.name,
         assignedId: '', cost: '', machineCode: f.machineCode,
+        repairPlace: {
+          mode: f.placeMode,
+          onsite: f.placeMode === 'onsite' ? (f.placeOnsite || f.project) : '',
+          other: f.placeMode === 'other' ? f.placeOther : '',
+          reportAt: '', note: '',
+        },
       };
       const saved = await api('createRepair', { repair });
-      addRepair({ ...saved, timeline: [{ status: 'new', when: new Date().toISOString(), by: user.name, note: 'แจ้งเข้าระบบ' }] });
+      const savedFull = { ...saved, timeline: [{ status: 'new', when: new Date().toISOString(), by: user.name, note: 'แจ้งเข้าระบบ' }] };
+      addRepair(savedFull);
       setLoading(false);
       Alert.alert('แจ้งซ่อมสำเร็จ! ✓', `เลขที่ใบแจ้งซ่อม: ${saved.running}`, [
-        {
-          text: 'ตกลง',
-          onPress: () => {
-            if (navigation.canGoBack()) navigation.goBack();
-            else if (goToPage) goToPage('myrepairs');
-          },
-        },
+        // เปิดหน้าแชร์รูปใบงานให้เลย แล้วค่อยออกจากฟอร์ม
+        { text: 'ตกลง', onPress: () => setShareFor(savedFull) },
       ]);
     } catch (err) {
       setLoading(false);
@@ -125,6 +129,20 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <LoadingOverlay visible={loading} text="กำลังบันทึก..." />
+      <LoadingOverlay visible={!!shareFor} text="กำลังสร้างรูปใบงาน..." />
+      {shareFor && (
+        <ShareWorkOrder
+          repair={shareFor}
+          data={data}
+          autoStart
+          hideUI
+          onDone={() => {
+            setShareFor(null);
+            if (navigation.canGoBack()) navigation.goBack();
+            else if (goToPage) goToPage('myrepairs');
+          }}
+        />
+      )}
 
       <Text style={styles.pageTitle}>แบบฟอร์มแจ้งซ่อม</Text>
       <Text style={styles.pageSub}>ระบบจะออกเลขที่ใบแจ้งซ่อมให้อัตโนมัติหลังส่งแบบฟอร์ม</Text>
@@ -133,7 +151,11 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
         label="1. โครงการ/หน่วยงาน *"
         value={f.project}
         options={allProjects.map(p => ({ value: p, label: p }))}
-        onSelect={v => setF(p => ({ ...p, project: v, categoryId: '', machineCode: '' }))}
+        onSelect={v => setF(p => ({
+          ...p, project: v, categoryId: '', machineCode: '',
+          // เติมชื่อโครงการลงช่อง "ส่งช่างซ่อมหน้างาน ที่" ให้ ถ้าผู้ใช้ยังไม่ได้แก้เอง
+          placeOnsite: (!p.placeOnsite || p.placeOnsite === p.project) ? v : p.placeOnsite,
+        }))}
         placeholder="— กรุณาเลือกโครงการ —"
       />
 
@@ -197,17 +219,40 @@ export default function NewRepairScreen({ navigation, user, goToPage }) {
       </View>
 
       <View style={styles.field}>
-        <Text style={styles.label}>5. รายละเอียดเพิ่มเติม *</Text>
-        <TextInput
-          style={[styles.input, styles.textarea]}
-          value={f.desc}
-          onChangeText={v => set('desc', v)}
-          placeholder="อธิบายอาการ ลักษณะปัญหา ช่วงเวลาที่เกิด ผลกระทบต่อการผลิต..."
-          placeholderTextColor={Colors.muted}
-          multiline
-          numberOfLines={4}
-          textAlignVertical="top"
-        />
+        <Text style={styles.label}>5. สถานที่ทำการซ่อม</Text>
+        <View style={styles.placeBox}>
+          <TouchableOpacity style={styles.radioRow} onPress={() => set('placeMode', 'onsite')} activeOpacity={0.7}>
+            <Ionicons name={f.placeMode === 'onsite' ? 'radio-button-on' : 'radio-button-off'} size={20} color={f.placeMode === 'onsite' ? Colors.primary : Colors.muted} />
+            <Text style={styles.radioText}>ส่งช่างซ่อมหน้างาน ที่</Text>
+          </TouchableOpacity>
+          {f.placeMode === 'onsite' && (
+            <TextInput
+              style={[styles.input, styles.placeInput]}
+              value={f.placeOnsite}
+              onChangeText={v => set('placeOnsite', v)}
+              placeholder="ชื่อโครงการ/สถานที่หน้างาน"
+              placeholderTextColor={Colors.muted}
+            />
+          )}
+          <TouchableOpacity style={styles.radioRow} onPress={() => set('placeMode', 'workshop')} activeOpacity={0.7}>
+            <Ionicons name={f.placeMode === 'workshop' ? 'radio-button-on' : 'radio-button-off'} size={20} color={f.placeMode === 'workshop' ? Colors.primary : Colors.muted} />
+            <Text style={styles.radioText}>โรงซ่อมของบริษัทที่แจ้งซ่อม</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.radioRow} onPress={() => set('placeMode', 'other')} activeOpacity={0.7}>
+            <Ionicons name={f.placeMode === 'other' ? 'radio-button-on' : 'radio-button-off'} size={20} color={f.placeMode === 'other' ? Colors.primary : Colors.muted} />
+            <Text style={styles.radioText}>อื่นๆ</Text>
+          </TouchableOpacity>
+          {f.placeMode === 'other' && (
+            <TextInput
+              style={[styles.input, styles.placeInput]}
+              value={f.placeOther}
+              onChangeText={v => set('placeOther', v)}
+              placeholder="ระบุสถานที่"
+              placeholderTextColor={Colors.muted}
+            />
+          )}
+        </View>
+        <Text style={styles.hint}>ระบบเติมชื่อโครงการให้อัตโนมัติ · แก้ไขได้</Text>
       </View>
 
       <View style={styles.buttons}>
@@ -238,7 +283,10 @@ const styles = StyleSheet.create({
   addProblem:      { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.line },
   addProblemText:  { fontSize: 13, fontWeight: '600', color: Colors.primary },
   input:           { backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: Colors.text },
-  textarea:        { minHeight: 100 },
+  placeBox:        { borderWidth: 1.5, borderColor: Colors.line, borderRadius: 12, padding: 12, backgroundColor: '#fff' },
+  radioRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7 },
+  radioText:       { fontSize: 14, color: Colors.text, flex: 1 },
+  placeInput:      { marginLeft: 28, marginBottom: 4, paddingVertical: 9 },
   select:          { backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   selectDisabled:  { opacity: 0.5 },
   selectText:      { fontSize: 14, color: Colors.text, flex: 1, marginRight: 8 },

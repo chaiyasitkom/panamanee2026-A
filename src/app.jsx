@@ -295,7 +295,7 @@ function App(){
   const systemId = workspace.erp?.id || "repairs";
   const allowedPages = systemId==="assets"
     ? ["machines"]
-    : ["dashboard","repairs","users","categories","r-dashboard","r-new","r-mine"];
+    : ["dashboard","repairs","machines","users","categories","r-dashboard","r-new","r-mine"];
   const safePage = allowedPages.includes(page) ? page : (workspace.erp?.startPage || allowedPages[0]);
 
   const pageTitles = {

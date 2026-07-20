@@ -30,7 +30,7 @@ function Login({onLogin}){
 
         <div className="ow-top">
           <div className="ow-logo">
-            <div className="ow-logo-mark"><i className="fa-solid fa-layer-group"></i></div>
+            <div className="ow-logo-mark is-img"><img src={window.PNM_LOGO_DATAURL} alt="โลโก้ พานามณี" /></div>
             <div>
               <div className="ow-logo-name">One Workspace</div>
               <div className="ow-logo-sub">Unified Operations Platform</div>
@@ -68,7 +68,7 @@ function Login({onLogin}){
       {/* ===== Auth side ===== */}
       <div className="ow-auth">
         <form className="ow-card" onSubmit={submit}>
-          <div className="ow-card-badge"><i className="fa-solid fa-layer-group"></i></div>
+          <div className="ow-card-badge is-img"><img src={window.PNM_LOGO_DATAURL} alt="โลโก้ พานามณี" /></div>
           <h2>เข้าสู่พื้นที่ทำงาน</h2>
           <p className="ow-card-sub">ลงชื่อเข้าใช้เพื่อเลือกระบบงานและโครงการของคุณ</p>
 

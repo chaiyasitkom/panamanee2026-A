@@ -36,6 +36,20 @@ export function getRepairPlace(r) {
   return (p && typeof p === 'object' && !Array.isArray(p)) ? { ...base, ...p } : base;
 }
 
+// รหัสโครงการจากชื่อโครงการ (โครงการที่ยังไม่ได้ตั้งรหัสจะได้ '')
+export function getProjectCode(projects, name) {
+  if (!name) return '';
+  const p = (projects || []).find(x => (typeof x === 'string' ? x : x.name) === name);
+  return (p && p.code) ? String(p.code) : '';
+}
+
+// ชื่อโครงการพร้อมรหัส เช่น "[PRJ-A1] โรงงาน A" (รหัสเดียวกับที่ใช้ออกเลขที่ใบแจ้งซ่อม)
+export function projectLabel(projects, name) {
+  if (!name) return '';
+  const code = getProjectCode(projects, name);
+  return code ? '[' + code + '] ' + name : name;
+}
+
 const PALETTE = ['#3B82F6','#8B5CF6','#EF4444','#10B981','#F59E0B','#06B6D4','#EC4899'];
 export function avatarColor(name) {
   if (!name) return PALETTE[0];

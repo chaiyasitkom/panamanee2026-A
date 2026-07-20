@@ -1,6 +1,6 @@
 // สร้าง HTML ฟอร์มใบงาน A4 "ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์" (บริษัท พานามณี)
 // พอร์ตจากเว็บ src/shared.jsx → window.buildRepairFormDoc ให้ได้รูปเหมือนกันเป๊ะ
-import { getProblems, getRepairPlace } from './helpers';
+import { getProblems, getRepairPlace, projectLabel } from './helpers';
 import { LOGO_JPEG_BASE64 } from './logoBase64';
 
 const esc = s => String(s == null ? '' : s)
@@ -14,15 +14,17 @@ const fmtShort = d => {
   return dt.getDate() + '/' + (dt.getMonth() + 1) + '/' + String(y).padStart(2, '0');
 };
 
-// r: repair, data: { machines, categories }
+// r: repair, data: { machines, categories, projects }
 export function buildRepairFormDoc(r, data = {}) {
   const machines = data.machines || [];
   const categories = data.categories || [];
+  const projLabel = projectLabel(data.projects, r.project);
   const m = machines.find(x => x.code === r.machineCode) || {};
   const cat = categories.find(c => c.id === r.categoryId) || {};
   const probs = getProblems(r);
   const dateStr = fmtShort(r.createdAt);
-  const fill = v => (v ? esc(v) : '');
+  // ข้อมูลที่กรอก = ตัวอักษรสีน้ำเงิน (แยกจากตัวฟอร์มที่เป็นสีดำ)
+  const fill = v => (v ? "<span class='fld'>" + esc(v) + '</span>' : '');
   const rp = getRepairPlace(r);
   const box = on => "<span class='chk'>" + (on ? '✓' : '') + '</span>';
 
@@ -30,7 +32,7 @@ export function buildRepairFormDoc(r, data = {}) {
   let rows = '';
   for (let i = 0; i < rowCount; i++) {
     const p = probs[i];
-    rows += "<tr><td class='c-no'>" + (i + 1) + "</td><td class='c-item'>" + (p ? esc(p.text) : '') + "</td><td class='c-insp'></td></tr>";
+    rows += "<tr><td class='c-no'>" + (i + 1) + "</td><td class='c-item'>" + fill(p && p.text) + "</td><td class='c-insp'></td></tr>";
   }
 
   const logo = "<img src='data:image/jpeg;base64," + LOGO_JPEG_BASE64 + "' width='92' alt='' style='display:block'>";
@@ -51,6 +53,7 @@ export function buildRepairFormDoc(r, data = {}) {
     + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-date td{font-size:12px}"
     + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}"
     + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}"
+    + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}"
     + "</style></head><body><div class='sheet'>"
     + "<div class='hd'><div>" + logo + "</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>"
     + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>"
@@ -60,7 +63,7 @@ export function buildRepairFormDoc(r, data = {}) {
     + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>" + fill(m.brand) + "</span><b>รุ่น</b><span class='dot f1'>" + fill(m.model) + "</span><b>ขนาด</b><span class='dot f1'>" + fill(m.size) + "</span><b>ปี</b><span class='dot f1'></span><b>ทะเบียน</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>Serial No.</b><span class='dot f1'>" + fill(m.serial) + "</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'></span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>" + fill(m.hours) + "</span></div>"
-    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(r.project) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>"
+    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(projLabel) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>"
     + "</div>"
     + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>" + rows + "</tbody></table></div>"
     + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>"

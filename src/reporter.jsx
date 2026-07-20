@@ -85,7 +85,8 @@ function NewRequest({user,goTo}){
     return window.userProjects(user);
   },[user]);
 
-  const [f,setF] = React.useState({title:"",desc:"",categoryId:"",project:window.getActiveProject(user)||"",machineCode:"",siteId:""});
+  const initProject = window.getActiveProject(user)||"";
+  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",placeMode:"onsite",placeOnsite:initProject,placeOther:""});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{
@@ -103,7 +104,8 @@ function NewRequest({user,goTo}){
     return (window.__DATA.categories||[]).filter(c=>ids.has(c.id));
   },[projectMachines]);
 
-  const onProjectChange = (p) => setF(prev => ({...prev, project:p, categoryId:"", machineCode:""}));
+  // เปลี่ยนโครงการ → เติมชื่อโครงการลงช่อง "ส่งช่างซ่อมหน้างาน ที่" ให้ (ถ้าผู้ใช้ยังไม่ได้แก้เอง)
+  const onProjectChange = (p) => setF(prev => ({...prev, project:p, categoryId:"", machineCode:"", placeOnsite:(!prev.placeOnsite||prev.placeOnsite===prev.project)?p:prev.placeOnsite}));
   const onCategoryChange = (cid) => setF(prev => ({...prev, categoryId:cid, machineCode:""}));
   const onMachineChange = (code) => setF(prev => ({...prev, machineCode: code}));
 
@@ -117,19 +119,25 @@ function NewRequest({user,goTo}){
       return;
     }
     const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n");
-    if(!title || !f.desc){
-      Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาระบุอาการและรายละเอียดเพิ่มเติม"});
+    if(!title){
+      Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาระบุอาการ/ปัญหาอย่างน้อย 1 รายการ"});
       return;
     }
     setLoading(true);
     try{
       const repair = {
         siteId:f.siteId,
-        title, desc:f.desc,
+        title, desc:"",
         problems: title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),
         project:f.project, categoryId:f.categoryId,
         status:"new", reporterId:user.id, reporterName:user.name,
         assignedId:"", cost:"", machineCode:f.machineCode,
+        repairPlace: {
+          mode: f.placeMode,
+          onsite: f.placeMode==="onsite" ? (f.placeOnsite||f.project) : "",
+          other:  f.placeMode==="other"  ? f.placeOther : "",
+          reportAt: "", note: "",
+        },
       };
       const saved = await window.api("createRepair", { repair });
       saved.createdAt = new Date(saved.createdAt);
@@ -141,7 +149,11 @@ function NewRequest({user,goTo}){
         title:"แจ้งซ่อมสำเร็จ!",
         html:`เลขที่ใบแจ้งซ่อม: <strong class="mono" style="color:#1E40AF">${saved.running}</strong>`,
         confirmButtonColor:"#1E40AF"
-      }).then(()=>goTo("r-mine"));
+      }).then(async ()=>{
+        // เปิดหน้าแชร์รูปใบงานให้เลย (shareRepairImage จัดการ error ของตัวเองแล้ว)
+        await window.shareRepairImage(saved,user);
+        goTo("r-mine");
+      });
     }catch(err){
       setLoading(false);
       Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
@@ -165,7 +177,7 @@ function NewRequest({user,goTo}){
             {n:1,l:"เลือกโครงการ",done:!!f.project},
             {n:2,l:"เลือกหมวดหมู่",done:!!f.categoryId,disabled:!f.project},
             {n:3,l:"เลือกเครื่องจักร",done:!!f.machineCode,disabled:!f.categoryId},
-            {n:4,l:"รายละเอียดอาการ",done:(f.title||"").split("\n").some(s=>s.trim()) && !!f.desc,disabled:!f.machineCode},
+            {n:4,l:"รายละเอียดอาการ",done:(f.title||"").split("\n").some(s=>s.trim()),disabled:!f.machineCode},
           ].map(s=>(
             <div key={s.n} style={{
               display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:999,
@@ -254,8 +266,24 @@ function NewRequest({user,goTo}){
             <div className="hint">ไม่บังคับ · กรอกเลขที่จากใบงานจริงที่ไซต์</div>
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
-            <label>รายละเอียดเพิ่มเติม *</label>
-            <textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="อธิบายอาการ ลักษณะปัญหา ช่วงเวลาที่เกิด ผลกระทบต่อการผลิต..." />
+            <label><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</label>
+            <div style={{display:"grid",gap:10,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="onsite"} onChange={()=>setF({...f,placeMode:"onsite"})} />
+                <span style={{whiteSpace:"nowrap"}}>ส่งช่างซ่อมหน้างาน ที่</span>
+                <input className="inp" style={{flex:1,minWidth:150}} value={f.placeOnsite} onChange={e=>setF({...f,placeOnsite:e.target.value})} placeholder="ชื่อโครงการ/สถานที่หน้างาน" />
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="workshop"} onChange={()=>setF({...f,placeMode:"workshop"})} />
+                <span>โรงซ่อมของบริษัทที่แจ้งซ่อม</span>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",margin:0,fontWeight:400}}>
+                <input type="radio" name="np-place" style={{width:"auto",flexShrink:0,margin:0}} checked={f.placeMode==="other"} onChange={()=>setF({...f,placeMode:"other"})} />
+                <span>อื่นๆ</span>
+                <input className="inp" style={{flex:1,minWidth:150}} value={f.placeOther} onChange={e=>setF({...f,placeOther:e.target.value})} placeholder="ระบุสถานที่" />
+              </label>
+            </div>
+            <div className="hint">ระบบเติมชื่อโครงการให้อัตโนมัติ · แก้ไขได้</div>
           </div>
 
         </div>

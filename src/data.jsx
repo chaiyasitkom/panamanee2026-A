@@ -66,6 +66,12 @@ window.getStatus = (key) => STATUSES.find(s=>s.key===key) || STATUSES[0];
 window.getCategory = (id) => window.__DATA.categories.find(c=>c.id===id) || {name:"-",color:"#64748B",icon:"fa-circle"};
 window.getUser = (id) => window.__DATA.users.find(u=>u.id===id);
 window.getActiveProject = (user) => user?.activeProject || window.__DATA.activeProject || "";
+// รหัสโครงการจากชื่อโครงการ (โครงการที่ยังไม่ได้ตั้งรหัสจะได้ "")
+window.getProjectCode = (name) => {
+  if(!name) return "";
+  const p = (window.__DATA.projects||[]).find(x => (typeof x==="string" ? x : x.name) === name);
+  return (p && p.code) ? String(p.code) : "";
+};
 window.getActiveErp = (user) => user?.activeErp || window.__DATA.activeErp || null;
 
 // ====== PROJECT ACCESS CONTROL ======

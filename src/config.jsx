@@ -88,6 +88,25 @@ async function _nextId(collection, prefix, pad) {
   return prefix + String(max + 1).padStart(pad, '0');
 }
 
+// เลขที่ใบแจ้งซ่อม: RE-<รหัสโครงการ>-<ปีพ.ศ.><เดือน>/<ลำดับ>  เช่น RE-PRJ-A1-256807/001
+// ลำดับเริ่มนับใหม่ทุกเดือน แยกตามโครงการ
+function _buildRunning(projectName, repairs, projects) {
+  const proj = (projects || []).find(p => p && p.name === projectName);
+  const code = String((proj && proj.code) || projectName || 'GEN').trim().replace(/\s+/g, '-').toUpperCase();
+  const d = new Date();
+  const ym = String(d.getFullYear() + 543) + String(d.getMonth() + 1).padStart(2, '0');
+  const prefix = 'RE-' + code + '-' + ym + '/';
+  let max = 0;
+  (repairs || []).forEach(r => {
+    const s = String((r && r.running) || '');
+    if (s.slice(0, prefix.length) === prefix) {
+      const n = parseInt(s.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(3, '0');
+}
+
 async function api(action, payload = {}) {
   switch (action) {
 
@@ -215,9 +234,11 @@ async function api(action, payload = {}) {
       const { repair } = payload;
       if (!repair.id) repair.id = await _nextId('repairs', 'R', 4);
       if (!repair.running) {
-        const snap = await _db.ref('/repairs').get();
-        const count = Object.keys(snap.val() || {}).length + 1;
-        repair.running = 'RE-69/' + String(count).padStart(3, '0');
+        const [repSnap, projSnap] = await Promise.all([
+          _db.ref('/repairs').get(),
+          _db.ref('/projects').get(),
+        ]);
+        repair.running = _buildRunning(repair.project, Object.values(repSnap.val() || {}), Object.values(projSnap.val() || {}));
       }
       repair.createdAt = repair.createdAt || new Date().toISOString();
       repair.updatedAt = new Date().toISOString();
@@ -229,6 +250,24 @@ async function api(action, payload = {}) {
       };
       await _db.ref('/repairs/' + repair.id).set(repair);
       return { ...repair, timeline: Object.values(repair.timeline) };
+    }
+
+    case 'deleteRepair': {
+      const { id, role } = payload;
+      if (role !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ลบใบแจ้งซ่อมได้');
+      await _db.ref('/repairs/' + id).remove();
+      return { deleted: true };
+    }
+
+    case 'updateRepairProblems': {
+      const { id, problems, by, note } = payload;
+      const tlKey = _db.ref('/repairs/' + id + '/timeline').push().key;
+      await _db.ref('/repairs/' + id).update({
+        problems: problems || [],
+        updatedAt: new Date().toISOString(),
+        ['timeline/' + tlKey]: { id: tlKey, status: '', when: new Date().toISOString(), by: by || '', note: note || 'ปรับสถานะรายการอาการ' },
+      });
+      return { ok: true };
     }
 
     case 'updateRepair': {

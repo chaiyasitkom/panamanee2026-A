@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, StatusConfig } from '../theme/colors';
 import { useAppData } from '../context/AppContext';
@@ -7,7 +7,7 @@ import Badge from '../components/Badge';
 import CategoryChip from '../components/CategoryChip';
 import LoadingOverlay from '../components/LoadingOverlay';
 import ShareWorkOrder from '../components/ShareWorkOrder';
-import { fmtDate, fmtDateTime, getProblems, getRepairPlace } from '../utils/helpers';
+import { fmtDate, fmtDateTime, getProblems, projectLabel } from '../utils/helpers';
 import { api } from '../api/firebase';
 
 export default function RepairDetailScreen({ route }) {
@@ -23,7 +23,6 @@ export default function RepairDetailScreen({ route }) {
 
   const [probs, setProbs] = useState(() => getProblems(init));
   const [pickerFor, setPickerFor] = useState(null);
-  const [place, setPlace] = useState(() => getRepairPlace(init));
   const doneCount = probs.filter(p => p.status === 'done').length;
 
   const setProbStatus = async (i, st) => {
@@ -36,16 +35,6 @@ export default function RepairDetailScreen({ route }) {
       const updated = { ...repair, problems: next };
       setRepair(updated); updateRepair(repair.id, () => updated);
     } catch (e) { setProbs(prev); Alert.alert('บันทึกไม่สำเร็จ', e.message); }
-  };
-
-  const setPl = (k, v) => setPlace(p => ({ ...p, [k]: v }));
-  const savePlace = async () => {
-    try {
-      await api('updateRepairPlace', { id: repair.id, repairPlace: place, by: user.name });
-      const updated = { ...repair, repairPlace: place };
-      setRepair(updated); updateRepair(repair.id, () => updated);
-      Alert.alert('บันทึกแล้ว ✓', 'สถานที่ทำการซ่อม');
-    } catch (e) { Alert.alert('บันทึกไม่สำเร็จ', e.message); }
   };
 
   const doChange = async (nextStatus, label, note) => {
@@ -126,41 +115,12 @@ export default function RepairDetailScreen({ route }) {
         })}
       </View>
 
-      {/* Repair place */}
-      {canAct && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>สถานที่ทำการซ่อม</Text>
-          <Text style={styles.plLabel}>แจ้งซ่อมที่</Text>
-          <TextInput style={styles.plInput} value={place.reportAt} onChangeText={v => setPl('reportAt', v)} placeholder="—" placeholderTextColor={Colors.muted} />
-          {[{ k: 'onsite', label: 'ส่งช่างซ่อมหน้างาน' }, { k: 'workshop', label: 'โรงซ่อมของบริษัทที่แจ้งซ่อม' }, { k: 'other', label: 'อื่นๆ' }].map(opt => (
-            <View key={opt.k}>
-              <TouchableOpacity style={styles.radioRow} onPress={() => setPl('mode', opt.k)} activeOpacity={0.7}>
-                <Ionicons name={place.mode === opt.k ? 'radio-button-on' : 'radio-button-off'} size={20} color={place.mode === opt.k ? Colors.primary : Colors.muted} />
-                <Text style={styles.radioText}>{opt.label}</Text>
-              </TouchableOpacity>
-              {opt.k === 'onsite' && place.mode === 'onsite' && (
-                <TextInput style={styles.plInputIndent} value={place.onsite} onChangeText={v => setPl('onsite', v)} placeholder="ระบุสถานที่" placeholderTextColor={Colors.muted} />
-              )}
-              {opt.k === 'other' && place.mode === 'other' && (
-                <TextInput style={styles.plInputIndent} value={place.other} onChangeText={v => setPl('other', v)} placeholder="ระบุ" placeholderTextColor={Colors.muted} />
-              )}
-            </View>
-          ))}
-          <Text style={styles.plLabel}>หมายเหตุ</Text>
-          <TextInput style={[styles.plInput, { minHeight: 56 }]} value={place.note} onChangeText={v => setPl('note', v)} multiline textAlignVertical="top" placeholder="—" placeholderTextColor={Colors.muted} />
-          <TouchableOpacity style={styles.saveBtn} onPress={savePlace} activeOpacity={0.85}>
-            <Ionicons name="save-outline" size={16} color="#fff" />
-            <Text style={styles.saveBtnText}>บันทึกสถานที่ซ่อม</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* Info */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>ข้อมูลการแจ้งซ่อม</Text>
         <InfoRow label="เลขที่ไซต์งาน">{repair.siteId || '—'}</InfoRow>
         <InfoRow label="รหัสเครื่องจักร">{repair.machineCode || '—'}</InfoRow>
-        <InfoRow label="โครงการ/หน่วยงาน">{repair.project || '—'}</InfoRow>
+        <InfoRow label="โครงการ/หน่วยงาน">{projectLabel(data.projects, repair.project) || '—'}</InfoRow>
         <InfoRow label="หมวดหมู่">
           <CategoryChip categoryId={repair.categoryId} categories={data.categories} />
         </InfoRow>
@@ -274,13 +234,6 @@ const styles = StyleSheet.create({
   probText:    { flex: 1, fontSize: 14, fontWeight: '500', color: Colors.text },
   probStatus:  { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   probStatusText:{ fontSize: 12, fontWeight: '600' },
-  plLabel:     { fontSize: 12, color: Colors.muted, marginTop: 10, marginBottom: 5 },
-  plInput:     { backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: Colors.text },
-  plInputIndent:{ backgroundColor: '#fff', borderWidth: 1.5, borderColor: Colors.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, color: Colors.text, marginLeft: 28, marginTop: 4 },
-  radioRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
-  radioText:   { fontSize: 14, color: Colors.text },
-  saveBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.primary, paddingVertical: 12, borderRadius: 10, marginTop: 14 },
-  saveBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   pkScrim:     { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 24 },
   pkBox:       { backgroundColor: '#fff', borderRadius: 18, padding: 16 },
   pkTitle:     { fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 10, paddingHorizontal: 4 },

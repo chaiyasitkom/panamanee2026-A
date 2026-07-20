@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,7 +13,10 @@ const CAPTURE_JS = `
 (function(){
   function run(){
     try{
-      window.html2canvas(document.querySelector('.sheet'), {scale:2, backgroundColor:'#ffffff', useCORS:true})
+      // เว้นขอบขาวรอบใบงานก่อนแปลงเป็นรูป (แคปทั้ง body ที่ใส่ padding ไว้)
+      document.body.style.padding = '28px 24px';
+      document.body.style.background = '#ffffff';
+      window.html2canvas(document.body, {scale:2, backgroundColor:'#ffffff', useCORS:true})
         .then(function(canvas){
           window.ReactNativeWebView.postMessage(JSON.stringify({ok:true, data:canvas.toDataURL('image/png')}));
         })
@@ -34,9 +37,12 @@ const CAPTURE_JS = `
 true;
 `;
 
-export default function ShareWorkOrder({ repair, data }) {
+// autoStart: เริ่มสร้างรูปทันทีที่ mount · hideUI: ไม่ต้องแสดงการ์ด/ปุ่ม (ใช้ตอนแชร์อัตโนมัติหลังแจ้งซ่อม)
+// onDone: เรียกเมื่อจบขั้นตอนแชร์ ไม่ว่าจะสำเร็จหรือไม่
+export default function ShareWorkOrder({ repair, data, autoStart, hideUI, onDone }) {
   const [busy, setBusy] = useState(false);
   const [html, setHtml] = useState(null);
+  const started = useRef(false);
 
   const start = () => {
     if (busy) return;
@@ -44,13 +50,18 @@ export default function ShareWorkOrder({ repair, data }) {
     setHtml(buildRepairFormDoc(repair, data));
   };
 
+  useEffect(() => {
+    if (autoStart && !started.current) { started.current = true; start(); }
+  }, [autoStart]);
+
   const finish = () => { setHtml(null); setBusy(false); };
+  const done = () => { finish(); if (onDone) onDone(); };
 
   const onMessage = async (e) => {
     let msg;
     try { msg = JSON.parse(e.nativeEvent.data); } catch { msg = null; }
     if (!msg || !msg.ok) {
-      finish();
+      done();
       Alert.alert('แชร์รูปไม่สำเร็จ', (msg && msg.error) || 'ไม่ทราบสาเหตุ');
       return;
     }
@@ -61,6 +72,7 @@ export default function ShareWorkOrder({ repair, data }) {
       finish();
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert('แชร์ไม่ได้', 'อุปกรณ์นี้ไม่รองรับการแชร์');
+        if (onDone) onDone();
         return;
       }
       await Sharing.shareAsync(fileUri, {
@@ -68,11 +80,30 @@ export default function ShareWorkOrder({ repair, data }) {
         dialogTitle: 'แชร์ใบงาน ' + (repair.running || ''),
         UTI: 'public.png',
       });
+      if (onDone) onDone();
     } catch (err) {
-      finish();
+      done();
       Alert.alert('แชร์รูปไม่สำเร็จ', err.message || String(err));
     }
   };
+
+  const capture = html ? (
+    <View style={styles.hidden} pointerEvents="none">
+      <WebView
+        originWhitelist={['*']}
+        source={{ html, baseUrl: 'https://panamanee2026.onrender.com/' }}
+        injectedJavaScript={CAPTURE_JS}
+        onMessage={onMessage}
+        javaScriptEnabled
+        domStorageEnabled
+        scalesPageToFit={false}
+        onError={() => { done(); Alert.alert('แชร์รูปไม่สำเร็จ', 'โหลดฟอร์มไม่ได้'); }}
+        style={{ width: 760, height: 1400, backgroundColor: '#fff' }}
+      />
+    </View>
+  ) : null;
+
+  if (hideUI) return capture;
 
   return (
     <View style={styles.card}>
@@ -86,21 +117,7 @@ export default function ShareWorkOrder({ repair, data }) {
       </TouchableOpacity>
 
       {/* WebView ซ่อนไว้นอกจอ ใช้เรนเดอร์ฟอร์มแล้วแปลงเป็นรูป */}
-      {html ? (
-        <View style={styles.hidden} pointerEvents="none">
-          <WebView
-            originWhitelist={['*']}
-            source={{ html, baseUrl: 'https://panamanee2026.onrender.com/' }}
-            injectedJavaScript={CAPTURE_JS}
-            onMessage={onMessage}
-            javaScriptEnabled
-            domStorageEnabled
-            scalesPageToFit={false}
-            onError={() => { finish(); Alert.alert('แชร์รูปไม่สำเร็จ', 'โหลดฟอร์มไม่ได้'); }}
-            style={{ width: 760, height: 1400, backgroundColor: '#fff' }}
-          />
-        </View>
-      ) : null}
+      {capture}
     </View>
   );
 }

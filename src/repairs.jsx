@@ -9,7 +9,6 @@ function Repairs({user}){
   const [status,setStatus] = React.useState("all");
   const [cat,setCat] = React.useState("all");
   const [detail,setDetail] = React.useState(null);
-  const [statusFor,setStatusFor] = React.useState(null);
   const [editFor,setEditFor] = React.useState(null);
   const [loading,setLoading] = React.useState(false);
 
@@ -70,10 +69,6 @@ function Repairs({user}){
       setLoading(false);
       Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
     }
-  };
-
-  const openStatusMenu = (r) => {
-    setStatusFor(r);
   };
 
   const saveEdit = async (r, patch) => {
@@ -179,17 +174,13 @@ function Repairs({user}){
                   <td><span className="site-id">{r.siteId||"—"}</span></td>
                   <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td style={{fontSize:13}}>{r.project}</td>
+                  <td style={{fontSize:13}}><ProjectLabel name={r.project}/></td>
                   <td><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
                   <td><Avatar name={r.reporterName}/>{r.reporterName}</td>
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
-                      {["Admin","Officer"].includes(user.role) &&
-                        <button className="ia" title="เปลี่ยนสถานะ" onClick={()=>openStatusMenu(r)}><i className="fa-solid fa-pen-to-square"></i></button>}
-                      {user.role==="Admin" &&
-                        <button className="ia" title="แก้ไขข้อมูล (Admin)" onClick={()=>setEditFor(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button>}
                       {user.role==="Admin" &&
                         <button className="ia" title="ลบข้อมูล (Admin)" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash"></i></button>}
                     </div>
@@ -211,7 +202,6 @@ function Repairs({user}){
       </div>
 
       {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={user.role==="Admin"?(r)=>{setDetail(null);setEditFor(r);}:null} />}
-      {statusFor && <StatusMenu r={statusFor} onClose={()=>setStatusFor(null)} onPick={(next,label)=>{setStatusFor(null);quickAction(statusFor,next,label);}} />}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
     </>
   );
@@ -235,17 +225,6 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
     }
   };
   const doneCount = probs.filter(p=>p.status==="done").length;
-  const [place,setPlace] = React.useState(()=>window.getRepairPlace(r));
-  const setPl = (k,v)=>setPlace(p=>({...p,[k]:v}));
-  const savePlace = async () => {
-    try{
-      await window.api("updateRepairPlace",{id:r.id, repairPlace:place, by:user.name});
-      const idx = window.__DATA.repairs.findIndex(x=>x.id===r.id);
-      if(idx>-1) window.__DATA.repairs[idx].repairPlace = place;
-      r.repairPlace = place;
-      Swal.fire({icon:"success",title:"บันทึกสถานที่ซ่อมแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
-    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
-  };
 
   return (
     <Modal open={true} onClose={onClose} title={<>ใบแจ้งซ่อม <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>} size="lg"
@@ -284,38 +263,13 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
         </div>
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
         <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
-        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v">{r.project}</div></div>
+        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v"><ProjectLabel name={r.project}/></div></div>
         <div><div className="k">หมวดหมู่</div><div className="v"><CategoryChip categoryId={r.categoryId}/></div></div>
         <div><div className="k">ผู้แจ้ง</div><div className="v"><Avatar name={r.reporterName}/>{r.reporterName}</div></div>
         <div><div className="k">ผู้รับผิดชอบ</div><div className="v">{r.assignedId ? <><Avatar name={window.getUser(r.assignedId)?.name}/>{window.getUser(r.assignedId)?.name}</> : <span style={{color:"var(--muted)"}}>ยังไม่มอบหมาย</span>}</div></div>
         <div><div className="k">ค่าใช้จ่าย</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{r.cost.toLocaleString()} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
         <div><div className="k">สถานะปัจจุบัน</div><div className="v"><Badge status={r.status}/></div></div>
       </div>
-
-      {canAct && <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
-        <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</div>
-        <div style={{display:"grid",gap:10}}>
-          <div><label className="k">แจ้งซ่อมที่</label><input className="inp" value={place.reportAt} onChange={e=>setPl("reportAt",e.target.value)} /></div>
-          <div style={{display:"grid",gap:8}}>
-            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-              <input type="radio" name={"rp-"+r.id} checked={place.mode==="onsite"} onChange={()=>setPl("mode","onsite")} />
-              <span>ส่งช่างซ่อมหน้างาน ที่</span>
-              <input className="inp" style={{flex:1,minWidth:120}} value={place.onsite} onChange={e=>setPl("onsite",e.target.value)} placeholder="ระบุสถานที่" />
-            </label>
-            <label style={{display:"flex",alignItems:"center",gap:8}}>
-              <input type="radio" name={"rp-"+r.id} checked={place.mode==="workshop"} onChange={()=>setPl("mode","workshop")} />
-              <span>โรงซ่อมของบริษัทที่แจ้งซ่อม</span>
-            </label>
-            <label style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-              <input type="radio" name={"rp-"+r.id} checked={place.mode==="other"} onChange={()=>setPl("mode","other")} />
-              <span>อื่นๆ</span>
-              <input className="inp" style={{flex:1,minWidth:120}} value={place.other} onChange={e=>setPl("other",e.target.value)} placeholder="ระบุ" />
-            </label>
-          </div>
-          <div><label className="k">หมายเหตุ</label><textarea className="inp" rows="2" value={place.note} onChange={e=>setPl("note",e.target.value)} /></div>
-          <div><button className="btn btn-primary btn-sm" onClick={savePlace}><i className="fa-solid fa-floppy-disk"></i> บันทึกสถานที่ซ่อม</button></div>
-        </div>
-      </div>}
 
       <div style={{marginTop:22}}>
         <div className="k" style={{color:"var(--muted)",fontSize:12,marginBottom:8}}>รูปภาพ "ก่อนซ่อม"</div>
@@ -361,28 +315,6 @@ function RepairDetail({r,onClose,user,onQuick,onEdit}){
   );
 }
 
-function StatusMenu({r,onClose,onPick}){
-  const opts = [
-    {k:"assess",l:"ประเมินราคา",i:"fa-magnifying-glass-dollar"},
-    {k:"progress",l:"อนุมัติและเริ่มซ่อม",i:"fa-screwdriver-wrench"},
-    {k:"parts",l:"รออะไหล่",i:"fa-box-open"},
-    {k:"done",l:"ปิดงาน",i:"fa-flag-checkered"},
-    {k:"cancel",l:"ยกเลิกงาน",i:"fa-ban"},
-  ];
-  return (
-    <Modal open={true} onClose={onClose} title={`เปลี่ยนสถานะ · ${r.running}`}>
-      <div style={{color:"var(--muted)",fontSize:13,marginBottom:14}}>สถานะปัจจุบัน: <Badge status={r.status}/></div>
-      <div style={{display:"grid",gap:8}}>
-        {opts.filter(o=>o.k!==r.status).map(o=>(
-          <button key={o.k} className="quick-action" style={{justifyContent:"flex-start",padding:"12px 14px"}} onClick={()=>onPick(o.k,o.l)}>
-            <i className={`fa-solid ${o.i}`} style={{width:16}}></i>
-            <span>{o.l}</span>
-          </button>
-        ))}
-      </div>
-    </Modal>
-  );
-}
 
 function EditRepairModal({r,onClose,onSave}){
   const [f,setF] = React.useState({

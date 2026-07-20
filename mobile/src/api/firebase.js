@@ -25,6 +25,25 @@ async function nextId(collection, prefix, pad) {
   return prefix + String(max + 1).padStart(pad, '0');
 }
 
+// เลขที่ใบแจ้งซ่อม: RE-<รหัสโครงการ>-<ปีพ.ศ.><เดือน>/<ลำดับ>  เช่น RE-PRJ-A1-256807/001
+// ลำดับเริ่มนับใหม่ทุกเดือน แยกตามโครงการ
+function buildRunning(projectName, repairs, projects) {
+  const proj = (projects || []).find(p => p && p.name === projectName);
+  const code = String((proj && proj.code) || projectName || 'GEN').trim().replace(/\s+/g, '-').toUpperCase();
+  const d = new Date();
+  const ym = String(d.getFullYear() + 543) + String(d.getMonth() + 1).padStart(2, '0');
+  const prefix = 'RE-' + code + '-' + ym + '/';
+  let max = 0;
+  (repairs || []).forEach(r => {
+    const s = String((r && r.running) || '');
+    if (s.slice(0, prefix.length) === prefix) {
+      const n = parseInt(s.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(3, '0');
+}
+
 export async function api(action, payload = {}) {
   switch (action) {
 
@@ -66,9 +85,11 @@ export async function api(action, payload = {}) {
     case 'createRepair': {
       const { repair } = payload;
       if (!repair.id) repair.id = await nextId('repairs', 'R', 4);
-      const repSnap = await get(ref(db, '/repairs'));
-      const count = Object.keys(repSnap.val() || {}).length + 1;
-      repair.running = 'RE-69/' + String(count).padStart(3, '0');
+      const [repSnap, projSnap] = await Promise.all([
+        get(ref(db, '/repairs')),
+        get(ref(db, '/projects')),
+      ]);
+      repair.running = buildRunning(repair.project, Object.values(repSnap.val() || {}), Object.values(projSnap.val() || {}));
       repair.createdAt = new Date().toISOString();
       repair.updatedAt = new Date().toISOString();
       repair.status = 'new';
