@@ -863,6 +863,117 @@ async function api(action, payload = {}) {
       return { deleted: true };
     }
 
+    // แก้ไขข้อมูลใบส่งของ (DO)
+    // adjustStock=false : แก้เฉพาะข้อมูลบนเอกสาร ไม่กระทบสต๊อก
+    // adjustStock=true  : แก้จำนวนแล้วปรับสต๊อกทรัพย์สินตามส่วนต่าง (ต้นทาง<->ปลายทาง) ในทรานแซกชันเดียว
+    //   - อ้างอิงตำแหน่งจริงจากใบส่งของเดิม (ปลายทาง=doc.toProject, ต้นทาง=item.from) การแก้ชื่อโครงการบนเอกสารไม่ย้ายสต๊อก
+    //   - จับคู่ทรัพย์สินด้วยรหัส (assetCode) + โครงการ; รายการที่ไม่มีรหัสจะข้ามการปรับสต๊อก
+    //   - ตรวจจำนวนให้พอก่อนเสมอ ถ้าไม่พอจะยกเลิกทั้งใบ (ไม่เขียนบางส่วน)
+    case 'updateDeliveryOrder': {
+      const { key, patch, by, adjustStock } = payload;
+      if (!key) throw new Error('ไม่พบรหัสใบส่งของ');
+      const when = new Date().toISOString();
+      const updates = {};
+      const warnings = [];
+
+      if (adjustStock) {
+        const [doSnap, aSnap] = await Promise.all([
+          _assetDb.ref('/deliveryOrders/' + key).get(),
+          _assetDb.ref('/assets').get(),
+        ]);
+        const old = doSnap.val() || {};
+        const assets = aSnap.val() || {};
+        const toArr = (v) => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : []);
+        const oldItems = toArr(old.items);
+        const newItems = Array.isArray(patch.items) ? patch.items : oldItems;
+        const destSite = old.toProject || '';
+        const docNo = old.docNo || (patch && patch.docNo) || '';
+
+        const curQty = {};
+        const getQty = (k) => (curQty[k] !== undefined ? curQty[k] : (Number(assets[k].quantity) || 0));
+        const histAdd = {};
+        const pushHist = (k, e) => { (histAdd[k] = histAdd[k] || []).push(e); };
+        const newAssets = {};
+        const findAsset = (code, site) => Object.keys(assets).find((k) => {
+          const a = assets[k] || {};
+          return String(a.assetCode || a.id || '') === String(code) && String(a.site || '') === String(site);
+        });
+
+        newItems.forEach((ni, i) => {
+          const oi = oldItems[i] || {};
+          const oldQty = Number(oi.quantity) || 0;
+          const newQty = Number(ni.quantity) || 0;
+          const delta = newQty - oldQty;
+          if (delta === 0) return;
+          const code = ni.assetCode || oi.assetCode || '';
+          const srcSite = oi.from || ni.from || '';
+          const label = ni.name || oi.name || code || ('รายการที่ ' + (i + 1));
+          if (!code) { warnings.push(label + ': ไม่มีรหัสทรัพย์สิน จึงไม่ปรับสต๊อกให้'); return; }
+
+          if (delta > 0) {
+            // ย้ายเพิ่ม delta หน่วย จากต้นทาง -> ปลายทาง
+            const sk = srcSite ? findAsset(code, srcSite) : null;
+            if (sk) {
+              const have = getQty(sk);
+              if (have < delta) throw new Error(`สต๊อกต้นทางไม่พอสำหรับ ${code} ที่ ${srcSite} (มี ${have}, ต้องเพิ่ม ${delta})`);
+              curQty[sk] = have - delta;
+              pushHist(sk, { from: srcSite, to: destSite, when, by: by || '', note: 'ปรับลดจากการแก้ไขใบส่งของ', docNo, qty: delta, adjust: true, splitOut: delta });
+            } else {
+              warnings.push(`${code}: ไม่พบทรัพย์สินต้นทางที่ ${srcSite || '-'} จึงเพิ่มจำนวนปลายทางโดยไม่ตัดต้นทาง`);
+            }
+            const dk = findAsset(code, destSite);
+            if (dk) {
+              curQty[dk] = getQty(dk) + delta;
+              pushHist(dk, { from: srcSite, to: destSite, when, by: by || '', note: 'ปรับเพิ่มจากการแก้ไขใบส่งของ', docNo, qty: delta, adjust: true });
+            } else {
+              const base = sk ? assets[sk] : { assetCode: code, name: ni.name || '', unit: ni.unit || '', brand: ni.brand || '', model: ni.model || '', serial: ni.serial || '' };
+              const nk = _assetDb.ref('/assets').push().key;
+              newAssets[nk] = { ...base, quantity: delta, site: destSite, updatedAt: when, transferHistory: [{ from: srcSite, to: destSite, when, by: by || '', note: 'สร้างจากการแก้ไขใบส่งของ', docNo, qty: delta, adjust: true }] };
+            }
+          } else {
+            // ลดจำนวน => คืน need หน่วย จากปลายทาง -> ต้นทาง
+            const need = -delta;
+            const dk = findAsset(code, destSite);
+            if (!dk) throw new Error(`ไม่พบทรัพย์สินปลายทางที่ ${destSite || '-'} สำหรับ ${code} จึงลดจำนวนไม่ได้`);
+            const have = getQty(dk);
+            if (have < need) throw new Error(`จำนวนปลายทางไม่พอลดสำหรับ ${code} ที่ ${destSite} (มี ${have}, ต้องลด ${need})`);
+            curQty[dk] = have - need;
+            pushHist(dk, { from: destSite, to: srcSite, when, by: by || '', note: 'ปรับลด/คืนจากการแก้ไขใบส่งของ', docNo, qty: need, adjust: true, splitOut: need });
+            const sk = srcSite ? findAsset(code, srcSite) : null;
+            if (sk) {
+              curQty[sk] = getQty(sk) + need;
+              pushHist(sk, { from: destSite, to: srcSite, when, by: by || '', note: 'คืนจำนวนจากการแก้ไขใบส่งของ', docNo, qty: need, adjust: true });
+            } else if (srcSite) {
+              const base = assets[dk] ? assets[dk] : { assetCode: code, name: ni.name || '', unit: ni.unit || '' };
+              const nk = _assetDb.ref('/assets').push().key;
+              newAssets[nk] = { ...base, quantity: need, site: srcSite, updatedAt: when, transferHistory: [{ from: destSite, to: srcSite, when, by: by || '', note: 'คืนจากการแก้ไขใบส่งของ', docNo, qty: need, adjust: true }] };
+            } else {
+              warnings.push(`${code}: ไม่ทราบโครงการต้นทาง จึงลดปลายทางโดยไม่คืนต้นทาง`);
+            }
+          }
+        });
+
+        Object.keys(curQty).forEach((k) => {
+          updates['/assets/' + k + '/quantity'] = curQty[k];
+          updates['/assets/' + k + '/updatedAt'] = when;
+        });
+        Object.keys(histAdd).forEach((k) => {
+          const cur = Array.isArray(assets[k] && assets[k].transferHistory) ? assets[k].transferHistory.slice() : [];
+          updates['/assets/' + k + '/transferHistory'] = cur.concat(histAdd[k]);
+        });
+        Object.keys(newAssets).forEach((k) => { updates['/assets/' + k] = newAssets[k]; });
+      }
+
+      const clean = { ...(patch || {}) };
+      delete clean.key; delete clean.when;
+      clean.updatedAt = when;
+      clean.updatedBy = by || '';
+      Object.keys(clean).forEach((kk) => { updates['/deliveryOrders/' + key + '/' + kk] = clean[kk]; });
+
+      await _assetDb.ref().update(updates);
+      return { ok: true, warnings };
+    }
+
     case 'deleteRepair': {
       const { id, role } = payload;
       if (role !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ลบใบแจ้งซ่อมได้');
@@ -871,13 +982,15 @@ async function api(action, payload = {}) {
     }
 
     case 'updateRepairProblems': {
-      const { id, problems, by, note } = payload;
+      const { id, problems, status, by, note } = payload;
       const tlKey = _db.ref('/repairs/' + id + '/timeline').push().key;
-      await _db.ref('/repairs/' + id).update({
+      const upd = {
         problems: problems || [],
         updatedAt: new Date().toISOString(),
-        ['timeline/' + tlKey]: { id: tlKey, status: '', when: new Date().toISOString(), by: by || '', note: note || 'ปรับสถานะรายการอาการ' },
-      });
+        ['timeline/' + tlKey]: { id: tlKey, status: status || '', when: new Date().toISOString(), by: by || '', note: note || 'ปรับสถานะรายการอาการ' },
+      };
+      if (status !== undefined) upd.status = status;
+      await _db.ref('/repairs/' + id).update(upd);
       return { ok: true };
     }
 
@@ -1500,6 +1613,7 @@ function Dashboard({user,goTo}){
   const [loading,setLoading] = React.useState(true);
   const [costView,setCostView] = React.useState("category");
   const [dashDetail,setDashDetail] = React.useState(null);
+  const [tick,setTick] = React.useState(0);
   const doughnutRef = React.useRef(null);
   const barRef = React.useRef(null);
   const costRef = React.useRef(null);
@@ -1512,7 +1626,7 @@ function Dashboard({user,goTo}){
 
   const repairs = React.useMemo(()=>{
     return window.filterByUserProjects(user, window.__DATA.repairs, "project");
-  },[user]);
+  },[user,tick]);
 
   const costStats = React.useMemo(()=>{
     const total = repairs.reduce((s,r)=>s+(Number(r.cost)||0),0);
@@ -1556,6 +1670,23 @@ function Dashboard({user,goTo}){
   },[repairs]);
 
   const fmtBaht = (n) => "฿" + Math.round(Number(n)||0).toLocaleString();
+
+  // สรุปอาการเสียที่พบบ่อย — รวมทุกอาการจากทุกใบแจ้งซ่อม แล้วจัดอันดับตามจำนวนครั้ง
+  const symptomStats = React.useMemo(()=>{
+    const map = {};
+    repairs.forEach(r=>{
+      window.getProblems(r).forEach(p=>{
+        const label = String(p.text||"").trim();
+        if(!label) return;
+        const key = label.toLowerCase().replace(/\s+/g," ");
+        if(!map[key]) map[key] = { label, count:0, done:0 };
+        map[key].count++;
+        if(p.status==="done") map[key].done++;
+      });
+    });
+    const list = Object.values(map).sort((a,b)=>b.count-a.count);
+    return { list, total: list.reduce((s,x)=>s+x.count,0), max: list.length?list[0].count:0 };
+  },[repairs]);
 
   const counts = {
     all: repairs.length,
@@ -1654,6 +1785,34 @@ function Dashboard({user,goTo}){
             <div className="card-body" style={{height:320}}><canvas ref={doughnutRef}></canvas></div>
           </div>
         </div>
+        <div className="card" style={{marginBottom:18}}>
+          <div className="card-h"><div><h3>สรุปอาการเสียที่พบบ่อย</h3><div className="sub">จัดอันดับอาการ/ปัญหาที่ถูกแจ้งซ่อมมากที่สุด · {symptomStats.list.length} อาการ · {symptomStats.total} ครั้ง</div></div></div>
+          <div className="card-body">
+            {symptomStats.list.length===0 ? (
+              <div className="empty" style={{padding:30}}><i className="fa-solid fa-clipboard-question"></i><div className="t" style={{fontSize:14}}>ยังไม่มีข้อมูลอาการแจ้งซ่อม</div></div>
+            ) : (
+              <div style={{display:"grid",gap:12}}>
+                {symptomStats.list.slice(0,Math.max(6,Math.min(symptomStats.list.length,8))).map((s,i)=>{
+                  const pct = symptomStats.max ? (s.count/symptomStats.max*100) : 0;
+                  const share = symptomStats.total ? (s.count/symptomStats.total*100) : 0;
+                  const rankColor = ["#EF4444","#F59E0B","#3B82F6","#8B5CF6","#0EA5E9","#10B981","#EC4899","#6366F1"][i%8];
+                  return (
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:12}}>
+                      <span style={{width:26,height:26,flexShrink:0,borderRadius:"50%",background:rankColor+"1a",color:rankColor,display:"grid",placeItems:"center",fontSize:13,fontWeight:600}}>{i+1}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10,marginBottom:5}}>
+                          <span style={{fontSize:14,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.label}</span>
+                          <span style={{flexShrink:0,fontSize:13,color:"var(--muted)"}}><strong style={{color:rankColor,fontSize:15}}>{s.count}</strong> ครั้ง · {share.toFixed(0)}%</span>
+                        </div>
+                        <div style={{height:8,borderRadius:999,background:"var(--bg)",overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:rankColor,borderRadius:999,transition:"width .4s"}}></div></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
         <div className="stat-grid" style={{gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",marginBottom:18}}>
           <div className="stat"><div className="ic" style={{background:"rgba(30,64,175,.1)",color:"#1E40AF"}}><i className="fa-solid fa-sack-dollar"></i></div><div className="label">ประเมินค่าใช้จ่ายรวม</div><div className="val" style={{fontSize:22}}>{fmtBaht(costStats.total)}</div></div>
           <div className="stat"><div className="ic" style={{background:"rgba(16,185,129,.1)",color:"#10B981"}}><i className="fa-solid fa-circle-check"></i></div><div className="label">ปิดงาน/จ่ายแล้ว</div><div className="val" style={{fontSize:22}}>{fmtBaht(costStats.done)}</div></div>
@@ -1716,7 +1875,7 @@ function Dashboard({user,goTo}){
           </div>
         </div>
       </>}
-      {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user} onQuick={null} onEdit={null} onEditParts={null}/>}
+      {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user} onQuick={null} onProblems={()=>setTick(t=>t+1)} onEdit={null} onEditParts={null}/>}
     </>
   );
 }
@@ -1929,7 +2088,7 @@ function Repairs({user}){
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
+      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onProblems={(id,next,st)=>{ const upd=rows.map(x=>x.id===id?{...x,problems:next,status:st}:x); setRows(upd); window.__DATA.repairs=window.__DATA.repairs.map(x=>x.id===id?{...x,problems:next,status:st}:x); }} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
       {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
       {editPartsFor && <AssessModal r={editPartsFor} mode="edit" onClose={()=>setEditPartsFor(null)} onSave={saveEditParts}/>}
@@ -1937,17 +2096,19 @@ function Repairs({user}){
   );
 }
 
-function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts}){
+function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
   const canAct = ["Admin","Officer","Technician"].includes(user.role) && !!onQuick;
   const [probs,setProbs] = React.useState(()=>window.getProblems(r));
   const setProbStatus = async (i, st) => {
     const next = probs.map((p,idx)=> idx===i?{...p,status:st}:p);
+    const newStatus = window.deriveStatus(next, r.status);
     setProbs(next);
     try{
-      await window.api("updateRepairProblems",{id:r.id, problems:next, by:user.name, note:`ปรับสถานะ "${next[i].text}" → ${window.getStatus(st).label}`});
+      await window.api("updateRepairProblems",{id:r.id, problems:next, status:newStatus, by:user.name, note:`ปรับสถานะ "${next[i].text}" → ${window.getStatus(st).label}`});
       const idx = window.__DATA.repairs.findIndex(x=>x.id===r.id);
-      if(idx>-1) window.__DATA.repairs[idx].problems = next;
-      r.problems = next;
+      if(idx>-1){ window.__DATA.repairs[idx].problems = next; window.__DATA.repairs[idx].status = newStatus; }
+      r.problems = next; r.status = newStatus;
+      if(onProblems) onProblems(r.id, next, newStatus);
     }catch(err){ setProbs(probs); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
   const doneCount = probs.filter(p=>p.status==="done").length;
@@ -2057,6 +2218,24 @@ window.getProblems = function(r){
   return String(r.title||"").split("\n").map(s=>s.trim()).filter(Boolean).map(t=>({text:t,status:r.status||"new"}));
 };
 
+// สรุปสถานะรวมของใบแจ้งซ่อมจากสถานะรายอาการ — ใบงานจะ "เสร็จสมบูรณ์" ก็ต่อเมื่อทุกอาการเสร็จ
+// และจะแสดงสถานะของอาการที่คืบหน้าน้อยที่สุดที่ยังไม่เสร็จ (ยกเว้นอาการที่ถูกยกเลิก)
+window.deriveStatus = function(problems, fallback){
+  const list = (problems||[]).filter(p=>p && p.status);
+  if(!list.length) return fallback || "new";
+  const active = list.filter(p=>p.status!=="cancel");
+  if(!active.length) return "cancel";
+  if(active.every(p=>p.status==="done")) return "done";
+  const order = { new:0, assess:1, parts:2, progress:3, done:4 };
+  let best = fallback || "new", bestRank = 99;
+  active.forEach(p=>{
+    if(p.status==="done") return;
+    const rank = (p.status in order) ? order[p.status] : 0;
+    if(rank < bestRank){ bestRank = rank; best = p.status; }
+  });
+  return best;
+};
+
 window.getRepairPlace = function(r){
   const base = {mode:"", onsite:"", other:"", reportAt:"", note:""};
   const p = r.repairPlace;
@@ -2104,7 +2283,7 @@ window.buildRepairFormDoc = function(r, user){
     + "<div class='row2'><div>เลขที่ <span class='dot w180'>"+fill(r.running)+"</span></div><div>วันที่ <span class='dot w120'>"+fill(dateStr)+"</span></div></div>"
     + "<div class='info'>"
     + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>"+fill(cat.name)+"</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>"+fill(r.machineCode)+"</span><b>กรรมสิทธิ์</b><span class='dot f1'>"+fill(m.ownership)+"</span></div>"
-    + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>"+fill(m.brand)+"</span><b>รุ่น</b><span class='dot f1'>"+fill(m.model)+"</span><b>ขนาด</b><span class='dot f1'>"+fill(m.size)+"</span><b>ปี</b><span class='dot f1'></span><b>ทะเบียน</b><span class='dot f1'></span></div>"
+    + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>"+fill(m.brand)+"</span><b>รุ่น</b><span class='dot f1'>"+fill(m.model)+"</span><b>ขนาด</b><span class='dot f1'>"+fill(m.size)+"</span><b>ปี</b><span class='dot f1'>"+fill(m.year)+"</span><b>ทะเบียน</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>Serial No.</b><span class='dot f1'>"+fill(m.serial)+"</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'></span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>"+fill(m.hours)+"</span></div>"
     + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>"+fill(projLabel)+"</span><b>สถานที่</b><span class='dot f1'>"+fill(m.location)+"</span></div>"
@@ -2643,22 +2822,161 @@ function gdriveThumb(url, sz=600){
   if(!m) return null;
   return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${sz}`;
 }
+
+// โหลดไลบรารีสร้างไฟล์ Excel แบบ on-demand (ไม่ถ่วงตอนเปิดเว็บ)
+async function ensureXLSX(){
+  if(window.XLSX) return window.XLSX;
+  await new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    s.onload=res; s.onerror=()=>rej(new Error("โหลดตัวสร้างไฟล์ Excel ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต"));
+    document.head.appendChild(s);
+  });
+  return window.XLSX;
+}
+
+async function exportMachinesExcel(list){
+  if(!list || list.length===0){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
+  try{
+    Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+    const XLSX = await ensureXLSX();
+    const data = list.map((m,i)=>({
+      "ลำดับ": i+1,
+      "รหัสเครื่องจักร": m.code||"",
+      "ชื่อเครื่องจักร": m.name||"",
+      "หมวดหมู่": (window.getCategory(m.categoryId)||{}).name||"",
+      "ยี่ห้อ": m.brand||"",
+      "รุ่น": m.model||"",
+      "ปีที่ผลิต": m.year||"",
+      "ขนาด": m.size||"",
+      "หมายเลขเครื่อง (Serial)": m.serial||"",
+      "โครงการ": m.project||"",
+      "สถานที่": m.location||"",
+      "กรรมสิทธิ์": m.ownership||"",
+      "สถานะ": m.status||"",
+      "พนักงานขับ/ผู้ควบคุม": m.driverName||"",
+      "ชั่วโมงใช้งาน": Number(m.hours)||0,
+      "บำรุงรักษาล่าสุด": m.lastService||"",
+      "วันที่ตรวจสภาพ": m.inspectionDate||"",
+      "ตรวจสภาพครั้งถัดไป": m.nextInspectionDate||"",
+      "ลิงก์รูปภาพ": m.drivePhoto||"",
+      "ลิงก์เอกสาร 1": m.driveLink1||"",
+      "ลิงก์เอกสาร 2": m.driveLink2||"",
+      "ลิงก์ Part List": m.driveLinkPL||"",
+      "หมายเหตุ": m.note||""
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = Object.keys(data[0]).map(k=>({wch: Math.min(40, Math.max(k.length+4, ...data.map(r=>String(r[k]??"").length+2)))}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ทะเบียนเครื่องจักร");
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+    XLSX.writeFile(wb, `ทะเบียนเครื่องจักร_${stamp}.xlsx`);
+    Swal.fire({icon:"success",title:`ส่งออกแล้ว ${data.length} รายการ`,timer:1500,showConfirmButton:false,toast:true,position:"top-end"});
+  }catch(err){
+    Swal.fire({icon:"error",title:"ส่งออกไม่สำเร็จ",text:err.message});
+  }
+}
+
+// ตัวกรองแบบติ๊กเลือกหลายรายการ (ไม่ติ๊กเลย = แสดงทั้งหมด)
+function CheckFilter({label,icon,options,selected,onChange,minWidth=170}){
+  const [open,setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(()=>{
+    if(!open) return;
+    const onDown = (e)=>{ if(ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e)=>{ if(e.key==="Escape") setOpen(false); };
+    document.addEventListener("mousedown",onDown);
+    document.addEventListener("keydown",onEsc);
+    return ()=>{ document.removeEventListener("mousedown",onDown); document.removeEventListener("keydown",onEsc); };
+  },[open]);
+  const toggle = (v)=>onChange(selected.includes(v)?selected.filter(x=>x!==v):[...selected,v]);
+  const active = selected.length>0;
+  return (
+    <div ref={ref} style={{position:"relative",display:"flex"}}>
+      <button type="button" onClick={()=>setOpen(o=>!o)}
+        style={{flex:1,display:"flex",alignItems:"center",gap:8,padding:"9px 12px",minWidth,borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:13.5,textAlign:"left",
+          border:`1px solid ${active?"var(--primary)":"var(--line)"}`,background:active?"var(--accent-soft)":"#fff",color:active?"var(--primary)":"inherit"}}>
+        {icon && <i className={`fa-solid ${icon}`} style={{opacity:.7}}></i>}
+        <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
+        {active && <span style={{background:"var(--primary)",color:"#fff",borderRadius:999,fontSize:11,fontWeight:600,padding:"1px 7px"}}>{selected.length}</span>}
+        <i className={`fa-solid fa-chevron-${open?"up":"down"}`} style={{fontSize:10,opacity:.6}}></i>
+      </button>
+      {open && (
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:60,minWidth:Math.max(minWidth,230),background:"#fff",border:"1px solid var(--line)",borderRadius:12,boxShadow:"0 12px 32px rgba(15,23,42,.16)",overflow:"hidden"}}>
+          <div style={{display:"flex",gap:6,padding:"8px 10px",borderBottom:"1px solid var(--line)",background:"#FAFBFC"}}>
+            <button type="button" onClick={()=>onChange(options.map(o=>o.value))} style={{flex:1,padding:"5px 8px",fontSize:12,fontFamily:"inherit",border:"1px solid var(--line)",borderRadius:7,background:"#fff",cursor:"pointer"}}>เลือกทั้งหมด</button>
+            <button type="button" onClick={()=>onChange([])} style={{flex:1,padding:"5px 8px",fontSize:12,fontFamily:"inherit",border:"1px solid var(--line)",borderRadius:7,background:"#fff",cursor:"pointer"}}>ล้าง</button>
+          </div>
+          <div style={{maxHeight:280,overflowY:"auto",padding:6}}>
+            {options.length===0 && <div style={{padding:"12px 10px",fontSize:12.5,color:"var(--muted)",textAlign:"center"}}>ไม่มีข้อมูล</div>}
+            {options.map(o=>{
+              const on = selected.includes(o.value);
+              return (
+                <label key={o.value} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:8,cursor:"pointer",fontSize:13,background:on?"var(--accent-soft)":"transparent"}}>
+                  <input type="checkbox" checked={on} onChange={()=>toggle(o.value)} style={{margin:0,cursor:"pointer",accentColor:"var(--primary)",width:16,height:16}} />
+                  {o.color && <span style={{width:9,height:9,borderRadius:"50%",background:o.color,flexShrink:0}}></span>}
+                  {o.icon && <i className={`fa-solid ${o.icon}`} style={{color:o.color||"var(--muted)",fontSize:12,width:14}}></i>}
+                  <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{padding:"7px 12px",borderTop:"1px solid var(--line)",background:"#FAFBFC",fontSize:11,color:"var(--muted)"}}>ไม่ติ๊กเลย = แสดงทั้งหมด</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Machines({user}){
   const visibleRows = React.useMemo(()=>(window.filterByUserProjects(user, window.__DATA.machines, "project")),[user]);
   const [rows,setRows] = React.useState(visibleRows);
   const [q,setQ] = React.useState("");
-  const [statusF,setStatusF] = React.useState("all");
-  const [catF,setCatF] = React.useState("all");
+  const [catF,setCatF] = React.useState([]);   // ติ๊กหลายหมวดหมู่ได้ — ว่าง = ทุกหมวดหมู่
+  const [ownF,setOwnF] = React.useState([]);   // ติ๊กหลายกรรมสิทธิ์ได้ — ว่าง = ทุกกรรมสิทธิ์
+  const [sortF,setSortF] = React.useState("none");
   const [detail,setDetail] = React.useState(null);
   const [edit,setEdit] = React.useState(null);
   React.useEffect(()=>{ setRows(visibleRows); },[visibleRows]);
 
+  // ตัวเลือกหมวดหมู่ — แสดงจำนวนเครื่องในแต่ละหมวด + ตัวเลือก "ไม่ระบุ"
+  const catOptions = React.useMemo(()=>{
+    const count = (id)=>rows.filter(m=>(m.categoryId||"")===id).length;
+    const opts = (window.__DATA.categories||[]).map(c=>({value:c.id,label:`${c.name} (${count(c.id)})`,color:c.color,icon:c.icon}));
+    const none = count("");
+    if(none) opts.push({value:"__none__",label:`— ไม่ระบุ — (${none})`});
+    return opts;
+  },[rows]);
+
+  // ตัวเลือกกรรมสิทธิ์ — สร้างจากค่าที่มีจริงในข้อมูล (เช่น กรรมสิทธิ์, เช่า, ยืม)
+  const ownOptions = React.useMemo(()=>{
+    const tally = {};
+    rows.forEach(m=>{ const o=(m.ownership||"").trim()||"__none__"; tally[o]=(tally[o]||0)+1; });
+    const opts = Object.keys(tally).filter(o=>o!=="__none__").sort((a,b)=>a.localeCompare(b,"th")).map(o=>({value:o,label:`${o} (${tally[o]})`}));
+    if(tally.__none__) opts.push({value:"__none__",label:`— ไม่ระบุ — (${tally.__none__})`});
+    return opts;
+  },[rows]);
+
   const filtered = rows.filter(m=>{
-    if(q){ const qq=q.toLowerCase(); const hay=[m.name,m.code,m.brand,m.model,m.serial,m.project].map(x=>(x||"").toLowerCase()).join(" "); if(!hay.includes(qq)) return false; }
-    if(statusF!=="all" && m.status!==statusF) return false;
-    if(catF!=="all" && m.categoryId!==catF) return false;
+    if(q){ const qq=q.toLowerCase(); const hay=[m.name,m.code,m.brand,m.model,m.year,m.serial,m.project].map(x=>String(x||"").toLowerCase()).join(" "); if(!hay.includes(qq)) return false; }
+    if(catF.length && !catF.includes(m.categoryId||"__none__")) return false;
+    if(ownF.length && !ownF.includes((m.ownership||"").trim()||"__none__")) return false;
     return true;
   });
+
+  if(sortF!=="none"){
+    // ค่าว่างให้ไปอยู่ท้ายสุดเสมอ
+    const txt = (v) => String(v??"").trim();
+    const cmp = {
+      ownership: (a,b)=>{ const x=txt(a.ownership),y=txt(b.ownership); if(!x!==!y) return x?-1:1; return x.localeCompare(y,"th") || txt(a.name).localeCompare(txt(b.name),"th"); },
+      name:      (a,b)=>txt(a.name).localeCompare(txt(b.name),"th"),
+      code:      (a,b)=>txt(a.code).localeCompare(txt(b.code),"th",{numeric:true}),
+      status:    (a,b)=>txt(a.status).localeCompare(txt(b.status),"th"),
+      yearDesc:  (a,b)=>{ const x=Number(a.year)||0,y=Number(b.year)||0; if(!x!==!y) return x?-1:1; return y-x; }
+    }[sortF];
+    if(cmp) filtered.sort(cmp);
+  }
 
   const statusColor = (s) => ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[s] || "#64748B";
 
@@ -2706,11 +3024,22 @@ function Machines({user}){
     <div className="card" style={{marginBottom:18}}>
       <div className="filters">
         <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา ชื่อ / รหัส / ยี่ห้อ / ซีเรียล / โครงการ..." value={q} onChange={e=>setQ(e.target.value)} /></div>
-        <select value={statusF} onChange={e=>setStatusF(e.target.value)}><option value="all">ทุกสถานะ</option><option value="ใช้งาน">ใช้งานอยู่</option><option value="ซ่อม">กำลังซ่อม</option><option value="รอซ่อม">รอซ่อม</option></select>
-        <select value={catF} onChange={e=>setCatF(e.target.value)}><option value="all">ทุกหมวดหมู่</option>{(window.__DATA.categories||[]).map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
+        <CheckFilter label="ทุกหมวดหมู่" icon="fa-layer-group" selected={catF} onChange={setCatF} options={catOptions} />
+        <CheckFilter label="ทุกกรรมสิทธิ์" icon="fa-handshake" selected={ownF} onChange={setOwnF} options={ownOptions} />
+        <select value={sortF} onChange={e=>setSortF(e.target.value)} title="เรียงลำดับ">
+          <option value="none">เรียง: ค่าเริ่มต้น</option>
+          <option value="ownership">เรียง: กรรมสิทธิ์</option>
+          <option value="name">เรียง: ชื่อเครื่องจักร</option>
+          <option value="code">เรียง: รหัสเครื่องจักร</option>
+          <option value="status">เรียง: สถานะ</option>
+          <option value="yearDesc">เรียง: ปีที่ผลิต (ใหม่→เก่า)</option>
+        </select>
         <div className="spacer"></div>
+        <button className="btn btn-ghost" onClick={()=>exportMachinesExcel(filtered)} title="ส่งออกข้อมูลที่แสดงอยู่เป็นไฟล์ Excel">
+          <i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel
+        </button>
         {["Admin","Officer","Engineer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",driveLinkPL:"",inspectionDate:"",nextInspectionDate:""}})}>
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",year:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",driveLinkPL:"",inspectionDate:"",nextInspectionDate:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -2796,6 +3125,7 @@ function MachineForm({initial,mode,onClose,onSave}){
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>เครื่องจักร (ชื่อ) *</label><input value={f.name||""} onChange={e=>up("name",e.target.value)} placeholder="เช่น Drilling Rig, เครื่องกลึง CNC" /></div>
           <div className="form-field"><label>ยี่ห้อ</label><input value={f.brand||""} onChange={e=>up("brand",e.target.value)} placeholder="เช่น XCMG, Komatsu, HITACHI" /></div>
           <div className="form-field"><label>รุ่น</label><input value={f.model||""} onChange={e=>up("model",e.target.value)} placeholder="เช่น XR220D" /></div>
+          <div className="form-field"><label>ปีที่ผลิต</label><input type="number" min="1900" max="2200" value={f.year||""} onChange={e=>up("year",e.target.value)} placeholder="เช่น 2018" /></div>
           <div className="form-field"><label>ขนาด / ความยาว</label><input value={f.size||""} onChange={e=>up("size",e.target.value)} placeholder="เช่น 22 ตัน / 12 เมตร" /></div>
           <div className="form-field"><label>ซีเรียล</label><input className="mono" value={f.serial||""} onChange={e=>up("serial",e.target.value)} placeholder="Serial Number" /></div>
           <div className="form-field"><label>กรรมสิทธิ์/เช่า</label><input value={f.ownership||""} onChange={e=>up("ownership",e.target.value)} placeholder="กรรมสิทธิ์, เช่า, ยืม..." /></div>
@@ -2879,8 +3209,16 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
   const [editRepair, setEditRepair] = React.useState(null);
   const [transferModal, setTransferModal] = React.useState(false);
   const [editTrIdx, setEditTrIdx] = React.useState(null);
-  const [editTrDate, setEditTrDate] = React.useState("");
+  const [editTrForm, setEditTrForm] = React.useState(null);
+  const [savingTr, setSavingTr] = React.useState(false);
+  const projectNames = React.useMemo(()=>{
+    const names = (window.__DATA.projects||[]).filter(p=>p.status!=="inactive").map(p=>p.name);
+    (m.transferHistory||[]).forEach(t=>{ [t.from,t.to].forEach(n=>{ if(n && !names.includes(n)) names.push(n); }); });
+    return names;
+  },[m.transferHistory]);
   const toDateStr = (d) => { try{ return new Date(d).toISOString().slice(0,10); }catch(e){ return ""; } };
+  const trLabelSt = {fontSize:10.5,color:"#6D28D9",fontWeight:500,marginBottom:2};
+  const trInputSt = {width:"100%",padding:"5px 8px",border:"1px solid #C4B5FD",borderRadius:6,fontSize:12.5,fontFamily:"Kanit",color:"#3B0764",background:"#fff",outline:"none"};
   const [editDateField, setEditDateField] = React.useState(null);
   const [editDateValue, setEditDateValue] = React.useState("");
   const [savingDate, setSavingDate] = React.useState(false);
@@ -2929,11 +3267,48 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
       </div>
     );
   };
-  const saveTransferDate = async () => {
-    if(editTrIdx===null||!editTrDate) return;
-    const newHistory = m.transferHistory.map((t,i)=>i===editTrIdx?{...t,when:new Date(editTrDate).toISOString()}:t);
-    await onPatchMachine({transferHistory:newHistory});
-    setEditTrIdx(null);
+  const startEditTransfer = (idx, t) => {
+    setEditTrIdx(idx);
+    setEditTrForm({from:t.from||"", to:t.to||"", when:toDateStr(t.when), note:t.note||"", by:t.by||""});
+  };
+
+  const saveTransferEntry = async () => {
+    if(editTrIdx===null || !editTrForm) return;
+    if(!editTrForm.to.trim()){ Swal.fire({icon:"warning",title:"กรุณาระบุโครงการปลายทาง"}); return; }
+    const hist = m.transferHistory||[];
+    const newHistory = hist.map((t,i)=>i!==editTrIdx?t:({
+      ...t,
+      from: editTrForm.from.trim(),
+      to: editTrForm.to.trim(),
+      note: editTrForm.note,
+      by: editTrForm.by.trim(),
+      when: editTrForm.when ? new Date(editTrForm.when).toISOString() : t.when,
+      editedBy: user.name,
+      editedAt: new Date().toISOString()
+    }));
+    // แก้รายการล่าสุด = ปลายทางเปลี่ยน ให้โครงการปัจจุบันของเครื่องจักรตามไปด้วย
+    const patch = {transferHistory:newHistory};
+    if(editTrIdx===hist.length-1) patch.project = newHistory[editTrIdx].to;
+    setSavingTr(true);
+    try{
+      await onPatchMachine(patch);
+      setEditTrIdx(null); setEditTrForm(null);
+      Swal.fire({icon:"success",title:"แก้ไขประวัติแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+    } finally { setSavingTr(false); }
+  };
+
+  const deleteTransferEntry = (idx, t) => {
+    Swal.fire({
+      title:"ลบประวัติการย้าย?",
+      html:`<div style="font-size:14px">${t.from||"ไม่ระบุ"} → <strong>${t.to||""}</strong><br><span style="color:#64748B;font-size:12px">${window.__DATA.fmtDate(t.when)}</span></div><div style="margin-top:8px;font-size:12px;color:#B45309">ลบแล้วกู้คืนไม่ได้ และไม่กระทบโครงการปัจจุบันของเครื่องจักร</div>`,
+      icon:"warning",showCancelButton:true,confirmButtonColor:"#EF4444",confirmButtonText:"ลบ",cancelButtonText:"ยกเลิก"
+    }).then(async r=>{
+      if(!r.isConfirmed) return;
+      const newHistory = (m.transferHistory||[]).filter((_,i)=>i!==idx);
+      await onPatchMachine({transferHistory:newHistory});
+      setEditTrIdx(null); setEditTrForm(null);
+      Swal.fire({icon:"success",title:"ลบแล้ว",timer:1000,showConfirmButton:false,toast:true,position:"top-end"});
+    });
   };
 
   const saveEdit = async (r, patch) => {
@@ -2975,6 +3350,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
           <div className="detail-grid" style={{marginTop:16,gridTemplateColumns:"1fr 1fr"}}>
             <div><div className="k">โครงการ</div><div className="v">{m.project||"—"}</div></div>
             <div><div className="k">ซีเรียล</div><div className="v mono" style={{fontSize:12}}>{m.serial||"—"}</div></div>
+            <div><div className="k">ปีที่ผลิต</div><div className="v">{m.year||"—"}</div></div>
             <div><div className="k">สถานที่ติดตั้ง</div><div className="v">{m.location||"—"}</div></div>
             <div><div className="k">ซ่อมบำรุงล่าสุด</div><div className="v">{m.lastService||"—"}</div></div>
             <div><div className="k">ชั่วโมงทำงาน</div><div className="v">{Number(m.hours||0).toLocaleString()} ชม.</div></div>
@@ -3005,34 +3381,67 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
           {m.transferHistory && m.transferHistory.length>0 && (
             <div style={{marginTop:14}}>
               <div style={{fontSize:12,fontWeight:500,color:"#7C3AED",textTransform:"uppercase",letterSpacing:".05em",marginBottom:8}}><i className="fa-solid fa-right-left" style={{marginRight:6}}></i>ประวัติการย้ายโครงการ ({m.transferHistory.length})</div>
+              <datalist id="tr-projects">{projectNames.map(n=>(<option key={n} value={n} />))}</datalist>
               <div style={{display:"grid",gap:6}}>
                 {[...m.transferHistory].reverse().map((t,i)=>{
                   const actualIdx = m.transferHistory.length-1-i;
                   const isEditing = editTrIdx===actualIdx;
                   return (
-                    <div key={i} style={{display:"flex",gap:10,padding:"10px 12px",background:"#F5F3FF",border:"1px solid #DDD6FE",borderRadius:8,fontSize:13}}>
+                    <div key={i} style={{display:"flex",gap:10,padding:"10px 12px",background:"#F5F3FF",border:`1px solid ${isEditing?"#A78BFA":"#DDD6FE"}`,borderRadius:8,fontSize:13}}>
                       <div style={{color:"#7C3AED",marginTop:1,flexShrink:0}}><i className="fa-solid fa-circle-arrow-right"></i></div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                          <span style={{color:"#6D28D9",fontWeight:500}}>{t.from||"ไม่ระบุ"}</span>
-                          <i className="fa-solid fa-arrow-right" style={{fontSize:10,color:"var(--muted)"}}></i>
-                          <span style={{color:"#1E40AF",fontWeight:600}}>{t.to}</span>
-                        </div>
-                        {t.note && <div style={{color:"#4B5563",marginTop:3,fontSize:12}}>{t.note}</div>}
-                        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap"}}>
-                          {isEditing ? (
-                            <>
-                              <input type="date" value={editTrDate} onChange={e=>setEditTrDate(e.target.value)} style={{padding:"2px 6px",border:"1px solid #A78BFA",borderRadius:5,fontSize:12,fontFamily:"Kanit",color:"#3B0764"}} />
-                              <button onClick={saveTransferDate} style={{padding:"2px 10px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>บันทึก</button>
-                              <button onClick={()=>setEditTrIdx(null)} style={{padding:"2px 8px",background:"none",border:"1px solid #DDD6FE",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>ยกเลิก</button>
-                            </>
-                          ) : (
-                            <>
+                        {isEditing ? (
+                          <div style={{display:"grid",gap:8}}>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                              <div>
+                                <div style={trLabelSt}>จากโครงการ</div>
+                                <input list="tr-projects" value={editTrForm.from} onChange={e=>setEditTrForm(p=>({...p,from:e.target.value}))} placeholder="ไม่ระบุ" style={trInputSt} />
+                              </div>
+                              <div>
+                                <div style={trLabelSt}>ไปโครงการ *</div>
+                                <input list="tr-projects" value={editTrForm.to} onChange={e=>setEditTrForm(p=>({...p,to:e.target.value}))} placeholder="โครงการปลายทาง" style={trInputSt} />
+                              </div>
+                              <div>
+                                <div style={trLabelSt}>วันที่ย้าย</div>
+                                <input type="date" value={editTrForm.when} onChange={e=>setEditTrForm(p=>({...p,when:e.target.value}))} style={trInputSt} />
+                              </div>
+                              <div>
+                                <div style={trLabelSt}>ผู้บันทึก</div>
+                                <input value={editTrForm.by} onChange={e=>setEditTrForm(p=>({...p,by:e.target.value}))} placeholder="ชื่อผู้บันทึก" style={trInputSt} />
+                              </div>
+                            </div>
+                            <div>
+                              <div style={trLabelSt}>หมายเหตุ</div>
+                              <textarea rows="2" value={editTrForm.note} onChange={e=>setEditTrForm(p=>({...p,note:e.target.value}))} placeholder="เหตุผลการย้าย..." style={{...trInputSt,resize:"vertical"}}></textarea>
+                            </div>
+                            {actualIdx===m.transferHistory.length-1 && editTrForm.to.trim() && editTrForm.to.trim()!==m.project && (
+                              <div style={{fontSize:11,color:"#B45309",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"5px 8px"}}>
+                                <i className="fa-solid fa-triangle-exclamation"></i> รายการล่าสุด — บันทึกแล้วโครงการปัจจุบันของเครื่องจักรจะเปลี่ยนเป็น <strong>{editTrForm.to.trim()}</strong>
+                              </div>
+                            )}
+                            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                              <button onClick={saveTransferEntry} disabled={savingTr} style={{padding:"4px 12px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}><i className="fa-solid fa-floppy-disk"></i> {savingTr?"กำลังบันทึก...":"บันทึก"}</button>
+                              <button onClick={()=>{setEditTrIdx(null);setEditTrForm(null);}} disabled={savingTr} style={{padding:"4px 10px",background:"none",border:"1px solid #DDD6FE",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}>ยกเลิก</button>
+                              <div style={{flex:1}}></div>
+                              <button onClick={()=>deleteTransferEntry(actualIdx,t)} disabled={savingTr} style={{padding:"4px 10px",background:"none",border:"1px solid #FECACA",color:"#DC2626",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"Kanit"}}><i className="fa-solid fa-trash"></i> ลบรายการนี้</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                              <span style={{color:"#6D28D9",fontWeight:500}}>{t.from||"ไม่ระบุ"}</span>
+                              <i className="fa-solid fa-arrow-right" style={{fontSize:10,color:"var(--muted)"}}></i>
+                              <span style={{color:"#1E40AF",fontWeight:600}}>{t.to}</span>
+                            </div>
+                            {t.note && <div style={{color:"#4B5563",marginTop:3,fontSize:12}}>{t.note}</div>}
+                            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap"}}>
                               <span style={{color:"var(--muted)",fontSize:11}}>{window.__DATA.fmtDate(t.when)} · {t.by}</span>
-                              {canEdit && <button onClick={()=>{setEditTrIdx(actualIdx);setEditTrDate(toDateStr(t.when));}} style={{padding:"1px 6px",background:"none",border:"1px solid #DDD6FE",borderRadius:4,fontSize:10,cursor:"pointer",color:"#7C3AED",lineHeight:1.6}}><i className="fa-solid fa-pen"></i></button>}
-                            </>
-                          )}
-                        </div>
+                              {t.editedAt && <span style={{color:"var(--muted)",fontSize:10,fontStyle:"italic"}} title={`แก้ไขโดย ${t.editedBy} เมื่อ ${window.__DATA.fmtDate(t.editedAt)}`}><i className="fa-solid fa-pen-to-square"></i> แก้ไขแล้ว</span>}
+                              {canEdit && <button onClick={()=>startEditTransfer(actualIdx,t)} title="แก้ไขรายการนี้" style={{padding:"1px 6px",background:"none",border:"1px solid #DDD6FE",borderRadius:4,fontSize:10,cursor:"pointer",color:"#7C3AED",lineHeight:1.6}}><i className="fa-solid fa-pen"></i></button>}
+                              {canEdit && <button onClick={()=>deleteTransferEntry(actualIdx,t)} title="ลบรายการนี้" style={{padding:"1px 6px",background:"none",border:"1px solid #FECACA",borderRadius:4,fontSize:10,cursor:"pointer",color:"#DC2626",lineHeight:1.6}}><i className="fa-solid fa-trash"></i></button>}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -3596,7 +4005,8 @@ function NewRequest({user,goTo}){
   },[user]);
 
   const initProject = window.getActiveProject(user)||"";
-  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",placeMode:"onsite",placeOnsite:initProject,placeOther:""});
+  const todayStr = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
+  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",reportDate:todayStr,placeMode:"onsite",placeOnsite:initProject,placeOther:""});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{ if(!f.project) return []; return (window.__DATA.machines||[]).filter(m=>m.project===f.project); },[f.project]);
@@ -3620,7 +4030,8 @@ function NewRequest({user,goTo}){
         other:  f.placeMode==="other"  ? f.placeOther : "",
         reportAt: "", note: "",
       };
-      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace};
+      const createdAt = f.reportDate ? new Date(f.reportDate+"T00:00:00").toISOString() : undefined;
+      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace,createdAt};
       const saved = await window.api("createRepair",{repair});
       saved.createdAt = new Date(saved.createdAt);
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
@@ -3666,6 +4077,7 @@ function NewRequest({user,goTo}){
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>อาการ/ปัญหา * <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(เพิ่มได้หลายรายการ)</span></label><ProblemsField value={f.title} onChange={v=>setF({...f,title:v})} /></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>เลขที่ใบแจ้งซ่อม (ที่ไซต์งาน)</label><input value={f.siteId} onChange={e=>setF({...f,siteId:e.target.value})} placeholder="เช่น WR-1234" /><div className="hint">ไม่บังคับ · กรอกเลขที่จากใบงานจริงที่ไซต์</div></div>
+          <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label><i className="fa-solid fa-calendar-day" style={{color:"var(--primary)",marginRight:6}}></i>วันที่แจ้ง</label><input type="date" value={f.reportDate} onChange={e=>setF({...f,reportDate:e.target.value})} /><div className="hint">ระบบเติมวันที่ปัจจุบันให้ · แก้ไขได้</div></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
             <label><i className="fa-solid fa-location-dot" style={{color:"var(--primary)",marginRight:6}}></i>สถานที่ทำการซ่อม</label>
             <div style={{display:"grid",gap:10,border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
@@ -3747,6 +4159,8 @@ function AssetRegistry({user}){
   const [q,setQ] = React.useState("");
   const [site,setSite] = React.useState("");
   const [owner,setOwner] = React.useState("");
+  const [groupBy,setGroupBy] = React.useState("site");   // none | site | ownership | name
+  const [collapsed,setCollapsed] = React.useState({});   // เก็บกลุ่มที่ถูกย่อ
   const [edit,setEdit] = React.useState(null);   // {mode:"add"|"edit", data:{...}}
   const [history,setHistory] = React.useState(null);   // ทรัพย์สินที่กำลังดูประวัติการย้าย
 
@@ -3779,6 +4193,51 @@ function AssetRegistry({user}){
   },[rows,q,site,owner]);
 
   const totalQty = React.useMemo(()=>filtered.reduce((s,r)=>s+(Number(r.quantity)||0),0),[filtered]);
+
+  const GROUP_META = {
+    site:      { label:"สถานที่ (โครงการ)", empty:"— ไม่ระบุสถานที่ —", field:r=>r.site },
+    ownership: { label:"กรรมสิทธิ์",         empty:"— ไม่ระบุกรรมสิทธิ์ —", field:r=>r.ownership },
+    name:      { label:"ชื่อทรัพย์สิน",       empty:"— ไม่ระบุชื่อ —", field:r=>r.name },
+  };
+  const groups = React.useMemo(()=>{
+    if(groupBy==="none") return null;
+    const meta = GROUP_META[groupBy];
+    const map = new Map();
+    filtered.forEach(r=>{
+      const raw = String(meta.field(r)||"").trim();
+      const gkey = raw || meta.empty;
+      if(!map.has(gkey)) map.set(gkey, { key:gkey, label:gkey, rows:[], qty:0 });
+      const g = map.get(gkey); g.rows.push(r); g.qty += Number(r.quantity)||0;
+    });
+    return [...map.values()].sort((a,b)=>String(a.label).localeCompare(String(b.label),"th"));
+  },[filtered,groupBy]);
+
+  const toggleGroup = (k)=>setCollapsed(prev=>({...prev,[k]:!prev[k]}));
+  const colCount = canEdit?9:8;
+
+  const renderRow = (r)=>(
+    <tr key={r.key}>
+      <td><span className="ticket-id">{r.assetCode||r.id||"—"}</span></td>
+      <td><div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div></td>
+      <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
+      <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
+      <td style={{whiteSpace:"nowrap"}}>{(Number(r.quantity)||0).toLocaleString("th-TH")} {r.unit||""}</td>
+      <td className="hide-on-mobile" style={{fontSize:13}}>{r.ownership||"—"}</td>
+      <td className="hide-on-mobile" style={{fontSize:13}}>{r.holder||"—"}</td>
+      <td style={{fontSize:13}}>
+        {r.site ? <ProjectLabel name={r.site}/> : <span style={{color:"var(--muted)"}}>—</span>}
+        {(r.transferHistory||[]).length>0 && (
+          <button className="ia" title="ประวัติการย้าย" onClick={()=>setHistory(r)} style={{color:"#7C3AED",marginLeft:4}}>
+            <i className="fa-solid fa-clock-rotate-left"></i>
+          </button>
+        )}
+      </td>
+      {canEdit && <td><div className="row-actions">
+        <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
+        <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
+      </div></td>}
+    </tr>
+  );
 
   const sortRows = (list) => list.slice().sort((a,b)=>String(a.assetCode||a.id||"").localeCompare(String(b.assetCode||b.id||""),"th"));
   const commit = (list) => { const sorted = sortRows(list); window.__DATA.assetRegistry = sorted; setRows(sorted); };
@@ -3835,6 +4294,12 @@ function AssetRegistry({user}){
           <option value="">ทุกกรรมสิทธิ์</option>
           {owners.map(o=><option key={o} value={o}>{o}</option>)}
         </select>
+        <select value={groupBy} onChange={e=>setGroupBy(e.target.value)} title="จัดกลุ่มทรัพย์สิน">
+          <option value="none">ไม่จัดกลุ่ม</option>
+          <option value="site">จัดกลุ่มตามสถานที่</option>
+          <option value="ownership">จัดกลุ่มตามกรรมสิทธิ์</option>
+          <option value="name">จัดกลุ่มตามชื่อทรัพย์สิน</option>
+        </select>
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
           {filtered.length.toLocaleString("th-TH")} / {rows.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
@@ -3851,30 +4316,23 @@ function AssetRegistry({user}){
             {canEdit && <th>จัดการ</th>}
           </tr></thead>
           <tbody>
-            {filtered.map(r=>(
-              <tr key={r.key}>
-                <td><span className="ticket-id">{r.assetCode||r.id||"—"}</span></td>
-                <td><div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div></td>
-                <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
-                <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
-                <td style={{whiteSpace:"nowrap"}}>{(Number(r.quantity)||0).toLocaleString("th-TH")} {r.unit||""}</td>
-                <td className="hide-on-mobile" style={{fontSize:13}}>{r.ownership||"—"}</td>
-                <td className="hide-on-mobile" style={{fontSize:13}}>{r.holder||"—"}</td>
-                <td style={{fontSize:13}}>
-                  {r.site ? <ProjectLabel name={r.site}/> : <span style={{color:"var(--muted)"}}>—</span>}
-                  {(r.transferHistory||[]).length>0 && (
-                    <button className="ia" title="ประวัติการย้าย" onClick={()=>setHistory(r)} style={{color:"#7C3AED",marginLeft:4}}>
-                      <i className="fa-solid fa-clock-rotate-left"></i>
-                    </button>
-                  )}
-                </td>
-                {canEdit && <td><div className="row-actions">
-                  <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
-                  <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
-                </div></td>}
-              </tr>
-            ))}
-            {filtered.length===0 && (<tr><td colSpan={canEdit?9:8}><div className="empty">
+            {!groups && filtered.map(r=>renderRow(r))}
+            {groups && groups.map(g=>{
+              const isCollapsed = !!collapsed[g.key];
+              return (
+                <React.Fragment key={g.key}>
+                  <tr className="group-row" onClick={()=>toggleGroup(g.key)} style={{cursor:"pointer",background:"var(--bg)"}}>
+                    <td colSpan={colCount} style={{fontWeight:600,fontSize:13.5,padding:"9px 14px",borderTop:"2px solid var(--line)"}}>
+                      <i className={`fa-solid ${isCollapsed?"fa-chevron-right":"fa-chevron-down"}`} style={{marginRight:8,color:"var(--muted)",fontSize:11}}></i>
+                      {groupBy==="site" ? <ProjectLabel name={g.label}/> : g.label}
+                      <span style={{marginLeft:10,fontWeight:400,color:"var(--muted)",fontSize:12.5}}>{g.rows.length.toLocaleString("th-TH")} รายการ · รวม {g.qty.toLocaleString("th-TH")} หน่วย</span>
+                    </td>
+                  </tr>
+                  {!isCollapsed && g.rows.map(r=>renderRow(r))}
+                </React.Fragment>
+              );
+            })}
+            {filtered.length===0 && (<tr><td colSpan={colCount}><div className="empty">
               <i className="fa-solid fa-boxes-stacked"></i>
               <div className="t">ไม่พบข้อมูล</div>
               <div>{rows.length===0 ? "ยังไม่มีทรัพย์สินในทะเบียน" : "ลองเปลี่ยนเงื่อนไขการค้นหา"}</div>
@@ -4264,7 +4722,22 @@ function DeliveryOrders({user}){
   const [err,setErr] = React.useState("");
   const [q,setQ] = React.useState("");
   const [view,setView] = React.useState(null);
+  const [edit,setEdit] = React.useState(null);
   const [transferOpen,setTransferOpen] = React.useState(false);
+
+  const saveEdit = async (doc, patch) => {
+    const res = await window.api("updateDeliveryOrder",{key:doc.key, patch, by:user.name, adjustStock:true});
+    const upd = rows.map(x=>x.key===doc.key?{...x,...patch}:x);
+    window.__DATA.deliveryOrders = upd; setRows(upd);
+    window.__DATA.assetRegistry = null;   // ให้หน้าทะเบียนทรัพย์สินโหลดสต๊อกใหม่หลังปรับ
+    setEdit(null);
+    const warns = (res && res.warnings) || [];
+    if(warns.length){
+      Swal.fire({icon:"warning",title:"บันทึกแล้ว · แต่มีบางรายการที่ปรับสต๊อกไม่ได้",html:"<div style='text-align:left;font-size:13px'>"+warns.map(w=>"• "+w).join("<br/>")+"</div>",confirmButtonColor:"#1E40AF"});
+    }else{
+      Swal.fire({icon:"success",title:"บันทึกและปรับสต๊อกแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }
+  };
 
   React.useEffect(()=>{
     if(rows) return;
@@ -4338,6 +4811,7 @@ function DeliveryOrders({user}){
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
                 <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
                 {canEdit && <td><div className="row-actions">
+                  <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEdit(d)}><i className="fa-solid fa-pen"></i></button>
                   <button className="ia danger" title="ลบใบส่งของ" onClick={()=>remove(d)}><i className="fa-solid fa-trash"></i></button>
                 </div></td>}
               </tr>
@@ -4351,18 +4825,20 @@ function DeliveryOrders({user}){
         </table>
       </div>
     </div>
-    {view && <DeliveryOrderView doc={view} onClose={()=>setView(null)}/>}
+    {view && <DeliveryOrderView doc={view} onClose={()=>setView(null)} onEdit={canEdit?(d)=>{setView(null);setEdit(d);}:null}/>}
+    {edit && <DeliveryOrderEdit doc={edit} onClose={()=>setEdit(null)} onSave={saveEdit}/>}
     {transferOpen && <TransferAssetsModal user={user} onClose={()=>setTransferOpen(false)} onSaved={()=>{ setTransferOpen(false); setRows(null); }}/>}
     </>
   );
 }
 
-function DeliveryOrderView({doc,onClose}){
+function DeliveryOrderView({doc,onClose,onEdit}){
   return (
     <Modal open={true} onClose={onClose} size="lg"
       title={<><i className="fa-solid fa-file-export" style={{color:"var(--primary)",marginRight:8}}></i>ใบส่งของ <span className="ticket-id" style={{marginLeft:6}}>{doc.docNo||doc.key}</span></>}
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
+        {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(doc)} style={{color:"#1E40AF"}}><i className="fa-solid fa-pen"></i> แก้ไขข้อมูล</button>}
         <button className="btn btn-primary" onClick={()=>window.downloadDeliveryOrderPdf(doc)}><i className="fa-solid fa-file-pdf"></i> ดาวน์โหลด PDF</button>
       </>}>
       <div className="detail-grid" style={{marginBottom:14}}>
@@ -4386,6 +4862,92 @@ function DeliveryOrderView({doc,onClose}){
                 <td style={{color:"var(--muted)"}}>{it.from||"—"}</td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+function DeliveryOrderEdit({doc,onClose,onSave}){
+  const toDateStr = (d)=>{ if(!d) return ""; if(/^\d{4}-\d{2}-\d{2}/.test(String(d))) return String(d).slice(0,10); const dt=new Date(d); return isNaN(dt)?"":dt.toISOString().slice(0,10); };
+  const [f,setF] = React.useState({
+    docNo: doc.docNo||"",
+    docDate: toDateStr(doc.docDate || doc.when),
+    fromProjectLabel: doc.fromProjectLabel||"",
+    toProject: doc.toProject||"",
+    sender: doc.sender||"",
+    receiver: doc.receiver||"",
+    note: doc.note||"",
+  });
+  const [items,setItems] = React.useState(()=>(doc.items||[]).map(it=>({...it})));
+  const [saving,setSaving] = React.useState(false);
+  const set = (k,v)=>setF(prev=>({...prev,[k]:v}));
+  const setItem = (i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
+
+  const submit = async () => {
+    if(!String(f.docNo||"").trim()){ Swal.fire({icon:"warning",title:"กรุณากรอกเลขที่ใบส่งของ"}); return; }
+    const patch = {
+      docNo: f.docNo.trim(),
+      docDate: f.docDate,
+      fromProjectLabel: f.fromProjectLabel,
+      toProject: f.toProject,
+      sender: f.sender,
+      receiver: f.receiver,
+      note: f.note,
+      items: items.map(it=>({...it, name: it.name, quantity: Number(it.quantity)||0, unit: it.unit||""})),
+    };
+    const changedQty = (doc.items||[]).some((oi,i)=>(Number(oi.quantity)||0)!==(Number((items[i]||{}).quantity)||0));
+    if(changedQty){
+      const { isConfirmed } = await Swal.fire({
+        title:"ยืนยันปรับสต๊อกตามจำนวนใหม่?",
+        text:"ระบบจะย้ายส่วนต่างของจำนวนระหว่างโครงการต้นทางและปลายทางให้ตรงกับใบส่งของ",
+        icon:"question", showCancelButton:true, confirmButtonText:"ใช่, บันทึกและปรับสต๊อก", cancelButtonText:"ยกเลิก", confirmButtonColor:"#1E40AF"
+      });
+      if(!isConfirmed) return;
+    }
+    setSaving(true);
+    try{
+      await onSave(doc, patch);
+    }catch(e){
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:e.message});
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className="fa-solid fa-pen" style={{color:"var(--primary)",marginRight:8}}></i>แก้ไขใบส่งของ <span className="ticket-id" style={{marginLeft:6}}>{doc.docNo||doc.key}</span></>}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={submit} disabled={saving}><i className="fa-solid fa-floppy-disk"></i> {saving?"กำลังบันทึก...":"บันทึกการแก้ไข"}</button>
+      </>}>
+      <div className="form-grid">
+        <div className="form-field"><label>เลขที่ใบส่งของ</label><input value={f.docNo} onChange={e=>set("docNo",e.target.value)} /></div>
+        <div className="form-field"><label>วันที่</label><input type="date" value={f.docDate} onChange={e=>set("docDate",e.target.value)} /></div>
+        <div className="form-field"><label>จากโครงการ</label><input value={f.fromProjectLabel} onChange={e=>set("fromProjectLabel",e.target.value)} placeholder="เช่น [PRJ-A1] โรงงาน A" /></div>
+        <div className="form-field"><label>ไปยังโครงการ</label><input value={f.toProject} onChange={e=>set("toProject",e.target.value)} /></div>
+        <div className="form-field"><label>ผู้ส่งมอบ</label><input value={f.sender} onChange={e=>set("sender",e.target.value)} /></div>
+        <div className="form-field"><label>ผู้รับมอบ</label><input value={f.receiver} onChange={e=>set("receiver",e.target.value)} /></div>
+        <div className="form-field full"><label>หมายเหตุ</label><textarea className="inp" rows={2} value={f.note} onChange={e=>set("note",e.target.value)} /></div>
+      </div>
+      <div style={{marginTop:16,fontWeight:500,fontSize:14,display:"flex",alignItems:"center",gap:8}}>
+        <i className="fa-solid fa-boxes-stacked" style={{color:"var(--primary)"}}></i>รายการในใบส่งของ ({items.length})
+      </div>
+      <div className="hint" style={{margin:"4px 0 10px",color:"#B45309"}}><i className="fa-solid fa-triangle-exclamation" style={{marginRight:5}}></i>การแก้ "จำนวน" จะปรับสต๊อกทรัพย์สินตามส่วนต่าง (ย้ายเพิ่ม/คืนระหว่างต้นทาง-ปลายทาง) และบันทึกลงประวัติการย้าย · จับคู่ด้วยรหัสทรัพย์สิน รายการที่ไม่มีรหัสจะปรับสต๊อกให้ไม่ได้</div>
+      <div className="table-wrap">
+        <table className="data" style={{fontSize:13}}>
+          <thead><tr><th>รหัส</th><th>รายการ</th><th style={{width:110}}>จำนวน</th><th style={{width:110}}>หน่วย</th></tr></thead>
+          <tbody>
+            {items.map((it,i)=>(
+              <tr key={i}>
+                <td style={{whiteSpace:"nowrap"}}>{it.assetCode ? <span className="ticket-id">{it.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
+                <td><input className="inp" value={it.name||""} onChange={e=>setItem(i,"name",e.target.value)} /></td>
+                <td><input className="inp" type="number" min="0" value={it.quantity} onChange={e=>setItem(i,"quantity",e.target.value)} /></td>
+                <td><input className="inp" value={it.unit||""} onChange={e=>setItem(i,"unit",e.target.value)} placeholder="เช่น ชิ้น" /></td>
+              </tr>
+            ))}
+            {items.length===0 && (<tr><td colSpan="4"><div className="empty" style={{padding:20}}><div className="t" style={{fontSize:13}}>ไม่มีรายการ</div></div></td></tr>)}
           </tbody>
         </table>
       </div>
