@@ -28,6 +28,10 @@ const FOLDER_ID      = '1jZPV5NDh374VMnm4H_hOLkA6tWArjIQW';
 const PJ2_FOLDER_ID  = '1VmAbHD3wktQ0vqcpixnDXGVf4mWwXqiD';
 // Drive folder สำหรับเอกสารประกัน (PL)
 const PL_FOLDER_ID   = '1xNxRoBKbjvu-bVl-C8_Rin2etfFEcSuD';
+// Drive folder สำหรับรูปภาพประกอบใบแจ้งซ่อม
+const REPAIR_PHOTO_FOLDER_ID = '1pKk6d1dGdw1637D2ZjbZiHF9hdBbpy_5';
+// Drive folder สำหรับรูปอะไหล่ (รายรายการในใบประเมิน)
+const PART_PHOTO_FOLDER_ID   = '1Br_yEp-N2kN2TQep87UuEcMyd3hf1EXW';
 
 // map แต่ละ tab ไปยัง spreadsheet ที่ต้องการ
 const TAB_SHEET = {
@@ -451,6 +455,14 @@ const ACTIONS = {
     return { urls };
   },
 
+  // อัปโหลดรูปประกอบใบแจ้งซ่อมไป Drive แล้วคืน URL (เก็บ URL ใน Firebase ฝั่ง frontend)
+  uploadRepairPhoto: ({ running, upload }) =>
+    uploadPhotoToFolder_(REPAIR_PHOTO_FOLDER_ID, 'repair', running, upload),
+
+  // อัปโหลดรูปอะไหล่ (รายรายการในใบประเมิน) ไป Drive แล้วคืน URL
+  uploadPartPhoto: ({ running, upload }) =>
+    uploadPhotoToFolder_(PART_PHOTO_FOLDER_ID, 'part', running, upload),
+
   uploadPJ2Document: ({ machineId, machineCode, slot, upload }) => {
     if (!upload || !upload.data) throw new Error('Missing upload data');
     const isPL = String(slot || '').toUpperCase() === 'PL';
@@ -548,6 +560,34 @@ function getPLRootFolder_() {
   const it = DriveApp.getRootFolder().getFoldersByName(name);
   return it.hasNext() ? it.next() : DriveApp.createFolder(name);
 }
+/**
+ * อัปโหลดรูปไปโฟลเดอร์ Drive ที่กำหนด แล้วคืน { url, id, name, sharing }
+ * - ถ้าเข้าโฟลเดอร์เป้าหมายไม่ได้ (สิทธิ์) จะ fallback ไป FOLDER_ID
+ * - ถ้ามี tag (เช่นเลขที่ใบแจ้งซ่อม) จะจัดเก็บในซับโฟลเดอร์ตาม tag
+ */
+function uploadPhotoToFolder_(folderId, prefix, tag, upload) {
+  if (!upload || !upload.data) throw new Error('Missing upload data');
+  var root;
+  try { root = DriveApp.getFolderById(folderId); }
+  catch (err) { root = DriveApp.getFolderById(FOLDER_ID); }
+  var folder = root;
+  if (tag) {
+    var sub = String(tag).replace(/[\\/:*?"<>|#%{}]/g, '-');
+    var it = root.getFoldersByName(sub);
+    folder = it.hasNext() ? it.next() : root.createFolder(sub);
+  }
+  var safeName = (prefix + '-' + (upload.name || Date.now()))
+    .replace(/[\\/:*?"<>|#%{}]/g, '-');
+  var blob = Utilities.newBlob(
+    Utilities.base64Decode(upload.data),
+    upload.mimeType || 'application/octet-stream',
+    safeName
+  );
+  var file = folder.createFile(blob);
+  var sharing = safeShareFile_(file);
+  return { url: file.getUrl(), id: file.getId(), name: file.getName(), sharing };
+}
+
 function safeShareFile_(file) {
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);

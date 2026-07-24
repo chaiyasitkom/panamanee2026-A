@@ -754,6 +754,14 @@ async function api(action, payload = {}) {
       return callAppsScript('uploadPJ2Document', payload);
     }
 
+    case 'uploadRepairPhoto': {
+      return callAppsScript('uploadRepairPhoto', payload);
+    }
+
+    case 'uploadPartPhoto': {
+      return callAppsScript('uploadPartPhoto', payload);
+    }
+
     case 'createRepair': {
       const { repair } = payload;
       if (!repair.id) repair.id = await _nextId('repairs', 'R', 4);
@@ -767,7 +775,7 @@ async function api(action, payload = {}) {
       repair.createdAt = repair.createdAt || new Date().toISOString();
       repair.updatedAt = new Date().toISOString();
       repair.status = repair.status || 'new';
-      repair.photos = [];
+      repair.photos = Array.isArray(repair.photos) ? repair.photos.filter(Boolean).slice(0, 5) : [];
       const tlKey = _db.ref('/repairs/' + repair.id + '/timeline').push().key;
       repair.timeline = {
         [tlKey]: { id: tlKey, status: 'new', when: new Date().toISOString(), by: repair.reporterName || '', note: 'แจ้งเข้าระบบ' }
@@ -863,6 +871,129 @@ async function api(action, payload = {}) {
       return { deleted: true };
     }
 
+    // ยกเลิกใบส่งของ (DO) — เก็บเอกสารไว้เป็นหลักฐาน แต่ตีตราว่ายกเลิกแล้ว
+    // restoreStock=true  : คืนทรัพย์สินทุกรายการกลับโครงการต้นทาง (ย้อนรายการย้ายทั้งใบ)
+    // restoreStock=false : ยกเลิกเฉพาะเอกสาร ไม่แตะสต๊อก (ใช้เมื่อของถูกย้ายกลับด้วยวิธีอื่นแล้ว)
+    // ตรวจจำนวนให้พอก่อนเสมอ ถ้าไม่พอจะยกเลิกทั้งใบ (ไม่เขียนบางส่วน)
+    case 'cancelDeliveryOrder': {
+      const { key, by, reason, restoreStock } = payload;
+      if (!key) throw new Error('ไม่พบรหัสใบส่งของ');
+      const when = new Date().toISOString();
+      const [doSnap, aSnap] = await Promise.all([
+        _assetDb.ref('/deliveryOrders/' + key).get(),
+        _assetDb.ref('/assets').get(),
+      ]);
+      const old = doSnap.val();
+      if (!old) throw new Error('ไม่พบใบส่งของนี้ (อาจถูกลบไปแล้ว)');
+      if (old.cancelled) throw new Error('ใบส่งของนี้ถูกยกเลิกไปแล้ว');
+      const updates = {};
+      const warnings = [];
+      let restoredSummary = [];
+
+      if (restoreStock) {
+        const assets = aSnap.val() || {};
+        const toArr = (v) => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : []);
+        const items = toArr(old.items);
+        const destSite = old.toProject || '';
+        const docNo = old.docNo || '';
+        const curQty = {};
+        const getQty = (k) => (curQty[k] !== undefined ? curQty[k] : (Number((assets[k] || {}).quantity) || 0));
+        const histAdd = {};
+        const pushHist = (k, e) => { (histAdd[k] = histAdd[k] || []).push(e); };
+        const newAssets = {};
+        const siteBack = {};    // แถวที่ต้องย้าย site กลับ (กรณีย้ายทั้งรายการ)
+        const dropKeys = {};    // แถวที่แตกออกตอนย้ายบางส่วน — คืนหมดแล้วต้องลบทิ้ง ไม่ให้เหลือแถวจำนวน 0
+        const findAsset = (code, site) => Object.keys(assets).find((k) => {
+          const a = assets[k] || {};
+          return String(a.assetCode || a.id || '') === String(code) && String(a.site || '') === String(site);
+        });
+        const restored = [];
+
+        items.forEach((it, i) => {
+          const need = Number(it.quantity) || 0;
+          if (need <= 0) return;
+          const code = it.assetCode || '';
+          const srcSite = it.from || '';
+          const srcKey = it.key || '';
+          const label = it.name || code || ('รายการที่ ' + (i + 1));
+          if (srcSite && srcSite === destSite) { warnings.push(label + ': ต้นทางกับปลายทางเป็นโครงการเดียวกัน จึงไม่ต้องคืน'); return; }
+          if (!srcSite) { warnings.push(label + ': ไม่ทราบโครงการต้นทาง จึงคืนของให้อัตโนมัติไม่ได้'); return; }
+          const hist = { from: destSite, to: srcSite, when, by: by || '', note: 'คืนจากการยกเลิกใบส่งของ', docNo, qty: need, adjust: true, cancel: true };
+
+          if (!it.partial) {
+            // ย้ายทั้งรายการ: ตอนย้ายแค่เปลี่ยน site ของแถวเดิม → ยกเลิกคือเปลี่ยน site กลับ (ห้ามตัด/สร้างแถวใหม่)
+            const k = (srcKey && assets[srcKey]) ? srcKey : (code ? findAsset(code, destSite) : null);
+            if (!k) { warnings.push(`${label}: ไม่พบแถวทรัพย์สินเดิมในทะเบียน จึงคืนให้อัตโนมัติไม่ได้`); return; }
+            const nowSite = String((assets[k] || {}).site || '');
+            if (nowSite !== String(destSite)) {
+              warnings.push(`${label}: ขณะนี้อยู่ที่ "${nowSite || '-'}" ไม่ใช่ "${destSite}" (อาจถูกย้ายต่อไปแล้ว) จึงไม่คืนให้อัตโนมัติ`);
+              return;
+            }
+            siteBack[k] = srcSite;
+            pushHist(k, hist);
+            restored.push({ key: k, code, name: label, qty: need, to: srcSite, mode: 'site' });
+          } else {
+            // ย้ายบางส่วน: ตอนย้ายตัดจำนวนต้นทางลง + แตกแถวใหม่ที่ปลายทาง → ยกเลิกคือคืนจำนวนเข้าแถวต้นทาง แล้วลด/ลบแถวที่แตกออก
+            const dk = Object.keys(assets).find((k) => {
+              const a = assets[k] || {};
+              return String(a.splitFrom || '') === String(srcKey) && String(a.site || '') === String(destSite);
+            }) || (code ? findAsset(code, destSite) : null);
+            if (!dk) { warnings.push(`${label}: ไม่พบทรัพย์สินที่ ${destSite || '-'} จึงคืนของกลับต้นทางไม่ได้`); return; }
+            const have = getQty(dk);
+            if (have < need) throw new Error(`จำนวนที่ ${destSite} ไม่พอคืนสำหรับ ${code || label} (มี ${have}, ต้องคืน ${need}) — ตรวจสอบสต๊อกก่อนยกเลิก`);
+            curQty[dk] = have - need;
+            if (curQty[dk] === 0 && (assets[dk] || {}).splitFrom) dropKeys[dk] = true;   // แถวที่แตกออกมาโดยเฉพาะ คืนหมดแล้วลบทิ้ง
+            else pushHist(dk, { ...hist, splitOut: need });
+
+            const sk = (srcKey && assets[srcKey] && String(assets[srcKey].site || '') === String(srcSite))
+              ? srcKey : (code ? findAsset(code, srcSite) : null);
+            if (sk) {
+              curQty[sk] = getQty(sk) + need;
+              pushHist(sk, { ...hist, note: 'รับคืนจากการยกเลิกใบส่งของ' });
+              restored.push({ key: sk, code, name: label, qty: need, to: srcSite, mode: 'qty' });
+            } else {
+              const base = assets[dk] || { assetCode: code, name: it.name || '', unit: it.unit || '', brand: it.brand || '', model: it.model || '', serial: it.serial || '' };
+              const nk = _assetDb.ref('/assets').push().key;
+              const { splitFrom, ...cleanBase } = base;
+              newAssets[nk] = { ...cleanBase, quantity: need, site: srcSite, updatedAt: when, transferHistory: [{ ...hist, note: 'สร้างคืนจากการยกเลิกใบส่งของ' }] };
+              restored.push({ key: nk, code, name: label, qty: need, to: srcSite, mode: 'new' });
+            }
+          }
+        });
+
+        Object.keys(curQty).forEach((k) => {
+          if (dropKeys[k]) return;
+          updates['/assets/' + k + '/quantity'] = curQty[k];
+          updates['/assets/' + k + '/updatedAt'] = when;
+        });
+        Object.keys(siteBack).forEach((k) => {
+          updates['/assets/' + k + '/site'] = siteBack[k];
+          updates['/assets/' + k + '/updatedAt'] = when;
+        });
+        Object.keys(histAdd).forEach((k) => {
+          if (dropKeys[k]) return;
+          const cur = Array.isArray(assets[k] && assets[k].transferHistory) ? assets[k].transferHistory.slice() : [];
+          updates['/assets/' + k + '/transferHistory'] = cur.concat(histAdd[k]);
+        });
+        Object.keys(newAssets).forEach((k) => { updates['/assets/' + k] = newAssets[k]; });
+        Object.keys(dropKeys).forEach((k) => { updates['/assets/' + k] = null; });   // ลบแถวที่แตกออกมาแล้วคืนหมด
+
+        restoredSummary = restored;
+      }
+
+      const mark = {
+        cancelled: true,
+        cancelledAt: when,
+        cancelledBy: by || '',
+        cancelReason: reason || '',
+        stockRestored: !!restoreStock,
+      };
+      Object.keys(mark).forEach((kk) => { updates['/deliveryOrders/' + key + '/' + kk] = mark[kk]; });
+
+      await _assetDb.ref().update(updates);
+      return { ok: true, warnings, restored: restoredSummary, ...mark };
+    }
+
     // แก้ไขข้อมูลใบส่งของ (DO)
     // adjustStock=false : แก้เฉพาะข้อมูลบนเอกสาร ไม่กระทบสต๊อก
     // adjustStock=true  : แก้จำนวนแล้วปรับสต๊อกทรัพย์สินตามส่วนต่าง (ต้นทาง<->ปลายทาง) ในทรานแซกชันเดียว
@@ -882,6 +1013,7 @@ async function api(action, payload = {}) {
           _assetDb.ref('/assets').get(),
         ]);
         const old = doSnap.val() || {};
+        if (old.cancelled) throw new Error('ใบส่งของนี้ถูกยกเลิกแล้ว จึงแก้ไขจำนวนไม่ได้');
         const assets = aSnap.val() || {};
         const toArr = (v) => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : []);
         const oldItems = toArr(old.items);
@@ -1170,6 +1302,24 @@ function Avatar({name,size=28}){
   const bg = window.avatarColor(name);
   return <span className="avatar-xs" style={{background:bg,width:size,height:size}}>{window.initials(name)}</span>;
 }
+// อาการ/ปัญหาในตาราง — หนึ่งอาการต่อหนึ่งบรรทัด · ข้อความยาวตัดขึ้นบรรทัดใหม่แทนที่จะล้นหรือถูกตัดหาย
+// (r.title เก็บหลายอาการคั่นด้วย \n ซึ่ง HTML จะยุบเป็นช่องว่างถ้าไม่แยกบรรทัดให้)
+function ProblemLines({title,max=0}){
+  const list = String(title||"").split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!list.length) return <span style={{color:"var(--muted)"}}>—</span>;
+  const shown = max>0 ? list.slice(0,max) : list;
+  return (
+    <div style={{display:"grid",gap:3}}>
+      {shown.map((t,i)=>(
+        <div key={i} style={{display:"flex",gap:5,alignItems:"baseline",lineHeight:1.4,overflowWrap:"anywhere",wordBreak:"break-word"}}>
+          {list.length>1 && <span style={{color:"var(--muted)",fontSize:11.5,flexShrink:0}}>{i+1}.</span>}
+          <span style={{flex:1,minWidth:0}}>{t}</span>
+        </div>
+      ))}
+      {shown.length<list.length && <div style={{color:"var(--muted)",fontSize:11.5}}>+ อีก {list.length-shown.length} อาการ</div>}
+    </div>
+  );
+}
 // ชื่อโครงการ + รหัสโครงการ (รหัสเดียวกับที่ใช้ออกเลขที่ใบแจ้งซ่อม)
 function ProjectLabel({name}){
   const code = window.getProjectCode(name);
@@ -1382,6 +1532,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const adminNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
+    { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
@@ -1390,6 +1541,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
+    { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   const reporterNav = [
@@ -1862,7 +2014,7 @@ function Dashboard({user,goTo}){
                 {recent.map(r=>(
                   <tr key={r.id}>
                     <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDashDetail(r)}>{r.running}</span></td>
-                    <td><div className="cell-title">{r.title}</div></td>
+                    <td><div className="cell-title"><ProblemLines title={r.title} max={4}/></div></td>
                     <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                     <td><Badge status={r.status}/></td>
                     <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
@@ -2070,7 +2222,7 @@ function Repairs({user}){
                   <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDetail(r)}>{r.running}</span></td>
                   <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
                   <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
-                  <td><div className="cell-title">{r.title}<div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
+                  <td><div className="cell-title"><ProblemLines title={r.title} max={4}/><div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
                   <td style={{fontSize:13}}><ProjectLabel name={r.project}/></td>
                   <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
@@ -2169,7 +2321,9 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
           <tbody>
             {r.parts.map((p,i)=>(
               <tr key={i} style={{borderBottom:i<r.parts.length-1?"1px solid var(--line-soft)":""}}>
-                <td style={{padding:"9px 14px",fontWeight:500}}>{p.name}</td>
+                <td style={{padding:"9px 14px",fontWeight:500}}>{p.name}
+                  {Array.isArray(p.photos)&&p.photos.filter(Boolean).length>0 && <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap"}}>{p.photos.filter(Boolean).map((url,pi)=><PhotoThumb key={pi} url={url} size={40} />)}</div>}
+                </td>
                 <td style={{padding:"9px 12px",color:"var(--muted)",fontSize:12}}>{p.supplier||<span style={{opacity:.45}}>—</span>}</td>
                 <td style={{padding:"9px 10px",textAlign:"center",color:"var(--muted)"}}>{p.qty}</td>
                 <td style={{padding:"9px 12px",textAlign:"right",color:"var(--muted)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.unitPrice||0).toLocaleString()}</td>
@@ -2184,6 +2338,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
           <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString()}</span>
         </div>}
       </div>}
+
+      {Array.isArray(r.photos) && r.photos.filter(Boolean).length>0 && <div className="detail-grid" style={{marginTop:18}}><PhotoGallery photos={r.photos} /></div>}
 
       <div className="timeline">
         <div style={{fontWeight:500,marginBottom:12,fontSize:14}}><i className="fa-solid fa-timeline" style={{color:"var(--primary)",marginRight:6}}></i>ประวัติการดำเนินการ</div>
@@ -2272,7 +2428,7 @@ window.buildRepairFormDoc = function(r, user){
     + ".dot{border-bottom:1px dotted #000;min-height:16px;padding:0 4px;text-align:center;display:inline-block}"
     + ".f1{flex:1;min-width:70px}.f2{flex:2;min-width:120px}.w180{width:180px}.w120{width:120px}.fwide{flex:1;min-width:300px}"
     + ".box{border:1.5px solid #000;margin:10px 0}.box-hd{text-align:center;font-weight:700;border-bottom:1.5px solid #000;padding:5px;background:#f2f2f2}"
-    + ".rt{width:100%;border-collapse:collapse}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center}.rt .c-item{width:64%}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px}"
+    + ".rt{width:100%;border-collapse:collapse;table-layout:fixed}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px;word-break:break-word;overflow-wrap:anywhere}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center;vertical-align:top}.rt .c-item{width:64%;white-space:pre-wrap;line-height:1.45}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px;vertical-align:top}"
     + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}"
     + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}"
     + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}"
@@ -2390,31 +2546,63 @@ window.__showShareSheet = function(r, blob, dataUrl, file, fname){
   };
 };
 
+// ช่องกรอกอาการ/ปัญหา — หนึ่งบรรทัดต่อหนึ่งอาการ (เก็บเป็นข้อความคั่นด้วย \n)
+// ช่องยืดลงเองเมื่อข้อความยาวเกินความกว้าง · Enter = ขึ้นอาการใหม่ · วางข้อความหลายบรรทัด = แตกเป็นหลายอาการ
 function ProblemsField({value,onChange,disabled,placeholder}){
   const list = (value && value.length) ? value.split("\n") : [""];
+  const refs = React.useRef([]);
+  const focusNext = React.useRef(null);
   const commit = (arr)=>onChange(arr.join("\n"));
-  const setAt = (i,v)=>{ const a=list.slice(); a[i]=v; commit(a); };
-  const add = ()=>commit(list.concat([""]));
-  const removeAt = (i)=>{ const a=list.filter((_,idx)=>idx!==i); commit(a.length?a:[""]); };
+  const fit = (el)=>{ if(!el) return; el.style.height="auto"; el.style.height=el.scrollHeight+"px"; };
+  React.useLayoutEffect(()=>{
+    refs.current.forEach(fit);
+    if(focusNext.current!==null){
+      const el = refs.current[focusNext.current];
+      if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      focusNext.current = null;
+    }
+  });
+  const setAt = (i,v)=>{
+    const parts = String(v).split(/\r?\n/);      // วางข้อความหลายบรรทัด → แตกเป็นหลายอาการ
+    const a = list.slice();
+    a.splice(i, 1, ...parts);
+    if(parts.length>1) focusNext.current = i + parts.length - 1;
+    commit(a);
+  };
+  const addAfter = (i)=>{ const a=list.slice(); a.splice(i+1,0,""); focusNext.current=i+1; commit(a); };
+  const add = ()=>{ focusNext.current=list.length; commit(list.concat([""])); };
+  const removeAt = (i)=>{ const a=list.filter((_,idx)=>idx!==i); refs.current.splice(i,1); commit(a.length?a:[""]); };
+  const taSt = {flex:1,width:"100%",padding:"9px 11px",border:"1px solid var(--line)",borderRadius:8,fontFamily:"Kanit",fontSize:13.5,lineHeight:1.5,background:"#fff",
+    resize:"none",overflow:"hidden",minHeight:38,display:"block",outline:"none"};
   return (
     <div style={{display:"grid",gap:8}}>
       {list.map((p,i)=>(
-        <div key={i} style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{width:20,textAlign:"right",color:"var(--muted)",fontSize:13,flexShrink:0}}>{i+1}.</span>
-          <input className="inp" style={{flex:1}} value={p} disabled={disabled} onChange={e=>setAt(i,e.target.value)} placeholder={placeholder||"เช่น มอเตอร์ไหม้ ใช้งานไม่ได้"} />
-          <button type="button" className="ia" title="ลบอาการนี้" disabled={disabled||list.length<=1} onClick={()=>removeAt(i)} style={{color:"#EF4444",opacity:(disabled||list.length<=1)?0.35:1,flexShrink:0}}><i className="fa-solid fa-trash"></i></button>
+        <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+          <span style={{width:20,textAlign:"right",color:"var(--muted)",fontSize:13,flexShrink:0,paddingTop:10}}>{i+1}.</span>
+          <textarea
+            ref={el=>{ refs.current[i]=el; fit(el); }}
+            rows={1} style={taSt} value={p} disabled={disabled}
+            onChange={e=>setAt(i,e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter" && !e.shiftKey && !e.nativeEvent.isComposing){ e.preventDefault(); addAfter(i); } }}
+            onFocus={e=>{ e.target.style.borderColor="var(--primary)"; e.target.style.boxShadow="0 0 0 3px rgba(30,64,175,.1)"; }}
+            onBlur={e=>{ e.target.style.borderColor="var(--line)"; e.target.style.boxShadow="none"; }}
+            placeholder={placeholder||"เช่น มอเตอร์ไหม้ ใช้งานไม่ได้"} />
+          <button type="button" className="ia" title="ลบอาการนี้" disabled={disabled||list.length<=1} onClick={()=>removeAt(i)} style={{color:"#EF4444",opacity:(disabled||list.length<=1)?0.35:1,flexShrink:0,marginTop:2}}><i className="fa-solid fa-trash"></i></button>
         </div>
       ))}
-      <div><button type="button" className="btn btn-ghost btn-sm" disabled={disabled} onClick={add}><i className="fa-solid fa-plus"></i> เพิ่มอาการ</button></div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={disabled} onClick={add}><i className="fa-solid fa-plus"></i> เพิ่มอาการ</button>
+        <span style={{fontSize:11.5,color:"var(--muted)"}}>ข้อความยาวจะขึ้นบรรทัดใหม่ในช่องเดิม · กด Enter เพื่อขึ้นอาการถัดไป</span>
+      </div>
     </div>
   );
 }
 
 function EditRepairModal({r,onClose,onSave}){
   const toDateStr = (d) => { if(!d) return ""; const dt = typeof d==="string"?new Date(d):d; return dt.toISOString().slice(0,10); };
-  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||"",createdAt:toDateStr(r.createdAt)});
+  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||"",photos:Array.isArray(r.photos)?r.photos.filter(Boolean):[],createdAt:toDateStr(r.createdAt)});
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
-  const submit = () => { const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n"); const existing = window.getProblems(r); const problems = title.split("\n").filter(Boolean).map((t,i)=>({text:t, status:(existing[i]&&existing[i].status)||r.status||"new"})); const patch = {...f, title, problems, cost: f.cost===""?"":Number(f.cost)||0, createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt}; onSave(r, patch); };
+  const submit = () => { const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n"); const existing = window.getProblems(r); const problems = title.split("\n").filter(Boolean).map((t,i)=>({text:t, status:(existing[i]&&existing[i].status)||r.status||"new"})); const patch = {...f, title, problems, photos:(f.photos||[]).filter(Boolean).slice(0,5), cost: f.cost===""?"":Number(f.cost)||0, createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt}; onSave(r, patch); };
   const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin","Engineer"].includes(u.role));
   return (
     <Modal open={true} onClose={onClose} size="lg"
@@ -2427,6 +2615,7 @@ function EditRepairModal({r,onClose,onSave}){
         <div style={{gridColumn:"1 / -1"}}><label className="k">อาการ/ปัญหา</label><ProblemsField value={f.title} onChange={v=>set("title",v)} /></div>
         <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียดปัญหา</label><textarea className="inp" rows="2" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
         <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>
+        <div style={{gridColumn:"1 / -1"}}><label className="k"><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพประกอบ <span style={{fontWeight:400,color:"var(--muted)"}}>(สูงสุด 5 รูป)</span></label><PhotosField value={f.photos} onChange={v=>set("photos",v)} uploadContext={{running:r.running}} /></div>
         <div><label className="k">เลขที่ไซต์งาน</label><input className="inp" value={f.siteId} onChange={e=>set("siteId",e.target.value)} /></div>
         <div><label className="k">รหัสเครื่องจักร</label>
           <input className="inp" list="edit-machine-dl" value={f.machineCode} onChange={e=>{const code=e.target.value;const m=(window.__DATA.machines||[]).find(x=>x.code===code);setF(p=>({...p,machineCode:code,...(m&&!p.project?{project:m.project||""}:{})}));}} placeholder="พิมพ์หรือเลือกรหัสเครื่องจักร..." />
@@ -2446,12 +2635,12 @@ function EditRepairModal({r,onClose,onSave}){
 }
 function AssessModal({r, onClose, onSave, mode="assess"}){
   const initParts = (r.parts && r.parts.length>0)
-    ? r.parts.map(p=>({name:p.name||"",qty:p.qty||1,unitPrice:p.unitPrice||0,supplier:p.supplier||""}))
-    : [{name:"",qty:1,unitPrice:0,supplier:""}];
+    ? r.parts.map(p=>({name:p.name||"",qty:p.qty||1,unitPrice:p.unitPrice||0,supplier:p.supplier||"",photos:Array.isArray(p.photos)?p.photos.filter(Boolean):[]}))
+    : [{name:"",qty:1,unitPrice:0,supplier:"",photos:[]}];
   const [parts,setParts] = React.useState(initParts);
   const [laborCost,setLaborCost] = React.useState(r.laborCost||"");
 
-  const addPart = () => setParts(p=>[...p,{name:"",qty:1,unitPrice:0,supplier:""}]);
+  const addPart = () => setParts(p=>[...p,{name:"",qty:1,unitPrice:0,supplier:"",photos:[]}]);
   const removePart = (i) => setParts(p=>p.filter((_,idx)=>idx!==i));
   const upPart = (i,k,v) => setParts(p=>{ const a=[...p]; a[i]={...a[i],[k]:v}; return a; });
 
@@ -2462,7 +2651,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
   const inStyle = {width:"100%",padding:"7px 10px",border:"1px solid var(--line)",borderRadius:7,fontFamily:"Kanit",fontSize:13,outline:"none",background:"#fff"};
 
   const submit = () => {
-    const cleanParts = parts.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(),qty:Number(p.qty)||1,unitPrice:Number(p.unitPrice)||0,total:(Number(p.qty)||1)*(Number(p.unitPrice)||0),supplier:p.supplier.trim()}));
+    const cleanParts = parts.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(),qty:Number(p.qty)||1,unitPrice:Number(p.unitPrice)||0,total:(Number(p.qty)||1)*(Number(p.unitPrice)||0),supplier:p.supplier.trim(),photos:(p.photos||[]).filter(Boolean).slice(0,2)}));
     onSave(r,{parts:cleanParts,laborCost:Number(laborCost)||0,cost:total});
   };
 
@@ -2492,6 +2681,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
                 <th style={{padding:"9px 8px",textAlign:"center",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:72}}>จำนวน</th>
                 <th style={{padding:"9px 10px",textAlign:"right",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:130}}>ราคา/หน่วย (฿)</th>
                 <th style={{padding:"9px 12px",textAlign:"right",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:100}}>รวม (฿)</th>
+                <th style={{padding:"9px 10px",textAlign:"left",fontWeight:500,color:"var(--muted)",fontSize:12,borderBottom:"1px solid var(--line)",width:120}}>รูป (สูงสุด 2)</th>
                 <th style={{width:36,borderBottom:"1px solid var(--line)"}}></th>
               </tr>
             </thead>
@@ -2512,6 +2702,9 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
                   </td>
                   <td style={{padding:"7px 12px",textAlign:"right",fontWeight:600,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>
                     {fmt((Number(p.qty)||0)*(Number(p.unitPrice)||0))}
+                  </td>
+                  <td style={{padding:"7px 10px"}}>
+                    <PartPhotosCell photos={p.photos} onChange={v=>upPart(i,"photos",v)} max={2} uploadContext={{running:r.running}} />
                   </td>
                   <td style={{padding:"4px 6px 4px 0"}}>
                     {parts.length>1 && <button className="ia danger" onClick={()=>removePart(i)} title="ลบ"><i className="fa-solid fa-xmark"></i></button>}
@@ -2821,6 +3014,166 @@ function gdriveThumb(url, sz=600){
   if(!m) m = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if(!m) return null;
   return `https://drive.google.com/thumbnail?id=${m[1]}&sz=w${sz}`;
+}
+
+// โฟลเดอร์ Google Drive ปลายทางสำหรับเก็บรูปใบแจ้งซ่อม
+window.REPAIR_PHOTOS_FOLDER = "https://drive.google.com/drive/folders/1pKk6d1dGdw1637D2ZjbZiHF9hdBbpy_5?usp=sharing";
+
+// แปลงไฟล์รูปเป็น payload base64 สำหรับส่งขึ้น Drive — ย่อขนาดรูปฝั่ง client ก่อนเพื่อความเร็ว
+window.fileToDrivePayload = async function(file, {maxDim=1600, quality=0.85}={}){
+  const isImg = /^image\//.test(file.type||"");
+  const readBase64 = ()=>new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>{ const d=String(r.result||""); res(d.includes(",")?d.split(",").pop():d); }; r.onerror=()=>rej(r.error||new Error("อ่านไฟล์ไม่สำเร็จ")); r.readAsDataURL(file); });
+  if(!isImg || typeof document==="undefined"){
+    return { name:file.name, mimeType:file.type||"application/octet-stream", data: await readBase64() };
+  }
+  try{
+    const dataUrl = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result||"")); r.onerror=()=>rej(r.error); r.readAsDataURL(file); });
+    const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error("โหลดรูปไม่ได้")); im.src=dataUrl; });
+    const scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+    const cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
+    const canvas=document.createElement("canvas"); canvas.width=cw; canvas.height=ch;
+    canvas.getContext("2d").drawImage(img,0,0,cw,ch);
+    const out=canvas.toDataURL("image/jpeg",quality);
+    const base=(file.name||"photo").replace(/\.[^.]+$/,"")+".jpg";
+    return { name:base, mimeType:"image/jpeg", data: out.split(",").pop() };
+  }catch(e){
+    // ย่อไม่สำเร็จ (เช่น HEIC) → ส่งไฟล์ดิบ
+    return { name:file.name, mimeType:file.type||"application/octet-stream", data: await readBase64() };
+  }
+};
+
+// อัปโหลดรูปหนึ่งไฟล์ไป Drive ผ่าน Apps Script แล้วคืน { url, shared }
+// shared=false = ไฟล์ขึ้น Drive แล้วแต่แชร์รายไฟล์ไม่ได้ (ต้องตั้งโฟลเดอร์เป็นสาธารณะแทน)
+window.uploadPhotoToDrive = async function(action, context, file){
+  const upload = await window.fileToDrivePayload(file);
+  const saved = await window.api(action, {...(context||{}), upload});
+  return { url: saved && saved.url, shared: !(saved && saved.sharing && saved.sharing.ok===false) };
+};
+
+// ดึง file id จากลิงก์ Google Drive
+function gdriveId(url){
+  if(!url) return null;
+  let m = String(url).match(/\/d\/([a-zA-Z0-9_-]+)/) || String(url).match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+// รูปย่อหนึ่งช่อง — placeholder อยู่ข้างหลัง · ถ้า thumbnail โหลดไม่ได้ ลองแหล่งสำรอง (lh3) ก่อนซ่อน
+function PhotoThumb({url,size=96,onRemove,index}){
+  const id = gdriveId(url);
+  const thumb = id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${Math.max(200,Math.round(size*2))}` : null;
+  const alt = id ? `https://lh3.googleusercontent.com/d/${id}=w${Math.max(200,Math.round(size*2))}` : null;
+  return (
+    <div style={{position:"relative",width:size,height:size,borderRadius:10,overflow:"hidden",border:"1px solid var(--line)",background:"var(--bg)",flexShrink:0}}>
+      <a href={url} target="_blank" rel="noreferrer" title="เปิดรูปเต็มใน Google Drive" style={{display:"block",width:"100%",height:"100%",position:"absolute",inset:0}}>
+        <div style={{position:"absolute",inset:0,display:"grid",placeItems:"center",color:"#94A3B8",fontSize:22}}><i className={`fa-solid ${thumb?"fa-image":"fa-link"}`}></i></div>
+        {thumb && <img src={thumb} alt="" loading="lazy" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{ if(alt && e.target.src!==alt && !e.target.dataset.tried){ e.target.dataset.tried="1"; e.target.src=alt; } else { e.target.style.display="none"; } }} />}
+      </a>
+      {typeof index==="number" && <span style={{position:"absolute",left:4,top:4,background:"rgba(15,23,42,.6)",color:"#fff",borderRadius:6,fontSize:11,padding:"0 6px",lineHeight:"17px"}}>{index+1}</span>}
+      {onRemove && <button type="button" onClick={onRemove} title="ลบรูปนี้" style={{position:"absolute",right:4,top:4,width:22,height:22,borderRadius:"50%",border:"none",background:"rgba(220,38,38,.92)",color:"#fff",cursor:"pointer",display:"grid",placeItems:"center",fontSize:11}}><i className="fa-solid fa-xmark"></i></button>}
+    </div>
+  );
+}
+
+// ช่องแนบรูป — เลือกรูปจากเครื่องแล้วอัปขึ้น Google Drive โดยตรง เก็บ URL เป็น array ใน field "photos"
+function PhotosField({value,onChange,max=5,disabled,uploadAction="uploadRepairPhoto",uploadContext,folder}){
+  const list = Array.isArray(value) ? value : [];
+  const [busy,setBusy] = React.useState(false);
+  const inputRef = React.useRef(null);
+  const full = list.length>=max;
+  const folderLink = folder || window.REPAIR_PHOTOS_FOLDER;
+  const onFiles = async (files)=>{
+    const arr = Array.from(files||[]);   // ช่องเลือกไฟล์จำกัด image อยู่แล้ว ไม่กรองซ้ำเพื่อกันไฟล์หายเงียบ ๆ
+    if(!arr.length) return;
+    const room = max-list.length;
+    if(room<=0){ Swal.fire({icon:"info",title:`แนบได้สูงสุด ${max} รูป`}); return; }
+    const take = arr.slice(0,room);
+    setBusy(true);
+    const added=[];
+    try{
+      for(let i=0;i<take.length;i++){
+        Swal.fire({title:`กำลังอัปโหลดรูป ${i+1}/${take.length}...`,allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+        try{ const res=await window.uploadPhotoToDrive(uploadAction, uploadContext, take[i]); if(res&&res.url){ added.push(res.url); } }
+        catch(err){ Swal.close(); Swal.fire({icon:"error",title:"อัปโหลดไม่สำเร็จ",text:(err&&err.message)||String(err)}); break; }
+      }
+      if(added.length){ onChange([...list,...added]); }
+      Swal.close();
+      if(arr.length>room){ Swal.fire({icon:"info",title:`เพิ่มได้อีก ${room} รูปเท่านั้น`,timer:1900,showConfirmButton:false,toast:true,position:"top-end"}); }
+      else if(added.length){ Swal.fire({icon:"success",title:`เพิ่มรูปแล้ว ${added.length} รูป`,timer:1200,showConfirmButton:false,toast:true,position:"top-end"}); }
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{display:"grid",gap:10}}>
+      {list.length>0 && <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+        {list.map((url,i)=><PhotoThumb key={i} url={url} index={i} onRemove={disabled?null:()=>onChange(list.filter((_,idx)=>idx!==i))} />)}
+      </div>}
+      {!disabled && <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{ const fs=Array.from(e.target.files||[]); e.target.value=""; onFiles(fs); }} />
+        <button type="button" className="btn btn-primary btn-sm" onClick={()=>inputRef.current&&inputRef.current.click()} disabled={full||busy}>
+          {busy ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังอัปโหลด...</> : <><i className="fa-solid fa-camera"></i> {full?`ครบ ${max} รูปแล้ว`:"เพิ่มรูป"}</>}
+        </button>
+        <span style={{fontSize:11.5,color:"var(--muted)"}}>ถ่าย/เลือกรูปจากเครื่อง อัปขึ้น Google Drive อัตโนมัติ</span>
+      </div>}
+      <div className="hint" style={{margin:0}}>
+        แนบได้สูงสุด {max} รูป ({list.length}/{max}) · รูปถูกเก็บใน
+        <a href={folderLink} target="_blank" rel="noreferrer" style={{color:"var(--primary)",marginLeft:4,fontWeight:500}}><i className="fa-brands fa-google-drive"></i> โฟลเดอร์ Drive</a>
+      </div>
+    </div>
+  );
+}
+
+// โฟลเดอร์ Google Drive สำหรับเก็บรูปอะไหล่ (คนละโฟลเดอร์กับรูปใบแจ้งซ่อม)
+window.PART_PHOTOS_FOLDER = "https://drive.google.com/drive/folders/1Br_yEp-N2kN2TQep87UuEcMyd3hf1EXW?usp=sharing";
+
+// ช่องรูปแบบกะทัดรัดสำหรับใส่ในเซลล์ตาราง (เช่น รูปอะไหล่รายรายการ) — เลือกไฟล์แล้วอัปขึ้น Drive โดยตรง
+function PartPhotosCell({photos,onChange,max=2,uploadContext}){
+  const list = Array.isArray(photos) ? photos.filter(Boolean) : [];
+  const [busy,setBusy] = React.useState(false);
+  const inputRef = React.useRef(null);
+  const onFiles = async (files)=>{
+    const arr = Array.from(files||[]);
+    if(!arr.length) return;
+    const room = max-list.length;
+    if(room<=0){ Swal.fire({icon:"info",title:`ใส่ได้สูงสุด ${max} รูป`}); return; }
+    const take = arr.slice(0,room);
+    setBusy(true);
+    const added=[];
+    try{
+      for(let i=0;i<take.length;i++){
+        Swal.fire({title:`กำลังอัปโหลดรูป ${i+1}/${take.length}...`,allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+        try{ const res=await window.uploadPhotoToDrive("uploadPartPhoto", uploadContext, take[i]); if(res&&res.url){ added.push(res.url); } }
+        catch(err){ Swal.close(); Swal.fire({icon:"error",title:"อัปโหลดไม่สำเร็จ",text:(err&&err.message)||String(err)}); break; }
+      }
+      if(added.length) onChange([...list,...added]);
+      Swal.close();
+      if(added.length){ Swal.fire({icon:"success",title:`เพิ่มรูปแล้ว ${added.length} รูป`,timer:1000,showConfirmButton:false,toast:true,position:"top-end"}); }
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+      {list.map((url,i)=><PhotoThumb key={i} url={url} size={40} onRemove={()=>onChange(list.filter((_,idx)=>idx!==i))} />)}
+      <input ref={inputRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{ const fs=Array.from(e.target.files||[]); e.target.value=""; onFiles(fs); }} />
+      {list.length<max && (
+        <button type="button" onClick={()=>inputRef.current&&inputRef.current.click()} disabled={busy} title="เพิ่มรูปอะไหล่ (อัปขึ้น Drive)"
+          style={{width:40,height:40,borderRadius:8,border:"1px dashed var(--line)",background:"var(--bg)",color:busy?"var(--primary)":"var(--muted)",cursor:busy?"default":"pointer",display:"grid",placeItems:"center",fontSize:14,flexShrink:0}}>
+          {busy ? <div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> : <i className="fa-solid fa-camera"></i>}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// แกลเลอรีแบบอ่านอย่างเดียว (ใช้ในหน้ารายละเอียด)
+function PhotoGallery({photos}){
+  const list = Array.isArray(photos) ? photos.filter(Boolean) : [];
+  if(!list.length) return null;
+  return (
+    <div className="full">
+      <div className="k"><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพประกอบ ({list.length})</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:10,marginTop:6}}>
+        {list.map((url,i)=><PhotoThumb key={i} url={url} size={104} index={i} />)}
+      </div>
+    </div>
+  );
 }
 
 // โหลดไลบรารีสร้างไฟล์ Excel แบบ on-demand (ไม่ถ่วงตอนเปิดเว็บ)
@@ -3461,7 +3814,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
                 <tr key={r.id} style={{cursor:"pointer"}}>
                   <td onClick={()=>setViewRepair(r)}><span className="ticket-id" style={{display:"inline-flex",alignItems:"center",gap:5}}>{r.running}<i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.5}}></i></span></td>
                   <td onClick={()=>setViewRepair(r)} style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
-                  <td onClick={()=>setViewRepair(r)} style={{fontSize:13}}>{r.title}</td>
+                  <td onClick={()=>setViewRepair(r)} style={{fontSize:13}}><ProblemLines title={r.title} max={4}/></td>
                   <td onClick={()=>setViewRepair(r)}><Badge status={r.status}/></td>
                   {canEdit&&<td><button className="ia" title="แก้ไขข้อมูล" onClick={e=>{e.stopPropagation();setEditRepair(r);}} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button></td>}
                 </tr>
@@ -3989,7 +4342,7 @@ function ReporterDashboard({user,goTo}){
           <table className="data">
             <thead><tr><th>เลขที่</th><th className="hide-on-mobile">วันที่</th><th>อาการ</th><th className="hide-on-mobile">หมวดหมู่</th><th>สถานะ</th></tr></thead>
             <tbody>
-              {recent.map(r=>(<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td></tr>))}
+              {recent.map(r=>(<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title"><ProblemLines title={r.title} max={4}/></div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td></tr>))}
               {recent.length===0 && (<tr><td colSpan="5"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีรายการ</div><div>คลิก "แจ้งซ่อมใหม่" เพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
           </table>
@@ -4006,7 +4359,7 @@ function NewRequest({user,goTo}){
 
   const initProject = window.getActiveProject(user)||"";
   const todayStr = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
-  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",reportDate:todayStr,placeMode:"onsite",placeOnsite:initProject,placeOther:""});
+  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",reportDate:todayStr,placeMode:"onsite",placeOnsite:initProject,placeOther:"",photos:[]});
   const [loading,setLoading] = React.useState(false);
 
   const projectMachines = React.useMemo(()=>{ if(!f.project) return []; return (window.__DATA.machines||[]).filter(m=>m.project===f.project); },[f.project]);
@@ -4031,7 +4384,7 @@ function NewRequest({user,goTo}){
         reportAt: "", note: "",
       };
       const createdAt = f.reportDate ? new Date(f.reportDate+"T00:00:00").toISOString() : undefined;
-      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace,createdAt};
+      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace,photos:(f.photos||[]).filter(Boolean),createdAt};
       const saved = await window.api("createRepair",{repair});
       saved.createdAt = new Date(saved.createdAt);
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
@@ -4072,10 +4425,19 @@ function NewRequest({user,goTo}){
           </div>
           <div className="form-field full">
             <label><span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:20,height:20,borderRadius:"50%",background:f.categoryId?"var(--primary)":"var(--line)",color:"#fff",fontSize:11,display:"inline-grid",placeItems:"center",fontWeight:600}}>3</span>เครื่องจักร</span></label>
-            <select value={f.machineCode} onChange={e=>setF({...f,machineCode:e.target.value})} disabled={!f.categoryId}><option value="">{!f.project?"— กรุณาเลือกโครงการก่อน —":!f.categoryId?"— กรุณาเลือกหมวดหมู่ก่อน —":filteredMachines.length===0?"— ไม่พบเครื่องจักร —":"— เลือกเครื่องจักร —"}</option>{filteredMachines.map(m=>(<option key={m.id} value={m.code}>{m.code} — {m.name}{m.brand?` (${m.brand}${m.model?` ${m.model}`:""})`:"" }</option>))}</select>
+            <select value={f.machineCode} onChange={e=>setF({...f,machineCode:e.target.value})} disabled={!f.categoryId}><option value="">{!f.project?"— กรุณาเลือกโครงการก่อน —":!f.categoryId?"— กรุณาเลือกหมวดหมู่ก่อน —":filteredMachines.length===0?"— ไม่พบเครื่องจักร —":"— เลือกเครื่องจักร —"}</option>{filteredMachines.map(m=>(<option key={m.id} value={m.code}>{m.code} — {m.name}{m.brand?` (${m.brand}${m.model?` ${m.model}`:""})`:""}{m.serial?` · S/N ${m.serial}`:""}</option>))}</select>
             {f.categoryId&&filteredMachines.length>0&&<div className="hint">พบ {filteredMachines.length} เครื่องจักรในหมวดหมู่นี้</div>}
+            {(()=>{ const sel=filteredMachines.find(m=>m.code===f.machineCode); return sel ? (
+              <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:8,padding:"9px 12px",background:"var(--accent-soft)",border:"1px solid rgba(30,64,175,.15)",borderRadius:8,fontSize:13}}>
+                <span><span style={{color:"var(--muted)"}}>รหัส:</span> <span className="mono">{sel.code}</span></span>
+                <span style={{color:"var(--line)"}}>·</span>
+                <span><span style={{color:"var(--muted)"}}>ซีเรียล:</span> {sel.serial ? <span className="mono">{sel.serial}</span> : <span style={{color:"var(--muted)"}}>— ไม่ระบุ —</span>}</span>
+                {sel.brand&&<><span style={{color:"var(--line)"}}>·</span><span><span style={{color:"var(--muted)"}}>ยี่ห้อ:</span> {sel.brand}{sel.model?` ${sel.model}`:""}</span></>}
+              </div>
+            ) : null; })()}
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>อาการ/ปัญหา * <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(เพิ่มได้หลายรายการ)</span></label><ProblemsField value={f.title} onChange={v=>setF({...f,title:v})} /></div>
+          <div className="form-field full"><label><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพประกอบ <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(ไม่บังคับ · สูงสุด 5 รูป)</span></label><PhotosField value={f.photos} onChange={v=>setF({...f,photos:v})} /></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>เลขที่ใบแจ้งซ่อม (ที่ไซต์งาน)</label><input value={f.siteId} onChange={e=>setF({...f,siteId:e.target.value})} placeholder="เช่น WR-1234" /><div className="hint">ไม่บังคับ · กรอกเลขที่จากใบงานจริงที่ไซต์</div></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label><i className="fa-solid fa-calendar-day" style={{color:"var(--primary)",marginRight:6}}></i>วันที่แจ้ง</label><input type="date" value={f.reportDate} onChange={e=>setF({...f,reportDate:e.target.value})} /><div className="hint">ระบบเติมวันที่ปัจจุบันให้ · แก้ไขได้</div></div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
@@ -4136,7 +4498,7 @@ function MyRepairs({user}){
             <tbody>
               {rows.map(r=>{
                 const last=r.timeline[r.timeline.length-1];
-                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title">{r.title}</div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
+                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title"><ProblemLines title={r.title} max={4}/></div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
               })}
               {rows.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีคำร้อง</div><div>คลิก "แจ้งซ่อมใหม่" ในเมนูด้านซ้ายเพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
@@ -4304,6 +4666,9 @@ function AssetRegistry({user}){
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
           {filtered.length.toLocaleString("th-TH")} / {rows.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
         </div>
+        <button className="btn btn-ghost" title="โหลดข้อมูลล่าสุดจากฐานข้อมูล (เช่น หลังออก/ยกเลิกใบส่งของ)" onClick={()=>{ window.__DATA.assetRegistry=null; setRows(null); }}>
+          <i className="fa-solid fa-rotate"></i> รีเฟรช
+        </button>
         {canEdit && <button className="btn btn-primary" onClick={()=>setEdit({mode:"add",data:{...blank}})}><i className="fa-solid fa-plus"></i> เพิ่มทรัพย์สิน</button>}
       </div>
       <div className="table-wrap">
@@ -4671,7 +5036,14 @@ window.buildDeliveryOrderHtml = function(doc){
     <td style="text-align:left;padding-left:6px">${esc(it.from||"")}</td>
   </tr>`).join("");
   const totalQty = items.reduce((s,x)=>s+(Number(x.quantity)||0),0);
-  return `<div style="font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:16mm 10mm 12mm;background:#fff;box-sizing:border-box">
+  const cancelStamp = doc.cancelled ? `
+    <div style="position:absolute;top:95mm;left:50%;transform:translateX(-50%) rotate(-22deg);border:6px solid #DC2626;color:#DC2626;padding:6mm 18mm;font-size:52px;font-weight:700;letter-spacing:6px;border-radius:6mm;opacity:.32;white-space:nowrap;pointer-events:none">ยกเลิก</div>
+    <div style="position:absolute;top:8mm;right:10mm;border:2px solid #DC2626;color:#DC2626;padding:2mm 5mm;font-size:15px;border-radius:2mm;text-align:right;line-height:1.4">
+      <div style="font-weight:700">เอกสารถูกยกเลิก</div>
+      <div style="font-size:12px">${fmt(doc.cancelledAt)}${doc.cancelledBy?" · "+esc(doc.cancelledBy):""}</div>
+      ${doc.cancelReason?`<div style="font-size:12px">เหตุผล: ${esc(doc.cancelReason)}</div>`:""}
+    </div>` : "";
+  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:16mm 10mm 12mm;background:#fff;box-sizing:border-box">${cancelStamp}
     <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:6mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:23px;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap}</style>
     <div style="display:grid;grid-template-columns:38mm 1fr 40mm;gap:5mm;align-items:start;margin-bottom:4mm;position:relative;min-height:32mm">
       <div>${DO_LOGO_SVG}</div>
@@ -4724,6 +5096,7 @@ function DeliveryOrders({user}){
   const [view,setView] = React.useState(null);
   const [edit,setEdit] = React.useState(null);
   const [transferOpen,setTransferOpen] = React.useState(false);
+  const [hideCancelled,setHideCancelled] = React.useState(false);
 
   const saveEdit = async (doc, patch) => {
     const res = await window.api("updateDeliveryOrder",{key:doc.key, patch, by:user.name, adjustStock:true});
@@ -4753,6 +5126,47 @@ function DeliveryOrders({user}){
     return ()=>{ alive = false; };
   },[rows]);
 
+  const cancel = async (doc) => {
+    const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const totalQty = (doc.items||[]).reduce((s,x)=>s+(Number(x.quantity)||0),0);
+    const res = await Swal.fire({
+      title:"ยกเลิกใบส่งของนี้?",
+      html:`
+        <div style="text-align:left;font-size:13.5px">
+          <div>เลขที่ <b class="mono">${esc(doc.docNo||doc.key)}</b> → <b>${esc(doc.toProject||"")}</b></div>
+          <div style="color:#64748B;font-size:12.5px;margin-bottom:10px">${(doc.items||[]).length} รายการ · ${totalQty.toLocaleString("th-TH")} หน่วย</div>
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="do-restore" checked style="margin-top:3px;width:16px;height:16px;accent-color:#B45309" />
+            <span>คืนทรัพย์สินกลับโครงการต้นทางด้วย<br/><span style="color:#92400E;font-size:11.5px">ไม่ติ๊ก = ยกเลิกเฉพาะเอกสาร ไม่แตะสต๊อก</span></span>
+          </label>
+          <div style="margin-top:10px">
+            <div style="font-size:12px;color:#475569;margin-bottom:3px">เหตุผลการยกเลิก</div>
+            <textarea id="do-reason" rows="2" placeholder="เช่น ออกใบผิด, ยกเลิกการส่ง..." style="width:100%;padding:7px 9px;border:1px solid #CBD5E1;border-radius:7px;font-family:Kanit;font-size:13px;resize:vertical"></textarea>
+          </div>
+          <div style="margin-top:8px;font-size:11.5px;color:#64748B">เอกสารจะยังอยู่ในระบบและพิมพ์ได้ แต่จะมีตรา "ยกเลิก" กำกับ</div>
+        </div>`,
+      icon:"warning", showCancelButton:true, confirmButtonText:"ยืนยันยกเลิกใบส่งของ", cancelButtonText:"ไม่ยกเลิก", confirmButtonColor:"#D97706", focusConfirm:false,
+      preConfirm:()=>({ restoreStock: document.getElementById("do-restore").checked, reason: document.getElementById("do-reason").value.trim() })
+    });
+    if(!res.isConfirmed) return;
+    try{
+      const out = await window.api("cancelDeliveryOrder",{key:doc.key, by:user.name, reason:res.value.reason, restoreStock:res.value.restoreStock});
+      const patch = {cancelled:true, cancelledAt:out.cancelledAt, cancelledBy:out.cancelledBy, cancelReason:out.cancelReason, stockRestored:out.stockRestored};
+      const upd = rows.map(x=>x.key===doc.key?{...x,...patch}:x);
+      window.__DATA.deliveryOrders = upd; setRows(upd);
+      if(res.value.restoreStock) window.__DATA.assetRegistry = null;   // ให้หน้าทะเบียนทรัพย์สินโหลดสต๊อกใหม่
+      const warns = (out && out.warnings) || [];
+      const nRestored = ((out && out.restored) || []).length;
+      if(warns.length){
+        Swal.fire({icon:"warning",title:"ยกเลิกแล้ว · แต่มีบางรายการที่คืนสต๊อกไม่ได้",
+          html:`<div style='text-align:left;font-size:13px'>${nRestored?`<div style="color:#047857;margin-bottom:6px">✓ คืนเข้าทะเบียนทรัพย์สินแล้ว ${nRestored} รายการ</div>`:""}`+warns.map(w=>"• "+w).join("<br/>")+"</div>",confirmButtonColor:"#1E40AF"});
+      }else{
+        Swal.fire({icon:"success",title:res.value.restoreStock?`ยกเลิกและคืนของแล้ว ${nRestored} รายการ`:"ยกเลิกเอกสารแล้ว",
+          text:res.value.restoreStock?"ทะเบียนทรัพย์สินอัพเดตแล้ว":"",timer:2000,showConfirmButton:false,toast:true,position:"top-end"});
+      }
+    }catch(e){ Swal.fire({icon:"error",title:"ยกเลิกไม่สำเร็จ",text:e.message}); }
+  };
+
   const remove = async (doc) => {
     const { isConfirmed } = await Swal.fire({
       title:"ลบใบส่งของนี้?",
@@ -4777,7 +5191,11 @@ function DeliveryOrders({user}){
   );
   if(!rows) return <Loading show={true} text="กำลังโหลดใบส่งของ..."/>;
 
-  const filtered = rows.filter(d=>!q || [d.docNo,d.toProject,d.fromProjectLabel,d.sender,d.receiver,d.note].join(" ").toLowerCase().includes(q.toLowerCase()));
+  const cancelledCount = rows.filter(d=>d.cancelled).length;
+  const filtered = rows.filter(d=>{
+    if(hideCancelled && d.cancelled) return false;
+    return !q || [d.docNo,d.toProject,d.fromProjectLabel,d.sender,d.receiver,d.note].join(" ").toLowerCase().includes(q.toLowerCase());
+  });
 
   return (
     <>
@@ -4786,6 +5204,12 @@ function DeliveryOrders({user}){
         <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i>
           <input placeholder="ค้นหาเลขที่ / โครงการ / ผู้ส่ง / ผู้รับ..." value={q} onChange={e=>setQ(e.target.value)} />
         </div>
+        {cancelledCount>0 && (
+          <label style={{display:"flex",alignItems:"center",gap:7,padding:"9px 12px",border:`1px solid ${hideCancelled?"var(--primary)":"var(--line)"}`,borderRadius:10,background:hideCancelled?"var(--accent-soft)":"#fff",fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={hideCancelled} onChange={e=>setHideCancelled(e.target.checked)} style={{margin:0,cursor:"pointer",accentColor:"var(--primary)",width:15,height:15}} />
+            ซ่อนใบที่ยกเลิก ({cancelledCount})
+          </label>
+        )}
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length.toLocaleString("th-TH")} / {rows.length.toLocaleString("th-TH")} ใบ</div>
         {canEdit && (
@@ -4802,8 +5226,14 @@ function DeliveryOrders({user}){
           </tr></thead>
           <tbody>
             {filtered.map(d=>(
-              <tr key={d.key}>
-                <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setView(d)}>{d.docNo||d.key}</span></td>
+              <tr key={d.key} style={d.cancelled?{background:"#FEF2F2",opacity:.85}:null}>
+                <td>
+                  <span className="ticket-id" style={{cursor:"pointer",textDecoration:d.cancelled?"line-through":"underline",opacity:d.cancelled?.7:1}} onClick={()=>setView(d)}>{d.docNo||d.key}</span>
+                  {d.cancelled && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#FEE2E2",color:"#B91C1C",fontSize:10.5,fontWeight:600}}
+                    title={`ยกเลิกโดย ${d.cancelledBy||"—"} เมื่อ ${window.__DATA.fmtDate(d.cancelledAt)}${d.cancelReason?" · "+d.cancelReason:""}${d.stockRestored?" · คืนของแล้ว":" · ไม่ได้คืนของ"}`}>
+                    <i className="fa-solid fa-ban"></i> ยกเลิกแล้ว
+                  </div>}
+                </td>
                 <td style={{whiteSpace:"nowrap",color:"var(--muted)"}}>{d.docDate || window.__DATA.fmtDate(d.when)}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.fromProjectLabel||"—"}</td>
                 <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/></td>
@@ -4811,7 +5241,8 @@ function DeliveryOrders({user}){
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
                 <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
                 {canEdit && <td><div className="row-actions">
-                  <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEdit(d)}><i className="fa-solid fa-pen"></i></button>
+                  {!d.cancelled && <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEdit(d)}><i className="fa-solid fa-pen"></i></button>}
+                  {!d.cancelled && <button className="ia" title="ยกเลิกใบส่งของ" style={{color:"#D97706"}} onClick={()=>cancel(d)}><i className="fa-solid fa-ban"></i></button>}
                   <button className="ia danger" title="ลบใบส่งของ" onClick={()=>remove(d)}><i className="fa-solid fa-trash"></i></button>
                 </div></td>}
               </tr>
@@ -4838,9 +5269,21 @@ function DeliveryOrderView({doc,onClose,onEdit}){
       title={<><i className="fa-solid fa-file-export" style={{color:"var(--primary)",marginRight:8}}></i>ใบส่งของ <span className="ticket-id" style={{marginLeft:6}}>{doc.docNo||doc.key}</span></>}
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
-        {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(doc)} style={{color:"#1E40AF"}}><i className="fa-solid fa-pen"></i> แก้ไขข้อมูล</button>}
+        {onEdit && !doc.cancelled && <button className="btn btn-ghost" onClick={()=>onEdit(doc)} style={{color:"#1E40AF"}}><i className="fa-solid fa-pen"></i> แก้ไขข้อมูล</button>}
         <button className="btn btn-primary" onClick={()=>window.downloadDeliveryOrderPdf(doc)}><i className="fa-solid fa-file-pdf"></i> ดาวน์โหลด PDF</button>
       </>}>
+      {doc.cancelled && (
+        <div style={{marginBottom:14,padding:"12px 14px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,color:"#B91C1C",fontWeight:600,fontSize:14}}><i className="fa-solid fa-ban"></i> ใบส่งของนี้ถูกยกเลิกแล้ว</div>
+          <div style={{fontSize:12.5,color:"#7F1D1D",marginTop:5}}>
+            ยกเลิกโดย <b>{doc.cancelledBy||"—"}</b> เมื่อ {window.__DATA.fmtDate(doc.cancelledAt)}
+            {doc.cancelReason && <> · เหตุผล: {doc.cancelReason}</>}
+          </div>
+          <div style={{fontSize:12,color:doc.stockRestored?"#047857":"#B45309",marginTop:3}}>
+            <i className={`fa-solid ${doc.stockRestored?"fa-rotate-left":"fa-triangle-exclamation"}`}></i> {doc.stockRestored?"คืนทรัพย์สินกลับโครงการต้นทางแล้ว":"ยกเลิกเฉพาะเอกสาร — ไม่ได้คืนทรัพย์สินกลับต้นทาง"}
+          </div>
+        </div>
+      )}
       <div className="detail-grid" style={{marginBottom:14}}>
         <div><div className="k">วันที่</div><div className="v">{doc.docDate || window.__DATA.fmtDate(doc.when)}</div></div>
         <div><div className="k">จากโครงการ</div><div className="v">{doc.fromProjectLabel||"—"}</div></div>
@@ -5116,6 +5559,143 @@ function WorkspacePicker({user,onContinue,onLogout}){
   );
 }
 
+// อะไหล่ที่ใช้ซ่อม — รวมอะไหล่จาก r.parts ของทุกใบแจ้งซ่อมมาสรุปในที่เดียว
+function SpareParts({user}){
+  const [q,setQ] = React.useState("");
+  const [view,setView] = React.useState("list");   // list | grouped
+  const [detail,setDetail] = React.useState(null);
+
+  const machineName = (code)=>{ const m=(window.__DATA.machines||[]).find(x=>x.code===code); return m?m.name:""; };
+
+  // แตกอะไหล่ทุกชิ้นออกมาเป็นแถว พร้อมอ้างอิงใบแจ้งซ่อม
+  const rows = React.useMemo(()=>{
+    const visible = window.filterByUserProjects(user, window.__DATA.repairs, "project");
+    const out = [];
+    visible.forEach(r=>{
+      (r.parts||[]).forEach((p,idx)=>{
+        if(!p || !String(p.name||"").trim()) return;
+        const qty = Number(p.qty)||0, unitPrice = Number(p.unitPrice)||0;
+        out.push({
+          key:`${r.id}:${idx}`, repair:r, running:r.running, machineCode:r.machineCode||"", machineName:machineName(r.machineCode),
+          project:r.project||"", status:r.status, createdAt:r.createdAt,
+          name:String(p.name).trim(), qty, unitPrice, total:Number(p.total)|| (qty*unitPrice), supplier:String(p.supplier||"").trim(), photos:Array.isArray(p.photos)?p.photos.filter(Boolean):[],
+        });
+      });
+    });
+    return out.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  },[user]);
+
+  const kw = q.trim().toLowerCase();
+  const filtered = rows.filter(r=>!kw || [r.name,r.supplier,r.running,r.machineCode,r.machineName,r.project].some(v=>String(v||"").toLowerCase().includes(kw)));
+
+  // รวมตามชื่ออะไหล่
+  const grouped = React.useMemo(()=>{
+    const map = {};
+    filtered.forEach(r=>{
+      const k = r.name.toLowerCase();
+      if(!map[k]) map[k] = { name:r.name, qty:0, total:0, count:0, suppliers:new Set(), photos:[] };
+      const g = map[k];
+      g.qty += r.qty; g.total += r.total; g.count += 1;
+      if(r.supplier) g.suppliers.add(r.supplier);
+      r.photos.forEach(u=>{ if(g.photos.length<4) g.photos.push(u); });
+    });
+    return Object.values(map).map(g=>({...g,suppliers:[...g.suppliers]})).sort((a,b)=>b.total-a.total);
+  },[filtered]);
+
+  const totalQty = filtered.reduce((s,r)=>s+r.qty,0);
+  const totalCost = filtered.reduce((s,r)=>s+r.total,0);
+  const fmt = (n)=>Math.round(Number(n)||0).toLocaleString("th-TH");
+
+  const exportExcel = async ()=>{
+    if(!filtered.length){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
+    try{
+      Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+      const XLSX = await ensureXLSX();
+      let data, sheetName;
+      if(view==="grouped"){
+        sheetName = "อะไหล่รวมตามชื่อ";
+        data = grouped.map((g,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":g.name, "จำนวนครั้งที่ใช้":g.count, "จำนวนรวม":g.qty, "มูลค่ารวม (บาท)":Math.round(g.total), "แหล่งซื้อ":g.suppliers.join(", ") }));
+      } else {
+        sheetName = "อะไหล่ที่ใช้ซ่อม";
+        data = filtered.map((r,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":r.name, "จำนวน":r.qty, "ราคา/หน่วย":r.unitPrice, "รวม (บาท)":Math.round(r.total), "แหล่งซื้อ":r.supplier, "ใบแจ้งซ่อม":r.running, "เครื่องจักร":[r.machineCode,r.machineName].filter(Boolean).join(" "), "โครงการ":r.project, "วันที่":window.__DATA.fmtDate(r.createdAt), "จำนวนรูป":r.photos.length }));
+      }
+      const ws = XLSX.utils.json_to_sheet(data);
+      ws["!cols"] = Object.keys(data[0]).map(k=>({wch:Math.min(40,Math.max(k.length+4,...data.map(row=>String(row[k]??"").length+2)))}));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      const d=new Date(); const stamp=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+      XLSX.writeFile(wb, `อะไหล่ที่ใช้ซ่อม_${stamp}.xlsx`);
+      Swal.fire({icon:"success",title:`ส่งออกแล้ว ${data.length} รายการ`,timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"ส่งออกไม่สำเร็จ",text:err.message}); }
+  };
+
+  const stats = [
+    {label: view==="grouped"?"ชนิดอะไหล่":"รายการอะไหล่", val: view==="grouped"?grouped.length:filtered.length, icon:"fa-box-open", color:"#3B82F6"},
+    {label:"จำนวนชิ้นรวม", val:totalQty, icon:"fa-cubes-stacked", color:"#8B5CF6"},
+    {label:"มูลค่าอะไหล่รวม", val:totalCost, icon:"fa-coins", color:"#10B981", money:true},
+  ];
+
+  return (
+    <>
+    <div className="stat-grid" style={{marginBottom:16}}>
+      {stats.map((s,i)=>(<div className="stat" key={i}><div className="ic" style={{background:s.color+"1a",color:s.color}}><i className={`fa-solid ${s.icon}`}></i></div><div className="label">{s.label}</div><div className="val">{s.money?`฿${fmt(s.val)}`:s.val.toLocaleString("th-TH")}</div></div>))}
+    </div>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา ชื่ออะไหล่ / แหล่งซื้อ / ใบแจ้งซ่อม / เครื่องจักร..." value={q} onChange={e=>setQ(e.target.value)} /></div>
+        <div style={{display:"inline-flex",border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="list"?"var(--accent-soft)":"#fff",color:view==="list"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("list")}><i className="fa-solid fa-list"></i> รายการทั้งหมด</button>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="grouped"?"var(--accent-soft)":"#fff",color:view==="grouped"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("grouped")}><i className="fa-solid fa-layer-group"></i> รวมตามชื่ออะไหล่</button>
+        </div>
+        <div className="spacer"></div>
+        <button className="btn btn-ghost" onClick={exportExcel} title="ส่งออกที่แสดงอยู่เป็น Excel"><i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel</button>
+      </div>
+      <div className="table-wrap">
+        {view==="list" ? (
+          <table className="data">
+            <thead><tr><th>อะไหล่ / รายการ</th><th className="hide-on-mobile">รูป</th><th>จำนวน</th><th className="hide-on-mobile">ราคา/หน่วย</th><th>รวม</th><th className="hide-on-mobile">แหล่งซื้อ</th><th>ใบแจ้งซ่อม</th><th className="hide-on-mobile">เครื่องจักร</th><th className="hide-on-mobile">วันที่</th></tr></thead>
+            <tbody>
+              {filtered.map(r=>(
+                <tr key={r.key}>
+                  <td style={{fontWeight:500}}>{r.name}</td>
+                  <td className="hide-on-mobile">{r.photos.length>0 ? <div style={{display:"flex",gap:4}}>{r.photos.slice(0,2).map((u,i)=><PhotoThumb key={i} url={u} size={36} />)}{r.photos.length>2&&<span style={{alignSelf:"center",fontSize:11,color:"var(--muted)"}}>+{r.photos.length-2}</span>}</div> : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}</td>
+                  <td style={{whiteSpace:"nowrap"}}>{r.qty.toLocaleString("th-TH")}</td>
+                  <td className="hide-on-mobile" style={{whiteSpace:"nowrap"}}>฿{fmt(r.unitPrice)}</td>
+                  <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--primary)"}}>฿{fmt(r.total)}</td>
+                  <td className="hide-on-mobile" style={{fontSize:13}}>{r.supplier||<span style={{color:"var(--muted)"}}>—</span>}</td>
+                  <td><span className="ticket-id" style={{cursor:"pointer",textDecoration:"underline"}} onClick={()=>setDetail(r.repair)}>{r.running}</span></td>
+                  <td className="hide-on-mobile" style={{fontSize:13}}>{r.machineCode ? <>{r.machineCode}{r.machineName?<div style={{fontSize:11,color:"var(--muted)"}}>{r.machineName}</div>:null}</> : <span style={{color:"var(--muted)"}}>—</span>}</td>
+                  <td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
+                </tr>
+              ))}
+              {filtered.length===0 && (<tr><td colSpan="9"><div className="empty"><i className="fa-solid fa-box-open"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div><div>อะไหล่จะปรากฏที่นี่เมื่อมีการประเมิน/บันทึกรายการอะไหล่ในใบแจ้งซ่อม</div></div></td></tr>)}
+            </tbody>
+          </table>
+        ) : (
+          <table className="data">
+            <thead><tr><th>อะไหล่ / รายการ</th><th className="hide-on-mobile">รูป</th><th>ใช้ (ครั้ง)</th><th>จำนวนรวม</th><th>มูลค่ารวม</th><th className="hide-on-mobile">แหล่งซื้อ</th></tr></thead>
+            <tbody>
+              {grouped.map((g,i)=>(
+                <tr key={i}>
+                  <td style={{fontWeight:500}}>{g.name}</td>
+                  <td className="hide-on-mobile">{g.photos.length>0 ? <div style={{display:"flex",gap:4}}>{g.photos.slice(0,2).map((u,k)=><PhotoThumb key={k} url={u} size={36} />)}</div> : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}</td>
+                  <td>{g.count.toLocaleString("th-TH")}</td>
+                  <td style={{whiteSpace:"nowrap"}}>{g.qty.toLocaleString("th-TH")}</td>
+                  <td style={{whiteSpace:"nowrap",fontWeight:600,color:"var(--primary)"}}>฿{fmt(g.total)}</td>
+                  <td className="hide-on-mobile" style={{fontSize:12.5,color:"var(--muted)"}}>{g.suppliers.join(", ")||"—"}</td>
+                </tr>
+              ))}
+              {grouped.length===0 && (<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-box-open"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div></div></td></tr>)}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+    {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={null} onEdit={null} onEditParts={null} onProblems={()=>{}} />}
+    </>
+  );
+}
+window.SpareParts = SpareParts;
+
 function App(){
   const [user,setUser] = React.useState(null);
   const [workspace,setWorkspace] = React.useState(null);
@@ -5227,12 +5807,13 @@ function App(){
     ? ["machines","asset-registry","asset-do","doc-pj2","transfer-history","projects"]
     : systemId==="consume"
       ? ["withdrawals"]
-      : ["dashboard","repairs","machines","users","categories","login-logs","r-dashboard","r-new","r-mine"];
+      : ["dashboard","repairs","spare-parts","machines","users","categories","login-logs","r-dashboard","r-new","r-mine"];
   const safePage = allowedPages.includes(page) ? page : (workspace.erp?.startPage || allowedPages[0]);
 
   const pageTitles = {
     "dashboard":{t:"แดชบอร์ด",c:"ภาพรวมและสถิติงานซ่อม"},
     "repairs":{t:"รายการแจ้งซ่อม",c:"จัดการและติดตามงานซ่อมทั้งหมด"},
+    "spare-parts":{t:"อะไหล่ที่ใช้ซ่อม",c:"สรุปอะไหล่ที่ใช้จากทุกใบแจ้งซ่อม · ค่าใช้จ่ายและแหล่งซื้อ"},
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
     "machines":{t:"ทะเบียนเครื่องจักร",c:"Machines · ข้อมูลจาก Firebase"},
@@ -5252,6 +5833,7 @@ function App(){
   const renderPage = () => {
     if(safePage==="dashboard") return <Dashboard user={activeUser} goTo={setPage}/>;
     if(safePage==="repairs") return <Repairs user={activeUser}/>;
+    if(safePage==="spare-parts") return <SpareParts user={activeUser}/>;
     if(safePage==="users") return <Users user={activeUser}/>;
     if(safePage==="categories") return <Categories user={activeUser}/>;
     if(safePage==="machines") return <Machines user={activeUser}/>;
