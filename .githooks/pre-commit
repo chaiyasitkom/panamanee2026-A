@@ -1,0 +1,31 @@
+#!/bin/sh
+# Build ระบบแจ้งซ่อมเครื่องจักร.html -> index.html + app.build.js ก่อน commit ทุกครั้ง
+#
+# เปิดใช้งานบนเครื่องใหม่ (ทำครั้งเดียวหลัง clone):
+#     npm install
+#     git config core.hooksPath .githooks
+#
+# ถ้า build ไม่ผ่าน hook จะหยุด commit ทันที — กันไฟล์เสียหลุดขึ้น production
+#
+# หมายเหตุ: build ทุกครั้งโดยไม่เช็คว่าไฟล์ต้นฉบับถูกแก้หรือไม่ เพราะ git จะแปลง
+# ชื่อไฟล์ภาษาไทยเป็น escape sequence (\340\270...) ทำให้เช็คด้วย grep พลาดเงียบๆ
+# แล้วข้าม build ไป — ยอมเสียเวลา 2 วินาทีดีกว่า deploy ไฟล์เก่าค้างขึ้นไป
+set -e
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[hook] ✖ ไม่พบ node — ติดตั้ง Node.js ก่อน แล้วรัน: npm install" >&2
+  exit 1
+fi
+
+if [ ! -d node_modules/@babel/core ]; then
+  echo "[hook] ✖ ยังไม่ได้ติดตั้ง dependencies — รัน: npm install" >&2
+  exit 1
+fi
+
+if ! node build.js; then
+  echo "[hook] ✖ build ไม่ผ่าน — ยกเลิก commit (แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้วลองใหม่)" >&2
+  exit 1
+fi
+
+git add index.html app.build.js
+echo "[hook] ✔ build เสร็จ และ stage index.html + app.build.js แล้ว"

@@ -15,6 +15,11 @@
     Cache-Control = "public, max-age=0, must-revalidate"
 
 [[headers]]
+  for = "/app.build.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
   for = "/src/*"
   [headers.values]
     Cache-Control = "public, max-age=300"

@@ -1,0 +1,14 @@
+{
+  "name": "panamanee-erp",
+  "version": "3.0.0",
+  "private": true,
+  "description": "ระบบแจ้งซ่อมเครื่องจักร (ERP) — พานามณี",
+  "scripts": {
+    "build": "node build.js",
+    "check": "node build.js --check"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-react": "^7.26.3"
+  }
+}
