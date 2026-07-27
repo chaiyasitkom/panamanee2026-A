@@ -11,17 +11,42 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.all.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.min.css" />
-<!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-<!-- React + Babel -->
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+<!-- ไลบรารีที่ต้องใช้ตั้งแต่เปิดหน้า — defer ทุกตัวเพื่อไม่ให้บล็อกการแสดงผล (ทำงานตามลำดับที่เขียน) -->
+<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.all.min.js"></script>
+<script defer src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script defer src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script defer src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+
+<!-- chart.js กับ html2pdf หนักมากและใช้เฉพาะบางหน้า — โหลดตอนเรียกใช้จริงเท่านั้น -->
+<script>
+window.__lazyScript = (function(){
+  var cache = {};
+  return function(src){
+    if(cache[src]) return cache[src];
+    cache[src] = new Promise(function(resolve, reject){
+      var s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = function(){ resolve(); };
+      s.onerror = function(){ delete cache[src]; reject(new Error("โหลดไม่สำเร็จ: " + src)); };
+      document.head.appendChild(s);
+    });
+    return cache[src];
+  };
+})();
+window.__loadChart = function(){
+  return window.Chart ? Promise.resolve()
+    : window.__lazyScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
+};
+window.__loadPdf = function(){
+  return window.html2pdf ? Promise.resolve()
+    : window.__lazyScript("https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js");
+};
+</script>
 <style>
 :root{
   --primary:#1E40AF;
@@ -626,8 +651,8 @@ async function api(action, payload = {}) {
     }
 
     case 'bootstrap': {
-      await _seedIfEmpty();
-      const [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap] = await Promise.all([
+      // ดึงทุกอย่างพร้อมกันรอบเดียว — ไม่เช็ค seed ก่อน เพราะทำให้เสีย round-trip ฟรีทุกครั้งที่เปิดเว็บ
+      let [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap] = await Promise.all([
         _db.ref('/users').get(),
         _db.ref('/categories').get(),
         _db.ref('/machines').get(),
@@ -635,6 +660,15 @@ async function api(action, payload = {}) {
         _db.ref('/projects').get(),
         _db.ref('/withdrawals').get(),
       ]);
+      // ฐานข้อมูลว่างจริง (ติดตั้งใหม่) ค่อยสร้างข้อมูลตั้งต้นแล้วดึงเฉพาะส่วนที่ seed ซ้ำ
+      if (!usersSnap.val()) {
+        await _seedIfEmpty();
+        [usersSnap, catSnap, projSnap] = await Promise.all([
+          _db.ref('/users').get(),
+          _db.ref('/categories').get(),
+          _db.ref('/projects').get(),
+        ]);
+      }
       const users = Object.values(usersSnap.val() || {}).map(u => {
         const x = { ...u }; delete x.password; return x;
       });
@@ -1850,6 +1884,10 @@ function Dashboard({user,goTo}){
 
   React.useEffect(()=>{
     if(loading) return;
+    let dead = false;
+    (async()=>{
+    await window.__loadChart();
+    if(dead) return;
     if(doughnutRef.current){
       if(chartsRef.current.d) chartsRef.current.d.destroy();
       const catCount = {};
@@ -1885,7 +1923,9 @@ function Dashboard({user,goTo}){
         options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{font:{family:"Kanit"},usePointStyle:true,pointStyle:"circle"}},tooltip:{titleFont:{family:"Kanit"},bodyFont:{family:"Kanit"}}},scales:{x:{grid:{display:false},ticks:{font:{family:"Kanit"}}},y:{beginAtZero:true,grid:{color:"#F1F5F9"},ticks:{font:{family:"Kanit"},precision:0}}}}
       });
     }
+    })();
     return ()=>{
+      dead = true;
       if(chartsRef.current.d) chartsRef.current.d.destroy();
       if(chartsRef.current.b) chartsRef.current.b.destroy();
       if(chartsRef.current.c) chartsRef.current.c.destroy();
@@ -1895,6 +1935,10 @@ function Dashboard({user,goTo}){
   React.useEffect(()=>{
     if(loading) return;
     if(!costRef.current) return;
+    let dead = false;
+    (async()=>{
+    await window.__loadChart();
+    if(dead || !costRef.current) return;
     if(chartsRef.current.c) chartsRef.current.c.destroy();
     const src = costView==="category" ? costStats.byCat.map(x=>({label:x.name,val:x.cost,color:x.color})) : costView==="project" ? costStats.byProj.map(x=>({label:x.name,val:x.cost,color:x.color})) : costStats.byMach.map(x=>({label:x.name,val:x.cost,color:x.color}));
     chartsRef.current.c = new Chart(costRef.current,{
@@ -1902,6 +1946,8 @@ function Dashboard({user,goTo}){
       data:{labels:src.map(x=>x.label),datasets:[{label:"ค่าใช้จ่าย (บาท)",data:src.map(x=>x.val),backgroundColor:src.map(x=>x.color),borderRadius:6,barThickness:22}]},
       options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{titleFont:{family:"Kanit"},bodyFont:{family:"Kanit"},callbacks:{label:(ctx)=>" ฿"+Math.round(ctx.parsed.x).toLocaleString()}}},scales:{x:{beginAtZero:true,grid:{color:"#F1F5F9"},ticks:{font:{family:"Kanit"},callback:(v)=>"฿"+Number(v).toLocaleString()}},y:{grid:{display:false},ticks:{font:{family:"Kanit",size:11.5}}}}}
     });
+    })();
+    return ()=>{ dead = true; };
   },[loading,costView,costStats]);
 
   const recent = repairs.filter(r=>r.status!=="done");
@@ -3905,7 +3951,11 @@ function Withdrawals({user}){
   };
   const pdfName = doc => `${clean(doc.docNo||"withdrawal").replace(/[\\/:*?"<>|]/g,"-")}.pdf`;
   const downloadPdf = async (doc) => {
-    if(!window.html2pdf){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF"}); return; }
+    try{
+      Swal.fire({title:"กำลังเตรียมไฟล์ PDF...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+      await window.__loadPdf();
+      Swal.close();
+    }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return; }
     const el = document.createElement("div"); el.innerHTML = buildPdfHtml(doc); document.body.appendChild(el);
     try{ await html2pdf().set({margin:0,filename:pdfName(doc),image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save(); }
     finally{ el.remove(); }
@@ -5077,7 +5127,11 @@ window.buildDeliveryOrderHtml = function(doc){
 };
 
 window.downloadDeliveryOrderPdf = async function(doc){
-  if(!window.html2pdf){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF"}); return; }
+  try{
+    Swal.fire({title:"กำลังเตรียมไฟล์ PDF...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+    await window.__loadPdf();
+    Swal.close();
+  }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return; }
   const name = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-")+".pdf";
   const el = document.createElement("div");
   el.innerHTML = window.buildDeliveryOrderHtml(doc);
