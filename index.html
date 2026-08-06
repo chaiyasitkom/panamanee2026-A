@@ -7,6 +7,59 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>ระบบแจ้งซ่อมเครื่องจักร</title>
+
+<!-- ติดตั้งเป็นแอปบนมือถือได้ (PWA) — ไม่ต้องผ่าน Play Store / App Store -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="แจ้งซ่อม" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+
+<script>
+// ── ตัวช่วยติดตั้งแอป ────────────────────────────────────────────────────
+// ต้องดักไว้ตั้งแต่ต้น เพราะ beforeinstallprompt ยิงครั้งเดียวและมักมาก่อน React พร้อม
+window.__pwa = {
+  prompt: null,          // event ที่เบราว์เซอร์ให้มา ใช้เรียกกล่องติดตั้งของระบบ
+  installed: false,
+  _subs: new Set(),
+  on: function(fn){ this._subs.add(fn); return function(){ window.__pwa._subs.delete(fn); }; },
+  _emit: function(){ this._subs.forEach(function(f){ try{ f(); }catch(e){} }); },
+  isStandalone: function(){
+    try{
+      return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    }catch(e){ return false; }
+  },
+  isIOS: function(){ return /iPad|iPhone|iPod/.test(navigator.userAgent||"") && !window.MSStream; },
+  isMobile: function(){ return /Android|iPad|iPhone|iPod|Mobile/i.test(navigator.userAgent||""); },
+  // เรียกกล่องติดตั้งของเบราว์เซอร์ → คืน "accepted" | "dismissed" | "unavailable"
+  install: function(){
+    var p = this.prompt;
+    if(!p) return Promise.resolve("unavailable");
+    this.prompt = null;                     // ใช้ได้ครั้งเดียวตามสเปก
+    try{ p.prompt(); }catch(e){ return Promise.resolve("unavailable"); }
+    var self = this;
+    return p.userChoice.then(function(r){ self._emit(); return (r && r.outcome) || "dismissed"; });
+  }
+};
+window.addEventListener("beforeinstallprompt", function(e){
+  e.preventDefault();                        // กันแถบติดตั้งอัตโนมัติ เพื่อให้กดจากปุ่มในหน้า login แทน
+  window.__pwa.prompt = e;
+  window.__pwa._emit();
+});
+window.addEventListener("appinstalled", function(){
+  window.__pwa.prompt = null;
+  window.__pwa.installed = true;
+  window.__pwa._emit();
+});
+if("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js").catch(function(err){
+      console.warn("[pwa] ลงทะเบียน service worker ไม่สำเร็จ:", err && err.message);
+    });
+  });
+}
+</script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -43,6 +96,18 @@ window.__loadChart = function(){
 window.__loadPdf = function(){
   return window.html2pdf ? Promise.resolve()
     : window.__lazyScript("https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js");
+};
+// แผนที่ (Leaflet + แผนที่ฐานจาก OpenStreetMap — ไม่ต้องใช้ API key)
+window.__loadMap = function(){
+  if(window.L) return Promise.resolve();
+  if(!document.getElementById("leaflet-css")){
+    var l = document.createElement("link");
+    l.id = "leaflet-css";
+    l.rel = "stylesheet";
+    l.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(l);
+  }
+  return window.__lazyScript("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js");
 };
 </script>
 <style>
@@ -291,6 +356,50 @@ a{color:inherit;text-decoration:none}
 .stat .delta .down{color:var(--danger)}
 .charts-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-bottom:22px}
 @media (max-width:1100px){.charts-grid{grid-template-columns:1fr}}
+
+/* ── แผนที่ที่ตั้งโครงการ ─────────────────────────────────────────── */
+.map-box{height:420px;width:100%;border-radius:0 0 var(--radius) var(--radius);z-index:0}
+.map-box.sm{height:260px;border-radius:10px;border:1px solid var(--line)}
+.leaflet-container{font-family:Kanit,sans-serif}
+.leaflet-popup-content{margin:12px 14px;font-size:13px}
+.leaflet-popup-content-wrapper{border-radius:10px}
+.map-pin{display:grid;place-items:center;width:34px;height:34px;border-radius:50% 50% 50% 4px;
+  transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.35);cursor:pointer}
+.map-pin i{transform:rotate(45deg);color:#fff;font-size:14px}
+.map-pin-count{position:absolute;top:-7px;right:-9px;min-width:19px;height:19px;padding:0 5px;border-radius:999px;
+  background:#EF4444;color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center;
+  border:2px solid #fff;line-height:1;box-shadow:0 1px 3px rgba(15,23,42,.3)}
+.map-pin-wrap{position:relative;width:34px;height:34px}
+.map-pin-wrap.dim .map-pin{opacity:.45}
+/* ป้ายชื่อโครงการที่ติดอยู่กับหมุดตลอดเวลา */
+.map-label{background:rgba(255,255,255,.96);border:1px solid var(--line);border-radius:8px;
+  padding:3px 9px;font-family:Kanit,sans-serif;font-size:12px;font-weight:500;color:var(--text);
+  box-shadow:0 2px 6px rgba(15,23,42,.18);white-space:nowrap}
+.map-label:before{display:none}
+.map-label .ml-n{color:var(--muted);font-size:11px;margin-left:5px}
+.map-label.dim{opacity:.55}
+.map-label.on{border-color:var(--primary);color:var(--primary);box-shadow:0 2px 10px rgba(30,64,175,.28)}
+
+/* ── การ์ดงานแจ้งซ่อมที่ยังไม่เสร็จ ─────────────────────────────── */
+.job-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:14px}
+.job-card{position:relative;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px 13px 18px;
+  cursor:pointer;transition:box-shadow .15s,transform .15s,border-color .15s;overflow:hidden}
+.job-card:hover{box-shadow:0 6px 18px rgba(15,23,42,.10);transform:translateY(-2px);border-color:#CBD5E1}
+.job-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--job-color,#64748B)}
+.job-card .jc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.job-card .jc-run{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--primary);font-weight:600}
+.job-card .jc-title{font-size:14px;font-weight:500;line-height:1.45;margin-bottom:9px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.job-card .jc-meta{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--muted)}
+.job-card .jc-meta .row{display:flex;align-items:center;gap:7px;min-width:0}
+.job-card .jc-meta .row i{width:13px;text-align:center;flex-shrink:0}
+.job-card .jc-meta .row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.job-card .jc-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-top:11px;padding-top:9px;border-top:1px dashed var(--line);font-size:12px;color:var(--muted)}
+.job-card .jc-age{display:inline-flex;align-items:center;gap:5px;font-weight:500}
+.job-card.is-cancel{opacity:.62}
+.job-card.is-cancel .jc-title{text-decoration:line-through;text-decoration-color:#CBD5E1}
+@media (max-width:600px){.job-grid{grid-template-columns:1fr}.map-box{height:320px}}
 .filters{display:flex;gap:10px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--line);background:#FAFBFC;border-radius:var(--radius) var(--radius) 0 0}
 .filters .search-input input{width:320px}
 .filters select{padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;outline:none;font-size:13.5px;min-width:150px}
@@ -412,53 +521,10 @@ table.data tr:last-child td{border-bottom:0}
 <body>
 <div id="root"></div>
 
-<script>
-(function(){
-  // เปิดผ่านแอปอัตโนมัติถ้าติดตั้งไว้ (Android) — ถ้าไม่มีแอป ให้ถามว่าจะเปิดแอปหรือใช้เว็บ
-  if(!/Android/i.test(navigator.userAgent || "")) return;
-  if(sessionStorage.getItem("rms_use_web") === "1") return;
-
-  var APP_PACKAGE = "com.panamanee.repairmanagement";
-  var APP_SCHEME = "repairapp";
-  var DOWNLOAD_URL = "https://panamanee2026.onrender.com/download-app.html";
-  var appOpened = false;
-
-  function markOpened(){ appOpened = true; }
-  document.addEventListener("visibilitychange", function(){ if(document.hidden) markOpened(); });
-  window.addEventListener("blur", markOpened);
-  window.addEventListener("pagehide", markOpened);
-
-  window.location.href = "intent://open#Intent;scheme=" + APP_SCHEME + ";package=" + APP_PACKAGE + ";end";
-
-  setTimeout(function(){
-    if(appOpened) return;
-    showAppPrompt();
-  }, 1200);
-
-  function showAppPrompt(){
-    var overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:99999;font-family:'Kanit',sans-serif;padding:20px";
-    overlay.innerHTML =
-      '<div style="background:#fff;border-radius:20px;max-width:360px;width:100%;padding:28px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.25)">' +
-        '<div style="width:56px;height:56px;border-radius:16px;background:#EFF6FF;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 14px">🔧</div>' +
-        '<h3 style="margin:0 0 6px;font-size:17px;color:#0F172A">เปิดผ่านแอปหรือเว็บ?</h3>' +
-        '<p style="margin:0 0 20px;font-size:13px;color:#64748B;line-height:1.6">ดูเหมือนยังไม่ได้ติดตั้งแอปบนอุปกรณ์นี้ เลือกวิธีที่ต้องการใช้งาน</p>' +
-        '<button id="__goApp" style="width:100%;padding:13px;border-radius:12px;background:#1E40AF;color:#fff;font-weight:600;font-size:14.5px;margin-bottom:10px;font-family:inherit;border:0">📲 ดาวน์โหลด/เปิดแอป</button>' +
-        '<button id="__goWeb" style="width:100%;padding:13px;border-radius:12px;background:#F1F5F9;color:#475569;font-weight:600;font-size:14.5px;font-family:inherit;border:0">🌐 ใช้งานผ่านเว็บ</button>' +
-      '</div>';
-    document.body.appendChild(overlay);
-    document.getElementById("__goApp").onclick = function(){
-      window.location.href = DOWNLOAD_URL;
-    };
-    document.getElementById("__goWeb").onclick = function(){
-      overlay.remove();
-      try { sessionStorage.setItem("rms_use_web", "1"); } catch(e){}
-    };
-  }
-})();
-</script>
 
 <script defer src="app.build.js"></script>
+
+
 
 
 

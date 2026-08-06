@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 463) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 527) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -180,6 +180,7 @@ async function _seedIfEmpty() {
   const projects = [{
     id: 'PJ001',
     name: 'โรงงาน A - สายการผลิต 1',
+    shortName: 'โรงงาน A1',
     code: 'PRJ-A1',
     desc: '',
     status: 'active',
@@ -188,6 +189,7 @@ async function _seedIfEmpty() {
   }, {
     id: 'PJ002',
     name: 'โรงงาน A - สายการผลิต 2',
+    shortName: 'โรงงาน A2',
     code: 'PRJ-A2',
     desc: '',
     status: 'active',
@@ -196,6 +198,7 @@ async function _seedIfEmpty() {
   }, {
     id: 'PJ003',
     name: 'โรงงาน B - ห้องบรรจุ',
+    shortName: 'โรงงาน B1',
     code: 'PRJ-B1',
     desc: '',
     status: 'active',
@@ -204,6 +207,7 @@ async function _seedIfEmpty() {
   }, {
     id: 'PJ004',
     name: 'โรงงาน B - คลังสินค้า',
+    shortName: 'โรงงาน B2',
     code: 'PRJ-B2',
     desc: '',
     status: 'active',
@@ -219,8 +223,281 @@ window.setupDatabase = async function () {
   await _seedIfEmpty();
   console.log('✅ Database seeded. Admin: admin / komdevil99');
 };
+const _DELETE_OPS = {
+  deleteProject: {
+    label: 'โครงการ',
+    key: 'id',
+    exec: async p => {
+      await _db.ref('/projects/' + p.id).remove();
+    }
+  },
+  deleteUser: {
+    label: 'ผู้ใช้งาน',
+    key: 'id',
+    exec: async p => {
+      await _db.ref('/users/' + p.id).remove();
+    }
+  },
+  deleteCategory: {
+    label: 'หมวดหมู่งาน',
+    key: 'id',
+    exec: async p => {
+      await _db.ref('/categories/' + p.id).remove();
+    }
+  },
+  deleteMachine: {
+    label: 'เครื่องจักร',
+    key: 'id',
+    exec: async p => {
+      await _db.ref('/machines/' + p.id).remove();
+    }
+  },
+  deleteRepair: {
+    label: 'ใบแจ้งซ่อม',
+    key: 'id',
+    exec: async p => {
+      await _db.ref('/repairs/' + p.id).remove();
+    }
+  },
+  deleteWithdrawal: {
+    label: 'รายการเบิกของ',
+    key: 'key',
+    exec: async p => {
+      await _db.ref('/withdrawals/' + p.key).remove();
+    }
+  },
+  deleteAssetRegistry: {
+    label: 'ทะเบียนทรัพย์สิน',
+    key: 'key',
+    exec: async p => {
+      await _assetDb.ref('/assets/' + p.key).remove();
+    }
+  },
+  deleteDeliveryOrder: {
+    label: 'ใบส่งของ (DO)',
+    key: 'key',
+    exec: async p => {
+      await _assetDb.ref('/deliveryOrders/' + p.key).remove();
+    }
+  },
+  deleteTransferEntry: {
+    label: 'ประวัติการย้ายเครื่องจักร',
+    key: 'machineId',
+    exec: async p => {
+      const ref = _db.ref('/machines/' + p.machineId + '/transferHistory');
+      const raw = (await ref.get()).val();
+      const arr = Array.isArray(raw) ? raw.slice() : Object.values(raw || {});
+      let idx = -1;
+      if (typeof p.index === 'number' && arr[p.index] && String(arr[p.index].when || '') === String(p.when || '')) idx = p.index;
+      if (idx < 0) idx = arr.findIndex(t => t && String(t.when || '') === String(p.when || '') && String(t.to || '') === String(p.to || ''));
+      if (idx < 0) throw new Error('ไม่พบรายการประวัติการย้ายนี้ (อาจถูกลบไปแล้ว)');
+      arr.splice(idx, 1);
+      await ref.set(arr);
+      return {
+        transferHistory: arr
+      };
+    }
+  }
+};
+function _delTargetKey(action, payload = {}) {
+  const op = _DELETE_OPS[action];
+  const base = String(op && payload[op.key] || payload.id || payload.key || '');
+  return action === 'deleteTransferEntry' ? base + '|' + String(payload.when || '') : base;
+}
+const LOGIN_LOG_KEEP = 100;
+async function _pruneLoginLogs() {
+  try {
+    const snap = await _db.ref('/loginLogs').get();
+    const all = Object.entries(snap.val() || {});
+    if (all.length <= LOGIN_LOG_KEEP) return 0;
+    const ts = e => {
+      const t = Date.parse(e[1] && e[1].when || '');
+      return isNaN(t) ? 0 : t;
+    };
+    all.sort((a, b) => ts(b) - ts(a));
+    const updates = {};
+    all.slice(LOGIN_LOG_KEEP).forEach(([key]) => {
+      updates[key] = null;
+    });
+    await _db.ref('/loginLogs').update(updates);
+    return Object.keys(updates).length;
+  } catch (e) {
+    console.warn('[loginLogs] ลบประวัติเก่าไม่สำเร็จ:', e && e.message);
+    return 0;
+  }
+}
+async function _logDelete(entry) {
+  try {
+    const ref = _db.ref('/deleteLogs').push();
+    await ref.set({
+      id: ref.key,
+      when: new Date().toISOString(),
+      ...entry
+    });
+  } catch (e) {}
+}
 async function api(action, payload = {}) {
   switch (action) {
+    case 'deleteProject':
+    case 'deleteUser':
+    case 'deleteCategory':
+    case 'deleteMachine':
+    case 'deleteRepair':
+    case 'deleteWithdrawal':
+    case 'deleteAssetRegistry':
+    case 'deleteDeliveryOrder':
+    case 'deleteTransferEntry':
+      {
+        const by = payload.by || {};
+        const role = String(payload.role || by.role || '');
+        if (role !== 'Admin') {
+          throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ลบข้อมูลได้ · กรุณาส่งคำขออนุมัติลบ');
+        }
+        const result = await _DELETE_OPS[action].exec(payload);
+        const targetKey = _delTargetKey(action, payload);
+        await _logDelete({
+          action,
+          via: 'admin',
+          entityLabel: _DELETE_OPS[action].label,
+          targetKey,
+          targetName: payload.targetName || '',
+          byId: by.id || '',
+          byName: by.name || '',
+          byRole: role
+        });
+        try {
+          const all = (await _db.ref('/deleteRequests').get()).val() || {};
+          const closes = Object.values(all).filter(x => x && x.status === 'pending' && x.action === action && String(x.targetKey) === targetKey);
+          for (const c of closes) {
+            await _db.ref('/deleteRequests/' + c.id).update({
+              status: 'approved',
+              decidedAt: new Date().toISOString(),
+              decidedById: by.id || '',
+              decidedByName: by.name || '',
+              decideNote: 'ผู้ดูแลระบบลบข้อมูลนี้เองแล้ว',
+              lastError: null
+            });
+          }
+        } catch (e) {}
+        return {
+          deleted: true,
+          ...(result || {})
+        };
+      }
+    case 'requestDelete':
+      {
+        const req = payload.req || {};
+        const op = _DELETE_OPS[req.action];
+        if (!op) throw new Error('ไม่รองรับการขอลบข้อมูลประเภทนี้');
+        if (!String(req.reason || '').trim()) throw new Error('กรุณาระบุเหตุผลที่ต้องการลบ');
+        const targetKey = _delTargetKey(req.action, req.payload || {});
+        const all = Object.values((await _db.ref('/deleteRequests').get()).val() || {});
+        if (all.some(x => x && x.status === 'pending' && x.action === req.action && String(x.targetKey) === targetKey)) {
+          throw new Error('รายการนี้มีคำขอลบรออนุมัติอยู่แล้ว');
+        }
+        const ref = _db.ref('/deleteRequests').push();
+        const rec = {
+          id: ref.key,
+          action: req.action,
+          entityLabel: req.entityLabel || op.label,
+          targetKey,
+          targetName: String(req.targetName || ''),
+          targetInfo: String(req.targetInfo || ''),
+          project: String(req.project || ''),
+          payload: JSON.parse(JSON.stringify(req.payload || {})),
+          reason: String(req.reason).trim(),
+          requesterId: String(req.requesterId || ''),
+          requesterName: String(req.requesterName || ''),
+          requesterRole: String(req.requesterRole || ''),
+          requestedAt: new Date().toISOString(),
+          status: 'pending'
+        };
+        await ref.set(rec);
+        return rec;
+      }
+    case 'listDeleteRequests':
+      {
+        const all = Object.values((await _db.ref('/deleteRequests').get()).val() || {});
+        return all.sort((a, b) => String(b.requestedAt || '').localeCompare(String(a.requestedAt || '')));
+      }
+    case 'approveDelete':
+      {
+        const {
+          id,
+          note
+        } = payload;
+        const by = payload.by || {};
+        if (String(by.role || '') !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่อนุมัติได้');
+        const ref = _db.ref('/deleteRequests/' + id);
+        const rec = (await ref.get()).val();
+        if (!rec) throw new Error('ไม่พบคำขอนี้');
+        if (rec.status !== 'pending') throw new Error('คำขอนี้ถูกดำเนินการไปแล้ว');
+        const op = _DELETE_OPS[rec.action];
+        if (!op) throw new Error('ไม่รองรับการลบข้อมูลประเภทนี้');
+        let result = null;
+        try {
+          result = await op.exec(rec.payload || {});
+        } catch (e) {
+          await ref.update({
+            lastError: String(e && e.message || e)
+          });
+          throw e;
+        }
+        const patch = {
+          status: 'approved',
+          decidedAt: new Date().toISOString(),
+          decidedById: by.id || '',
+          decidedByName: by.name || '',
+          decideNote: String(note || ''),
+          lastError: null
+        };
+        await ref.update(patch);
+        await _logDelete({
+          action: rec.action,
+          via: 'approved',
+          requestId: rec.id,
+          entityLabel: rec.entityLabel,
+          targetKey: rec.targetKey,
+          targetName: rec.targetName,
+          byId: by.id || '',
+          byName: by.name || '',
+          byRole: 'Admin',
+          requesterId: rec.requesterId,
+          requesterName: rec.requesterName,
+          reason: rec.reason
+        });
+        return {
+          ...rec,
+          ...patch,
+          result
+        };
+      }
+    case 'rejectDelete':
+      {
+        const {
+          id,
+          note
+        } = payload;
+        const by = payload.by || {};
+        if (String(by.role || '') !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ปฏิเสธคำขอได้');
+        const ref = _db.ref('/deleteRequests/' + id);
+        const rec = (await ref.get()).val();
+        if (!rec) throw new Error('ไม่พบคำขอนี้');
+        if (rec.status !== 'pending') throw new Error('คำขอนี้ถูกดำเนินการไปแล้ว');
+        const patch = {
+          status: 'rejected',
+          decidedAt: new Date().toISOString(),
+          decidedById: by.id || '',
+          decidedByName: by.name || '',
+          decideNote: String(note || ''),
+          lastError: null
+        };
+        await ref.update(patch);
+        return {
+          ...rec,
+          ...patch
+        };
+      }
     case 'login':
       {
         const {
@@ -240,6 +517,7 @@ async function api(action, payload = {}) {
           dept: user.dept || "",
           when: new Date().toISOString()
         });
+        _pruneLoginLogs();
         const safe = {
           ...user
         };
@@ -296,16 +574,6 @@ async function api(action, payload = {}) {
           key: cleanKey
         };
       }
-    case 'deleteWithdrawal':
-      {
-        const {
-          key
-        } = payload;
-        await _db.ref('/withdrawals/' + key).remove();
-        return {
-          deleted: true
-        };
-      }
     case 'createProject':
       {
         const {
@@ -325,16 +593,6 @@ async function api(action, payload = {}) {
         await _db.ref('/projects/' + id).update(patch);
         return {
           updated: true
-        };
-      }
-    case 'deleteProject':
-      {
-        const {
-          id
-        } = payload;
-        await _db.ref('/projects/' + id).remove();
-        return {
-          deleted: true
         };
       }
     case 'createUser':
@@ -376,16 +634,6 @@ async function api(action, payload = {}) {
           password: snap.val() || ""
         };
       }
-    case 'deleteUser':
-      {
-        const {
-          id
-        } = payload;
-        await _db.ref('/users/' + id).remove();
-        return {
-          deleted: true
-        };
-      }
     case 'createCategory':
       {
         const {
@@ -406,16 +654,6 @@ async function api(action, payload = {}) {
           updated: true
         };
       }
-    case 'deleteCategory':
-      {
-        const {
-          id
-        } = payload;
-        await _db.ref('/categories/' + id).remove();
-        return {
-          deleted: true
-        };
-      }
     case 'createMachine':
       {
         const {
@@ -434,16 +672,6 @@ async function api(action, payload = {}) {
         await _db.ref('/machines/' + id).update(patch);
         return {
           updated: true
-        };
-      }
-    case 'deleteMachine':
-      {
-        const {
-          id
-        } = payload;
-        await _db.ref('/machines/' + id).remove();
-        return {
-          deleted: true
         };
       }
     case 'uploadPJ2Document':
@@ -515,16 +743,6 @@ async function api(action, payload = {}) {
         return {
           key: id,
           ...clean
-        };
-      }
-    case 'deleteAssetRegistry':
-      {
-        const {
-          key
-        } = payload;
-        await _assetDb.ref('/assets/' + key).remove();
-        return {
-          deleted: true
         };
       }
     case 'transferAssets':
@@ -622,16 +840,6 @@ async function api(action, payload = {}) {
           key,
           ...(v || {})
         }));
-      }
-    case 'deleteDeliveryOrder':
-      {
-        const {
-          key
-        } = payload;
-        await _assetDb.ref('/deliveryOrders/' + key).remove();
-        return {
-          deleted: true
-        };
       }
     case 'cancelDeliveryOrder':
       {
@@ -1016,18 +1224,6 @@ async function api(action, payload = {}) {
           warnings
         };
       }
-    case 'deleteRepair':
-      {
-        const {
-          id,
-          role
-        } = payload;
-        if (role !== 'Admin') throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ลบใบแจ้งซ่อมได้');
-        await _db.ref('/repairs/' + id).remove();
-        return {
-          deleted: true
-        };
-      }
     case 'updateRepairProblems':
       {
         const {
@@ -1115,11 +1311,14 @@ async function api(action, payload = {}) {
       }
     case 'getLoginLogs':
       {
+        const removed = await _pruneLoginLogs();
         const snap = await _db.ref('/loginLogs').get();
         const logs = snap.val() ? Object.values(snap.val()) : [];
         logs.sort((a, b) => new Date(b.when) - new Date(a.when));
         return {
-          logs
+          logs: logs.slice(0, LOGIN_LOG_KEEP),
+          keep: LOGIN_LOG_KEEP,
+          removed
         };
       }
     default:
@@ -1128,7 +1327,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1207) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1426) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1258,6 +1457,11 @@ window.getProjectCode = name => {
   const p = (window.__DATA.projects || []).find(x => (typeof x === "string" ? x : x.name) === name);
   return p && p.code ? String(p.code) : "";
 };
+window.projectShort = name => {
+  const p = window.getProject(name);
+  return p && (p.shortName || p.code) || String(name || "");
+};
+window.projectFull = name => String(name || "");
 window.getActiveProject = user => user?.activeProject || window.__DATA.activeProject || "";
 window.getActiveErp = user => user?.activeErp || window.__DATA.activeErp || null;
 window.canUseErp = (user, sys) => {
@@ -1265,11 +1469,12 @@ window.canUseErp = (user, sys) => {
   if (Array.isArray(sys.roles) && sys.roles.length) return sys.roles.includes(user?.role);
   return true;
 };
+window.PROJECT_LOCKED_ROLES = ["Engineer", "Safety Officer"];
 window.userCanSeeAllProjects = user => {
   if (!user) return false;
   if (window.getActiveProject(user)) return false;
   if (["Admin", "Director"].includes(user.role)) return true;
-  if (user.role === "Engineer") return false;
+  if (window.PROJECT_LOCKED_ROLES.includes(user.role)) return false;
   return !user.projects || !Array.isArray(user.projects) || user.projects.length === 0;
 };
 window.userProjects = user => {
@@ -1282,6 +1487,8 @@ window.userProjects = user => {
   return (Array.isArray(user.projects) ? user.projects : []).filter(p => allNames.includes(p));
 };
 window.getProject = name => (window.__DATA.projects || []).find(p => p.name === name) || null;
+window.isOpsRole = user => ["Admin", "Officer", "Engineer", "Safety Officer"].includes(user?.role);
+window.defaultPageFor = user => user?.role === "Reporter" ? "r-dashboard" : "dashboard";
 window.userCanSeeProject = (user, project) => {
   const activeProject = window.getActiveProject(user);
   if (activeProject) return !project || project === activeProject;
@@ -1296,6 +1503,20 @@ window.filterByUserProjects = (user, items, projectKey = "project") => {
   const allowed = new Set(user.projects || []);
   return items.filter(x => !x[projectKey] || allowed.has(x[projectKey]));
 };
+window.allowedProjectNames = user => {
+  const all = (window.__DATA.projects || []).map(p => p.name).filter(Boolean);
+  if (!user) return [];
+  if (["Admin", "Director"].includes(user.role)) return all;
+  const assigned = (Array.isArray(user.projects) ? user.projects : []).filter(p => all.includes(p));
+  if (window.PROJECT_LOCKED_ROLES.includes(user.role)) return assigned;
+  return assigned.length ? assigned : all;
+};
+window.visibleProjects = (user, {
+  includeInactive = false
+} = {}) => {
+  const allowed = new Set(window.allowedProjectNames(user));
+  return (window.__DATA.projects || []).filter(p => includeInactive || p.status !== "inactive").filter(p => allowed.has(p.name));
+};
 window.avatarColor = name => {
   const colors = ["#3B82F6", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#06B6D4", "#EC4899", "#6366F1"];
   let h = 0;
@@ -1303,8 +1524,1103 @@ window.avatarColor = name => {
   return colors[h % colors.length];
 };
 window.initials = name => (name || "").split(" ").map(s => s[0]).join("").slice(0, 2).toUpperCase();
+const KW_STOP = new Set(["และ", "หรือ", "แต่", "กับ", "ของ", "ที่", "ใน", "จาก", "เมื่อ", "ตอน", "ช่วง", "เพราะ", "ถ้า", "จะ", "ให้", "ได้", "มี", "เป็น", "อยู่", "แล้ว", "ยัง", "มา", "ไป", "ขึ้น", "ลง", "ออก", "เข้า", "อีก", "ด้วย", "เลย", "พอ", "มาก", "น้อย", "ทั้ง", "ทุก", "บาง", "นี้", "นั้น", "การ", "ความ", "ทำ", "ต้อง", "ช่วย", "ขอ", "หน่อย", "ครับ", "ค่ะ", "คะ", "ก็", "คือ", "ว่า", "ดู", "ใช้", "ใช่", "แจ้ง", "ซ่อม", "งาน", "เครื่อง", "ตัว", "ชิ้น", "จุด", "อัน", "ราย", "หมายเลข", "เบอร์", "ประมาณ", "วันที่", "เวลา", "ปัญหา", "อาการ", "สาเหตุ", "ตรวจ", "สอบ", "ไม่มี", "อะไร", "เกิด", "ปกติ", "มัน", "ควร", "น่าจะ", "คาด", "อาจ", "ตาม", "ที", "the", "and", "for", "with", "not", "are", "was", "this", "that", "have", "has", "from", "out", "been", "also", "only", "very"]);
+const KW_NEG = new Set(["ไม่", "ไม่ได้", "มิ"]);
+const KW_DICT = [{
+  k: "สายไฮดรอลิคแตก",
+  g: "ไฮดรอลิค",
+  a: ["สายไฮดรอลิกแตก", "สายไฮโดรลิคแตก", "สายไฮโดรลิกแตก", "ท่อไฮดรอลิคแตก", "ท่อไฮดรอลิกแตก", "สายไฮดรอลิคระเบิด", "สายไฮดรอลิกระเบิด", "สายไฮดรอลิคขาด", "สายไฮดรอลิกขาด"]
+}, {
+  k: "สายไฮดรอลิครั่ว",
+  g: "ไฮดรอลิค",
+  a: ["สายไฮดรอลิกรั่ว", "ท่อไฮดรอลิครั่ว", "ท่อไฮดรอลิกรั่ว", "สายไฮดรอลิคซึม", "สายไฮดรอลิกซึม"]
+}, {
+  k: "น้ำมันไฮดรอลิครั่ว",
+  g: "ไฮดรอลิค",
+  a: ["น้ำมันไฮดรอลิกรั่ว", "น้ำมันไฮดรอลิคซึม", "น้ำมันไฮโดรลิครั่ว"]
+}, {
+  k: "ปั๊มไฮดรอลิคเสีย",
+  g: "ไฮดรอลิค",
+  a: ["ปั๊มไฮดรอลิกเสีย", "ปั๊มไฮดรอลิคไม่ทำงาน", "ปั๊มไฮดรอลิกไม่ทำงาน"]
+}, {
+  k: "กระบอกไฮดรอลิครั่ว",
+  g: "ไฮดรอลิค",
+  a: ["กระบอกไฮดรอลิกรั่ว", "กระบอกไฮดรอลิคซึม"]
+}, {
+  k: "ไฮดรอลิค",
+  a: ["ไฮดรอลิก", "ไฮโดรลิค", "ไฮโดรลิก", "ไฮดรอลิกส์", "ไฮดรอริค"]
+}, {
+  k: "สลิงเครนเจาะแตก",
+  g: "สลิง",
+  a: ["สลิงเครนเจาะขาด", "สลิงเจาะแตก", "สลิงเจาะขาด", "สลิงเครนแตก", "สลิงเครนขาด"]
+}, {
+  k: "สลิงขาด",
+  g: "สลิง",
+  a: ["สลิงแตก", "สลิงชำรุด", "ลวดสลิงขาด", "ลวดสลิงแตก"]
+}, {
+  k: "เครนยกไม่ขึ้น",
+  g: "เครน",
+  a: ["ยกของไม่ขึ้น", "ยกไม่ขึ้น", "เครนยกของไม่ขึ้น", "บูมยกไม่ขึ้น"]
+}, {
+  k: "บูมตก",
+  g: "เครน",
+  a: ["แขนบูมตก", "บูมทรุด", "บูมไหล"]
+}, {
+  k: "ดอกเจาะสึก",
+  g: "งานเจาะ",
+  a: ["ดอกเจาะหมด", "ดอกเจาะสึกหรอ", "หัวเจาะสึก"]
+}, {
+  k: "ก้านเจาะคด",
+  g: "งานเจาะ",
+  a: ["ก้านเจาะงอ", "ก้านเจาะหัก"]
+}, {
+  k: "สลิง",
+  a: ["ลวดสลิง"]
+}, {
+  k: "เครน",
+  a: ["รถเครน", "เครนเจาะ"]
+}, {
+  k: "รอก",
+  a: ["รอกไฟฟ้า", "ตะขอรอก"]
+}, {
+  k: "สตาร์ทไม่ติด",
+  g: "สตาร์ท",
+  a: ["สตาร์ทไม่ได้", "สตาร์ทไม่ออก", "ติดเครื่องไม่ได้", "ติดเครื่องไม่ติด", "สตาร์ทแล้วไม่ติด", "สตาร์ตไม่ติด"]
+}, {
+  k: "เครื่องโหลด",
+  g: "เครื่องยนต์",
+  a: ["เครื่องมีโหลด", "เครื่องกินโหลด", "โหลดเครื่อง", "เครื่องโหลดหนัก", "รอบตกเวลาโหลด"]
+}, {
+  k: "เครื่องดับเอง",
+  g: "เครื่องยนต์",
+  a: ["เครื่องดับ", "ดับเอง", "เครื่องดับกลางทาง", "เครื่องน็อค"]
+}, {
+  k: "เครื่องร้อนจัด",
+  g: "เครื่องยนต์",
+  a: ["ความร้อนขึ้นสูง", "ความร้อนสูง", "โอเวอร์ฮีท", "น้ำเดือด", "ความร้อนขึ้น"]
+}, {
+  k: "รอบเครื่องตก",
+  g: "เครื่องยนต์",
+  a: ["รอบตก", "กำลังตก", "แรงตก", "เครื่องไม่มีกำลัง", "กำลังไม่พอ"]
+}, {
+  k: "ควันดำ",
+  g: "เครื่องยนต์",
+  a: ["ควันดำมาก", "ควันออกดำ"]
+}, {
+  k: "ควันขาว",
+  g: "เครื่องยนต์",
+  a: ["ควันขาวมาก"]
+}, {
+  k: "เครื่องสั่น",
+  g: "เครื่องยนต์",
+  a: ["สั่นสะเทือน", "สั่นผิดปกติ", "เครื่องสั่นผิดปกติ"]
+}, {
+  k: "ไฟไม่ติด",
+  g: "ระบบไฟฟ้า",
+  a: ["ไฟไม่เข้า", "ไฟไม่มา", "ไม่มีไฟเข้า", "ไฟดับ"]
+}, {
+  k: "ไฟรั่ว",
+  g: "ระบบไฟฟ้า",
+  a: ["ไฟรั่วลงกราวด์", "ไฟช็อต", "ไฟดูด"]
+}, {
+  k: "เบรกเกอร์ทริป",
+  g: "ระบบไฟฟ้า",
+  a: ["เบรกเกอร์ตัด", "เบรกเกอร์เด้ง", "เบรกเกอร์ตัดบ่อย", "เมนตัด"]
+}, {
+  k: "แบตเตอรี่เสื่อม",
+  g: "แบตเตอรี่",
+  a: ["แบตเสื่อม", "แบตหมด", "แบตเตอรี่หมด", "แบตไฟอ่อน", "แบตเตอรี่ไฟอ่อน"]
+}, {
+  k: "ไดชาร์จไม่ชาร์จ",
+  g: "ระบบไฟฟ้า",
+  a: ["ไดชาร์จเสีย", "ไฟไม่ชาร์จ"]
+}, {
+  k: "มอเตอร์ไหม้",
+  g: "มอเตอร์",
+  a: ["มอเตอร์ไหม้เสียหาย", "ขดลวดไหม้"]
+}, {
+  k: "ลัดวงจร",
+  g: "ระบบไฟฟ้า",
+  a: ["ช็อต", "ไฟช็อตวงจร"]
+}, {
+  k: "สายพานขาด",
+  g: "สายพาน",
+  a: ["สายพานหลุด", "สายพานหย่อน", "สายพานเปื่อย"]
+}, {
+  k: "โซ่ขาด",
+  g: "โซ่",
+  a: ["โซ่หลุด", "โซ่ยืด"]
+}, {
+  k: "เบรกไม่อยู่",
+  g: "เบรก",
+  a: ["เบรกหาย", "เบรกจม", "เบรกไม่ค่อยอยู่", "ผ้าเบรกหมด"]
+}, {
+  k: "เกียร์เข้ายาก",
+  g: "เกียร์",
+  a: ["เข้าเกียร์ไม่ได้", "เกียร์หลุด", "เกียร์ค้าง"]
+}, {
+  k: "คลัตช์ลื่น",
+  g: "คลัตช์",
+  a: ["ครัชลื่น", "คลัชลื่น"]
+}, {
+  k: "ยางแตก",
+  g: "ยาง",
+  a: ["ยางระเบิด", "ยางรั่ว", "ยางแบน"]
+}, {
+  k: "ลูกปืนแตก",
+  g: "ลูกปืน",
+  a: ["แบริ่งแตก", "ลูกปืนเสีย", "แบริ่งเสีย"]
+}, {
+  k: "น้ำมันเครื่องรั่ว",
+  g: "น้ำมัน",
+  a: ["น้ำมันเครื่องซึม", "น้ำมันรั่ว", "น้ำมันซึม"]
+}, {
+  k: "น้ำรั่ว",
+  a: ["น้ำซึม", "หม้อน้ำรั่ว", "ท่อน้ำรั่ว"]
+}, {
+  k: "ลมรั่ว",
+  a: ["ลมซึม", "ท่อลมรั่ว"]
+}, {
+  k: "ซีลรั่ว",
+  a: ["ซีลแตก", "ปะเก็นรั่ว", "ปะเก็นแตก", "โอริงแตก"]
+}, {
+  k: "แอร์ไม่เย็น",
+  g: "แอร์",
+  a: ["แอร์เย็นน้อย", "แอร์ไม่ค่อยเย็น"]
+}, {
+  k: "คอมเพรสเซอร์ไม่ทำงาน",
+  g: "คอมเพรสเซอร์",
+  a: ["คอมแอร์ไม่ทำงาน", "คอมเพรสเซอร์เสีย"]
+}, {
+  k: "ปั๊มน้ำไม่ทำงาน",
+  g: "ปั๊ม",
+  a: ["ปั๊มน้ำเสีย", "ปั๊มไม่ทำงาน"]
+}, {
+  k: "เสียงดังผิดปกติ",
+  a: ["มีเสียงดัง", "เสียงดัง", "เสียงผิดปกติ", "เสียงครูดๆ"]
+}, {
+  k: "อุดตัน",
+  a: ["ตัน", "ไส้กรองตัน", "กรองตัน"]
+}, {
+  k: "รีโมทไม่ทำงาน",
+  a: ["รีโมทเสีย", "รีโมทกดไม่ติด"]
+}, {
+  k: "ลิมิตสวิตช์เสีย",
+  a: ["ลิมิตสวิตซ์เสีย", "ลิมิตเสีย"]
+}, {
+  k: "มอเตอร์"
+}, {
+  k: "เกียร์"
+}, {
+  k: "คลัตช์",
+  a: ["ครัช", "คลัช"]
+}, {
+  k: "สายพาน"
+}, {
+  k: "โซ่"
+}, {
+  k: "เพลา"
+}, {
+  k: "ปั๊ม"
+}, {
+  k: "วาล์ว"
+}, {
+  k: "รีเลย์"
+}, {
+  k: "ฟิวส์"
+}, {
+  k: "คอนแทกเตอร์"
+}, {
+  k: "แมกเนติก"
+}, {
+  k: "อินเวอร์เตอร์"
+}, {
+  k: "โซลินอยด์"
+}, {
+  k: "เซ็นเซอร์",
+  a: ["เซนเซอร์"]
+}, {
+  k: "สายไฟ"
+}, {
+  k: "กราวด์"
+}, {
+  k: "หัวฉีด"
+}, {
+  k: "หัวเทียน"
+}, {
+  k: "พัดลม"
+}, {
+  k: "ใบพัด"
+}, {
+  k: "คอยล์"
+}, {
+  k: "ข้อต่อ"
+}, {
+  k: "ล้อ"
+}, {
+  k: "ยาง"
+}, {
+  k: "เบรก"
+}, {
+  k: "แอร์"
+}, {
+  k: "แบตเตอรี่",
+  a: ["แบต"]
+}, {
+  k: "คอมเพรสเซอร์",
+  a: ["คอมแอร์"]
+}, {
+  k: "เรดิเอเตอร์"
+}, {
+  k: "หม้อน้ำ"
+}, {
+  k: "ไส้กรอง",
+  a: ["กรองน้ำมัน", "กรองอากาศ"]
+}, {
+  k: "กระบอกสูบ"
+}, {
+  k: "ลูกสูบ"
+}, {
+  k: "ลูกปืน"
+}, {
+  k: "แบริ่ง"
+}, {
+  k: "ปะเก็น"
+}, {
+  k: "ตู้คอนโทรล",
+  a: ["ตู้ควบคุม"]
+}, {
+  k: "จอแสดงผล"
+}, {
+  k: "นิวเมติก"
+}, {
+  k: "น้ำมัน"
+}, {
+  k: "น้ำหล่อเย็น"
+}, {
+  k: "จาระบี"
+}, {
+  k: "ตีนตะขาบ"
+}, {
+  k: "บุ้งกี๋"
+}, {
+  k: "บูม",
+  a: ["แขนบูม"]
+}, {
+  k: "สตาร์ท",
+  a: ["สตาร์ต"]
+}, {
+  k: "ไดสตาร์ท"
+}, {
+  k: "ไดชาร์จ"
+}, {
+  k: "รั่ว",
+  a: ["ซึม"]
+}, {
+  k: "แตก"
+}, {
+  k: "ขาด"
+}, {
+  k: "ไหม้"
+}, {
+  k: "หลวม"
+}, {
+  k: "สึกหรอ",
+  a: ["สึก"]
+}, {
+  k: "ติดขัด"
+}, {
+  k: "ระเบิด"
+}, {
+  k: "แตกร้าว",
+  a: ["ร้าว"]
+}, {
+  k: "ผิดปกติ"
+}, {
+  k: "เข้าปกติ"
+}];
+const KW_LOOKUP = [];
+KW_DICT.forEach(e => {
+  [e.k].concat(e.a || []).forEach(alias => KW_LOOKUP.push({
+    alias,
+    k: e.k,
+    g: e.g || ""
+  }));
+});
+KW_LOOKUP.sort((x, y) => y.alias.length - x.alias.length);
+window.extractKeywords = function (text) {
+  let raw = String(text || "").toLowerCase().replace(/[0-9๐-๙]+/g, " ").replace(/[^\p{L}\p{M}\s]+/gu, " ");
+  if (!raw.trim()) return [];
+  for (let i = 0; i < 4; i++) {
+    const next = raw.replace(/([฀-๿])[ \t]+([฀-๿])/g, "$1$2");
+    if (next === raw) break;
+    raw = next;
+  }
+  const found = [];
+  const add = w => {
+    if (w && found.indexOf(w) < 0) found.push(w);
+  };
+  for (const e of KW_LOOKUP) {
+    if (raw.indexOf(e.alias) >= 0) {
+      add(e.k);
+      if (e.g) add(e.g);
+      raw = raw.split(e.alias).join(" ");
+    }
+  }
+  let toks = [];
+  try {
+    if (typeof Intl !== "undefined" && Intl.Segmenter) {
+      const seg = window.__thSeg || (window.__thSeg = new Intl.Segmenter("th", {
+        granularity: "word"
+      }));
+      for (const s of seg.segment(raw)) if (s.isWordLike) toks.push(String(s.segment).trim());
+    } else {
+      toks = raw.split(/\s+/);
+    }
+  } catch (e) {
+    toks = raw.split(/\s+/);
+  }
+  const out = [];
+  for (let i = 0; i < toks.length; i++) {
+    let t = toks[i];
+    if (!t) continue;
+    if (KW_NEG.has(t)) {
+      const nxt = toks[i + 1];
+      if (nxt && !KW_STOP.has(nxt) && nxt.length >= 2) {
+        out.push(t + nxt);
+        i++;
+        continue;
+      }
+      continue;
+    }
+    if (KW_STOP.has(t)) continue;
+    const isThai = /[฀-๿]/.test(t);
+    if (t.length < (isThai ? 2 : 3)) continue;
+    out.push(t);
+  }
+  return found.concat(out);
+};
 
-/* ---- block 3 (ต้นฉบับบรรทัด 1324) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 1746) ---- */
+const DELREQ_SEEN_KEY = "rms_delreq_seen";
+window.__DELREQ = {
+  list: [],
+  ready: false,
+  user: null,
+  _subs: new Set(),
+  _ref: null,
+  _prev: null,
+  subscribe(fn) {
+    this._subs.add(fn);
+    return () => this._subs.delete(fn);
+  },
+  _emit() {
+    this._subs.forEach(fn => {
+      try {
+        fn(this.list);
+      } catch (e) {}
+    });
+  },
+  start(user) {
+    this.user = user || null;
+    if (this._ref) {
+      this._emit();
+      return;
+    }
+    try {
+      this._ref = firebase.database().ref("/deleteRequests").limitToLast(400);
+      this._ref.on("value", snap => {
+        const arr = Object.values(snap.val() || {}).filter(Boolean).sort((a, b) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
+        const prev = this._prev;
+        this.list = arr;
+        this.ready = true;
+        if (prev) arr.forEach(r => {
+          const before = prev.get(r.id);
+          if (before === undefined && r.status === "pending") this._announceNew(r);else if (before === "pending" && r.status !== "pending") {
+            if (r.status === "approved") {
+              try {
+                window.applyDeleteLocally(r.action, r.payload || {});
+              } catch (e) {}
+            }
+            this._announceDecision(r);
+          }
+        });
+        this._prev = new Map(arr.map(r => [r.id, r.status]));
+        this._emit();
+      }, err => {
+        console.warn("[deleteRequests] ฟังข้อมูลไม่สำเร็จ:", err && err.message);
+      });
+    } catch (e) {
+      console.warn("[deleteRequests]", e);
+    }
+  },
+  stop() {
+    if (this._ref) {
+      try {
+        this._ref.off();
+      } catch (e) {}
+    }
+    this._ref = null;
+    this._prev = null;
+    this.list = [];
+    this.ready = false;
+    this.user = null;
+    this._emit();
+  },
+  pending() {
+    return this.list.filter(r => r.status === "pending");
+  },
+  visibleTo(user) {
+    if (!user) return [];
+    if (user.role === "Admin") return this.list;
+    return this.list.filter(r => r.requesterId === user.id);
+  },
+  badgeFor(user) {
+    if (!user) return 0;
+    if (user.role === "Admin") return this.pending().length;
+    const seen = Number(localStorage.getItem(DELREQ_SEEN_KEY + ":" + user.id) || 0);
+    return this.list.filter(r => r.requesterId === user.id && r.status !== "pending" && new Date(r.decidedAt || 0).getTime() > seen).length;
+  },
+  markSeen(user) {
+    if (!user) return;
+    localStorage.setItem(DELREQ_SEEN_KEY + ":" + user.id, String(Date.now()));
+    this._emit();
+  },
+  _announceNew(r) {
+    if (!this.user || this.user.role !== "Admin") return;
+    const title = "มีคำขอลบข้อมูลรออนุมัติ";
+    const text = `${r.requesterName || "ผู้ใช้งาน"} ขอลบ${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}"`;
+    if (window.Swal) Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: "warning",
+      title,
+      text,
+      showConfirmButton: false,
+      timer: 6000,
+      timerProgressBar: true
+    });
+    this._beep();
+    this._push(title, text);
+  },
+  _announceDecision(r) {
+    if (!this.user || r.requesterId !== this.user.id) return;
+    const ok = r.status === "approved";
+    const title = ok ? "คำขอลบได้รับการอนุมัติแล้ว" : "คำขอลบไม่ได้รับอนุมัติ";
+    const text = `${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}" · โดย ${r.decidedByName || "ผู้ดูแลระบบ"}`;
+    if (window.Swal) Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: ok ? "success" : "info",
+      title,
+      text,
+      showConfirmButton: false,
+      timer: 6000,
+      timerProgressBar: true
+    });
+    this._push(title, text);
+  },
+  _push(title, body) {
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      new Notification(title, {
+        body,
+        icon: "logo.png",
+        tag: "rms-delete-request"
+      });
+    } catch (e) {}
+  },
+  _beep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx(),
+        osc = ctx.createOscillator(),
+        gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+      setTimeout(() => {
+        try {
+          ctx.close();
+        } catch (e) {}
+      }, 600);
+    } catch (e) {}
+  }
+};
+window.askNotifyPermission = function (user) {
+  try {
+    if (!user || user.role !== "Admin") return;
+    if (!("Notification" in window) || Notification.permission !== "default") return;
+    Notification.requestPermission().catch(() => {});
+  } catch (e) {}
+};
+window.useDeleteRequests = function (user) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    window.__DELREQ.start(user);
+    return window.__DELREQ.subscribe(() => setTick(t => t + 1));
+  }, [user && user.id]);
+  return {
+    all: window.__DELREQ.list,
+    mine: window.__DELREQ.visibleTo(user),
+    badge: window.__DELREQ.badgeFor(user),
+    ready: window.__DELREQ.ready,
+    _tick: tick
+  };
+};
+window.applyDeleteLocally = function (action, payload = {}) {
+  const D = window.__DATA;
+  const byId = arr => (arr || []).filter(x => x.id !== payload.id);
+  const byKey = arr => (arr || []).filter(x => x.key !== payload.key);
+  if (action === "deleteProject") D.projects = byId(D.projects);else if (action === "deleteUser") D.users = byId(D.users);else if (action === "deleteCategory") D.categories = byId(D.categories);else if (action === "deleteMachine") D.machines = byId(D.machines);else if (action === "deleteRepair") D.repairs = byId(D.repairs);else if (action === "deleteWithdrawal") D.withdrawals = byKey(D.withdrawals);else if (action === "deleteAssetRegistry") {
+    if (Array.isArray(D.assetRegistry)) D.assetRegistry = byKey(D.assetRegistry);
+  } else if (action === "deleteDeliveryOrder") {
+    if (Array.isArray(D.deliveryOrders)) D.deliveryOrders = byKey(D.deliveryOrders);
+  } else if (action === "deleteTransferEntry") {
+    const m = (D.machines || []).find(x => x.id === payload.machineId);
+    if (m) m.transferHistory = (m.transferHistory || []).filter(t => !(String(t.when || "") === String(payload.when || "") && String(t.to || "") === String(payload.to || "")));
+  }
+};
+window.deleteWithApproval = async function (opts) {
+  const {
+    user,
+    action,
+    payload = {},
+    entityLabel,
+    targetName = "",
+    targetInfo = "",
+    project = "",
+    confirmHtml,
+    warnHtml
+  } = opts || {};
+  if (!user) {
+    Swal.fire({
+      icon: "error",
+      title: "ไม่พบข้อมูลผู้ใช้งาน"
+    });
+    return false;
+  }
+  const label = entityLabel || "ข้อมูล";
+  const nameLine = targetName ? `<b>${targetName}</b>` : "";
+  const infoLine = targetInfo ? `<div style="color:#64748B;font-size:13px;margin-top:2px">${targetInfo}</div>` : "";
+  if (user.role === "Admin") {
+    const r = await Swal.fire({
+      title: `ลบ${label}?`,
+      html: confirmHtml || `${nameLine}${infoLine}<div style="color:#64748B;font-size:13px;margin-top:6px">${warnHtml || "การลบไม่สามารถกู้คืนได้"}</div>`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "ใช่, ลบเลย",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#EF4444"
+    });
+    if (!r.isConfirmed) return false;
+    try {
+      const res = await window.api(action, {
+        ...payload,
+        role: "Admin",
+        by: {
+          id: user.id,
+          name: user.name,
+          role: user.role
+        },
+        targetName
+      });
+      window.applyDeleteLocally(action, payload);
+      Swal.fire({
+        icon: "success",
+        title: "ลบข้อมูลแล้ว",
+        timer: 1300,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+      return res || true;
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "ลบไม่สำเร็จ",
+        text: err.message
+      });
+      return false;
+    }
+  }
+  const r = await Swal.fire({
+    title: "ขออนุมัติลบข้อมูล",
+    html: `<div style="text-align:left;font-size:14px">
+             <div style="background:#FEF3C7;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+               <i class="fa-solid fa-shield-halved" style="margin-right:6px"></i>
+               การลบข้อมูลต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ
+             </div>
+             <div style="color:#64748B;font-size:12px">รายการที่ขอลบ</div>
+             <div style="margin-top:2px">${label}${nameLine ? " · " + nameLine : ""}</div>
+             ${infoLine}
+           </div>`,
+    input: "textarea",
+    inputLabel: "เหตุผลที่ต้องการลบ",
+    inputPlaceholder: "ระบุเหตุผล เช่น บันทึกซ้ำ / กรอกผิด / ยกเลิกงาน",
+    inputAttributes: {
+      "aria-label": "เหตุผลที่ต้องการลบ"
+    },
+    inputValidator: v => !String(v || "").trim() ? "กรุณาระบุเหตุผลที่ต้องการลบ" : null,
+    showCancelButton: true,
+    confirmButtonText: "ส่งคำขออนุมัติ",
+    cancelButtonText: "ยกเลิก",
+    confirmButtonColor: "#2563EB"
+  });
+  if (!r.isConfirmed) return false;
+  try {
+    await window.api("requestDelete", {
+      req: {
+        action,
+        payload,
+        entityLabel: label,
+        targetName,
+        targetInfo,
+        project: project || window.getActiveProject(user) || "",
+        reason: r.value,
+        requesterId: user.id,
+        requesterName: user.name,
+        requesterRole: user.role
+      }
+    });
+    Swal.fire({
+      icon: "success",
+      title: "ส่งคำขอลบแล้ว",
+      html: `ระบบแจ้งผู้ดูแลระบบ (Admin) แล้ว<br/><span style="color:#64748B;font-size:13px">ข้อมูลจะถูกลบเมื่อได้รับอนุมัติ · ติดตามได้ที่เมนู "การแจ้งเตือน"</span>`,
+      confirmButtonText: "รับทราบ"
+    });
+  } catch (err) {
+    Swal.fire({
+      icon: "error",
+      title: "ส่งคำขอไม่สำเร็จ",
+      text: err.message
+    });
+  }
+  return false;
+};
+
+/* ---- block 4 (ต้นฉบับบรรทัด 1989) ---- */
+const DELREQ_STATUS = {
+  pending: {
+    label: "รออนุมัติ",
+    color: "#B45309",
+    bg: "#FEF3C7",
+    icon: "fa-hourglass-half"
+  },
+  approved: {
+    label: "อนุมัติแล้ว",
+    color: "#047857",
+    bg: "#D1FAE5",
+    icon: "fa-circle-check"
+  },
+  rejected: {
+    label: "ไม่อนุมัติ",
+    color: "#B91C1C",
+    bg: "#FEE2E2",
+    icon: "fa-circle-xmark"
+  }
+};
+function DeleteApprovals({
+  user
+}) {
+  const {
+    mine
+  } = window.useDeleteRequests(user);
+  const [tab, setTab] = React.useState("pending");
+  const [busy, setBusy] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const isAdmin = user.role === "Admin";
+  React.useEffect(() => {
+    window.__DELREQ.markSeen(user);
+  }, [user && user.id]);
+  const counts = {
+    pending: mine.filter(r => r.status === "pending").length,
+    approved: mine.filter(r => r.status === "approved").length,
+    rejected: mine.filter(r => r.status === "rejected").length
+  };
+  const kw = q.trim().toLowerCase();
+  const rows = mine.filter(r => tab === "all" || r.status === tab).filter(r => !kw || [r.entityLabel, r.targetName, r.targetInfo, r.requesterName, r.reason, r.project].some(v => String(v || "").toLowerCase().includes(kw)));
+  const approve = async r => {
+    const res = await Swal.fire({
+      title: "อนุมัติให้ลบข้อมูล?",
+      html: `<div style="text-align:left;font-size:14px">
+              <div><b>${r.entityLabel || "ข้อมูล"}</b> · ${r.targetName || "-"}</div>
+              <div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${r.requesterName || "-"} (${r.requesterRole || "-"})</div>
+              <div style="color:#64748B;font-size:13px">เหตุผล: ${r.reason || "-"}</div>
+              <div style="color:#B91C1C;font-size:13px;margin-top:8px">เมื่ออนุมัติ ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้</div>
+            </div>`,
+      icon: "warning",
+      showCancelButton: true,
+      input: "text",
+      inputLabel: "หมายเหตุ (ถ้ามี)",
+      inputPlaceholder: "เช่น ตรวจสอบแล้วเป็นข้อมูลซ้ำ",
+      confirmButtonText: "อนุมัติและลบ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#EF4444"
+    });
+    if (!res.isConfirmed) return;
+    setBusy(r.id);
+    try {
+      await window.api("approveDelete", {
+        id: r.id,
+        note: res.value || "",
+        by: {
+          id: user.id,
+          name: user.name,
+          role: user.role
+        }
+      });
+      window.applyDeleteLocally(r.action, r.payload || {});
+      Swal.fire({
+        icon: "success",
+        title: "อนุมัติและลบข้อมูลแล้ว",
+        timer: 1600,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "อนุมัติไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setBusy("");
+    }
+  };
+  const reject = async r => {
+    const res = await Swal.fire({
+      title: "ไม่อนุมัติคำขอนี้?",
+      html: `<div style="text-align:left;font-size:14px"><b>${r.entityLabel || "ข้อมูล"}</b> · ${r.targetName || "-"}<div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${r.requesterName || "-"}</div></div>`,
+      icon: "question",
+      showCancelButton: true,
+      input: "text",
+      inputLabel: "เหตุผลที่ไม่อนุมัติ",
+      inputPlaceholder: "แจ้งให้ผู้ขอทราบ",
+      inputValidator: v => !String(v || "").trim() ? "กรุณาระบุเหตุผล" : null,
+      confirmButtonText: "ไม่อนุมัติ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#64748B"
+    });
+    if (!res.isConfirmed) return;
+    setBusy(r.id);
+    try {
+      await window.api("rejectDelete", {
+        id: r.id,
+        note: res.value || "",
+        by: {
+          id: user.id,
+          name: user.name,
+          role: user.role
+        }
+      });
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกแล้ว",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setBusy("");
+    }
+  };
+  const canPush = typeof Notification !== "undefined";
+  const [pushState, setPushState] = React.useState(canPush ? Notification.permission : "unsupported");
+  const enablePush = async () => {
+    try {
+      const p = await Notification.requestPermission();
+      setPushState(p);
+    } catch (e) {}
+  };
+  const tabs = [{
+    key: "pending",
+    label: "รออนุมัติ",
+    n: counts.pending
+  }, {
+    key: "approved",
+    label: "อนุมัติแล้ว",
+    n: counts.approved
+  }, {
+    key: "rejected",
+    label: "ไม่อนุมัติ",
+    n: counts.rejected
+  }, {
+    key: "all",
+    label: "ทั้งหมด",
+    n: mine.length
+  }];
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 16
+    }
+  }, React.createElement("div", {
+    className: "card-body",
+    style: {
+      display: "flex",
+      gap: 12,
+      alignItems: "flex-start",
+      flexWrap: "wrap"
+    }
+  }, React.createElement("div", {
+    style: {
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      display: "grid",
+      placeItems: "center",
+      background: "#FEF3C7",
+      color: "#B45309",
+      flex: "0 0 auto"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-shield-halved"
+  })), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 220
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 600
+    }
+  }, isAdmin ? "คำขออนุมัติลบข้อมูล" : "คำขอลบข้อมูลของฉัน"), React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13,
+      marginTop: 2
+    }
+  }, isAdmin ? "ทุกการลบข้อมูลของผู้ใช้งานอื่นต้องผ่านการอนุมัติที่นี่ · ข้อมูลจะถูกลบเมื่อกดอนุมัติเท่านั้น" : "การลบข้อมูลทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน")), isAdmin && canPush && pushState === "default" && React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: enablePush,
+    title: "\u0E40\u0E1B\u0E34\u0E14\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E02\u0E2D\u0E07\u0E40\u0E1A\u0E23\u0E32\u0E27\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C"
+  }, React.createElement("i", {
+    className: "fa-solid fa-bell"
+  }), " \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E1A\u0E23\u0E32\u0E27\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C"), isAdmin && canPush && pushState === "granted" && React.createElement("span", {
+    className: "badge",
+    style: {
+      background: "#D1FAE5",
+      color: "#047857"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-bell",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48"))), React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "filters"
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      flexWrap: "wrap"
+    }
+  }, tabs.map(t => React.createElement("button", {
+    key: t.key,
+    className: `btn btn-sm ${tab === t.key ? "btn-primary" : "btn-ghost"}`,
+    onClick: () => setTab(t.key)
+  }, t.label, t.n > 0 && React.createElement("span", {
+    style: {
+      marginLeft: 6,
+      opacity: .85
+    }
+  }, "(", t.n, ")")))), React.createElement("div", {
+    className: "spacer"
+  }), React.createElement("div", {
+    className: "search-input"
+  }, React.createElement("i", {
+    className: "fa-solid fa-magnifying-glass"
+  }), React.createElement("input", {
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32 \u0E0A\u0E19\u0E34\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 / \u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 / \u0E1C\u0E39\u0E49\u0E02\u0E2D / \u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25..."
+  }))), React.createElement("div", {
+    className: "card-body",
+    style: {
+      display: "grid",
+      gap: 12
+    }
+  }, rows.length === 0 && React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-inbox"
+  }), React.createElement("div", {
+    className: "t"
+  }, tab === "pending" ? "ไม่มีคำขอรออนุมัติ" : "ไม่มีรายการ"), React.createElement("div", null, isAdmin ? "เมื่อมีผู้ใช้งานขอลบข้อมูล จะแสดงที่นี่ทันที" : "คำขอลบข้อมูลของคุณจะแสดงที่นี่")), rows.map(r => {
+    const st = DELREQ_STATUS[r.status] || DELREQ_STATUS.pending;
+    return React.createElement("div", {
+      key: r.id,
+      style: {
+        border: "1px solid var(--line)",
+        borderLeft: `4px solid ${st.color}`,
+        borderRadius: 10,
+        padding: "12px 14px",
+        background: "#fff"
+      }
+    }, React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+        flexWrap: "wrap"
+      }
+    }, React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 240
+      }
+    }, React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap"
+      }
+    }, React.createElement("span", {
+      className: "badge",
+      style: {
+        background: st.bg,
+        color: st.color
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${st.icon}`,
+      style: {
+        marginRight: 5
+      }
+    }), st.label), React.createElement("span", {
+      style: {
+        fontWeight: 600
+      }
+    }, r.entityLabel || "ข้อมูล"), r.targetName && React.createElement("span", {
+      style: {
+        color: "var(--text)"
+      }
+    }, "\xB7 ", r.targetName), r.project && React.createElement("span", {
+      className: "badge",
+      style: {
+        background: "#EFF6FF",
+        color: "#1E40AF"
+      },
+      title: r.project
+    }, window.projectShort(r.project))), r.targetInfo && React.createElement("div", {
+      style: {
+        color: "var(--muted)",
+        fontSize: 13,
+        marginTop: 3
+      }
+    }, r.targetInfo), React.createElement("div", {
+      style: {
+        fontSize: 13,
+        marginTop: 6
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-user",
+      style: {
+        color: "var(--muted)",
+        marginRight: 6
+      }
+    }), r.requesterName || "-", " ", React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "(", r.requesterRole || "-", ")"), React.createElement("span", {
+      style: {
+        color: "var(--muted)",
+        marginLeft: 10
+      }
+    }, React.createElement("i", {
+      className: "fa-regular fa-clock",
+      style: {
+        marginRight: 5
+      }
+    }), window.__DATA.fmtDateTime(r.requestedAt))), React.createElement("div", {
+      style: {
+        fontSize: 13,
+        marginTop: 4,
+        background: "#F8FAFC",
+        border: "1px solid var(--line-soft)",
+        borderRadius: 8,
+        padding: "7px 10px"
+      }
+    }, React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "\u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25:"), " ", r.reason || "-"), r.status !== "pending" && React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--muted)",
+        marginTop: 6
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${st.icon}`,
+      style: {
+        marginRight: 5,
+        color: st.color
+      }
+    }), st.label, "\u0E42\u0E14\u0E22 ", r.decidedByName || "-", " \xB7 ", window.__DATA.fmtDateTime(r.decidedAt), r.decideNote ? ` · ${r.decideNote}` : ""), r.status === "pending" && r.lastError && React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "#B91C1C",
+        marginTop: 6
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-triangle-exclamation",
+      style: {
+        marginRight: 5
+      }
+    }), "\u0E25\u0E1A\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08\u0E04\u0E23\u0E31\u0E49\u0E07\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14: ", r.lastError)), isAdmin && r.status === "pending" && React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "center"
+      }
+    }, React.createElement("button", {
+      className: "btn btn-sm btn-ghost",
+      disabled: busy === r.id,
+      onClick: () => reject(r)
+    }, React.createElement("i", {
+      className: "fa-solid fa-xmark"
+    }), " \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"), React.createElement("button", {
+      className: "btn btn-sm btn-primary",
+      disabled: busy === r.id,
+      style: {
+        background: "#EF4444",
+        borderColor: "#EF4444"
+      },
+      onClick: () => approve(r)
+    }, busy === r.id ? React.createElement(React.Fragment, null, React.createElement("div", {
+      className: "spinner",
+      style: {
+        width: 13,
+        height: 13,
+        borderWidth: 2
+      }
+    }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E25\u0E1A...") : React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-check"
+    }), " \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E41\u0E25\u0E30\u0E25\u0E1A")))));
+  }))));
+}
+window.DeleteApprovals = DeleteApprovals;
+
+/* ---- block 5 (ต้นฉบับบรรทัด 2182) ---- */
 const {
   useState,
   useEffect,
@@ -1396,19 +2712,20 @@ function ProblemLines({
 function ProjectLabel({
   name
 }) {
-  const code = window.getProjectCode(name);
   if (!name) return React.createElement("span", {
     style: {
       color: "var(--muted)"
     }
   }, "\u2014");
-  return React.createElement(React.Fragment, null, code && React.createElement("span", {
-    className: "mono",
-    style: {
-      color: "var(--muted)",
-      marginRight: 6
-    }
-  }, "[", code, "]"), name);
+  const short = window.projectShort(name);
+  const isCode = short !== name;
+  return React.createElement("span", {
+    className: isCode ? "mono" : "",
+    title: name,
+    style: isCode ? {
+      fontWeight: 500
+    } : undefined
+  }, short);
 }
 function Modal({
   open,
@@ -1472,7 +2789,90 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 4 (ต้นฉบับบรรทัด 1389) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2249) ---- */
+function InstallAppButton() {
+  const [, force] = React.useReducer(x => x + 1, 0);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => window.__pwa.on(force), []);
+  const pwa = window.__pwa;
+  if (pwa.isStandalone() || pwa.installed) return null;
+  const canInstallNow = !!pwa.prompt;
+  if (!canInstallNow && !pwa.isMobile()) return null;
+  const iosHowTo = () => Swal.fire({
+    icon: "info",
+    title: "ติดตั้งบน iPhone / iPad",
+    html: `<div style="text-align:left;font-size:14px;line-height:1.9">
+            <div>1. กดปุ่ม <b>แชร์</b> <i class="fa-solid fa-arrow-up-from-bracket" style="color:#1E40AF"></i> ที่แถบล่างของ Safari</div>
+            <div>2. เลื่อนหาแล้วกด <b>เพิ่มไปยังหน้าจอโฮม</b></div>
+            <div>3. กด <b>เพิ่ม</b> มุมขวาบน</div>
+            <div style="margin-top:10px;color:#64748B;font-size:13px">
+              จะได้ไอคอนแอปบนหน้าจอ เปิดใช้งานได้เหมือนแอปทั่วไป
+            </div>
+          </div>`,
+    confirmButtonText: "เข้าใจแล้ว",
+    confirmButtonColor: "#1E40AF"
+  });
+  const androidHowTo = () => Swal.fire({
+    icon: "info",
+    title: "ติดตั้งแอป",
+    html: `<div style="text-align:left;font-size:14px;line-height:1.9">
+            <div>1. กดปุ่มเมนู <b>⋮</b> มุมขวาบนของเบราว์เซอร์</div>
+            <div>2. เลือก <b>ติดตั้งแอป</b> หรือ <b>เพิ่มลงในหน้าจอหลัก</b></div>
+            <div style="margin-top:10px;color:#64748B;font-size:13px">
+              ถ้าไม่เจอเมนูนี้ ให้เปิดเว็บด้วย Chrome แล้วลองใหม่อีกครั้ง
+            </div>
+          </div>`,
+    confirmButtonText: "เข้าใจแล้ว",
+    confirmButtonColor: "#1E40AF"
+  });
+  const click = async () => {
+    if (pwa.isIOS()) return iosHowTo();
+    if (!canInstallNow) return androidHowTo();
+    setBusy(true);
+    try {
+      const outcome = await pwa.install();
+      if (outcome === "accepted") {
+        Swal.fire({
+          icon: "success",
+          title: "ติดตั้งแอปแล้ว",
+          text: "เปิดใช้งานจากไอคอนบนหน้าจอมือถือได้เลย",
+          timer: 2600,
+          showConfirmButton: false,
+          toast: true,
+          position: "top-end"
+        });
+      } else if (outcome === "unavailable") {
+        androidHowTo();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return React.createElement("button", {
+    type: "button",
+    onClick: click,
+    disabled: busy,
+    style: {
+      width: "100%",
+      marginTop: 12,
+      padding: "12px 14px",
+      borderRadius: 12,
+      border: "1.5px solid var(--primary)",
+      background: "var(--accent-soft)",
+      color: "var(--primary)",
+      fontFamily: "Kanit",
+      fontSize: 14.5,
+      fontWeight: 500,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 9
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${busy ? "fa-spinner fa-spin" : "fa-mobile-screen-button"}`
+  }), canInstallNow ? "ติดตั้งแอปบนมือถือ" : "เปิดบนมือถือ · วิธีติดตั้งแอป");
+}
 function Login({
   onLogin
 }) {
@@ -1609,15 +3009,15 @@ function Login({
     type: "submit"
   }, React.createElement("i", {
     className: "fa-solid fa-arrow-right-to-bracket"
-  }), " \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"), React.createElement("div", {
+  }), " \u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A"), React.createElement(InstallAppButton, null), React.createElement("div", {
     className: "ow-hint"
   }, React.createElement("i", {
     className: "fa-solid fa-circle-info"
-  }), React.createElement("span", null, "\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A \u0E04\u0E38\u0E13\u0E08\u0E30\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19\u0E41\u0E25\u0E30\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E17\u0E33\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49\u0E17\u0E31\u0E19\u0E17\u0E35")))));
+  }), React.createElement("span", null, "\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A \u0E04\u0E38\u0E13\u0E08\u0E30\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E17\u0E33\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49\u0E17\u0E31\u0E19\u0E17\u0E35")))));
 }
 window.Login = Login;
 
-/* ---- block 5 (ต้นฉบับบรรทัด 1502) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2432) ---- */
 function ChangePasswordModal({
   user,
   onClose
@@ -1870,8 +3270,10 @@ function Sidebar({
   onClose
 }) {
   const [changePwModal, setChangePwModal] = React.useState(false);
+  const delReq = window.useDeleteRequests(user);
   const isAdminish = ["Admin", "Officer", "Director"].includes(user.role);
   const isTech = ["Technician", "Engineer"].includes(user.role);
+  const isSafety = user.role === "Safety Officer";
   const systemId = user.activeErp?.id || "repairs";
   const adminNav = [{
     key: "dashboard",
@@ -1921,9 +3323,13 @@ function Sidebar({
     label: "ทะเบียนเครื่องจักร"
   }];
   const reporterNav = [{
-    key: "r-dashboard",
+    key: "dashboard",
     icon: "fa-gauge-high",
     label: "แดชบอร์ด"
+  }, {
+    key: "r-dashboard",
+    icon: "fa-chart-pie",
+    label: "สรุปงานของฉัน"
   }, {
     key: "r-new",
     icon: "fa-circle-plus",
@@ -1932,6 +3338,40 @@ function Sidebar({
     key: "r-mine",
     icon: "fa-clipboard-check",
     label: "ติดตามสถานะ"
+  }];
+  const safetyNav = [{
+    key: "dashboard",
+    icon: "fa-gauge-high",
+    label: "แดชบอร์ด"
+  }, {
+    key: "repairs",
+    icon: "fa-clipboard-list",
+    label: "รายการแจ้งซ่อม"
+  }, {
+    key: "r-new",
+    icon: "fa-circle-plus",
+    label: "แจ้งซ่อมใหม่"
+  }, {
+    key: "spare-parts",
+    icon: "fa-box-open",
+    label: "อะไหล่ที่ใช้ซ่อม"
+  }, {
+    key: "machines",
+    icon: "fa-industry",
+    label: "ทะเบียนเครื่องจักร"
+  }];
+  const safetyAssetNav = [{
+    key: "doc-pj2",
+    icon: "fa-certificate",
+    label: "ปจ2-เอกสารรับรอง"
+  }, {
+    key: "machines",
+    icon: "fa-industry",
+    label: "ทะเบียนเครื่องจักร"
+  }, {
+    key: "transfer-history",
+    icon: "fa-clock-rotate-left",
+    label: "ประวัติการย้ายเครื่องจักร"
   }];
   const assetNav = [{
     key: "machines",
@@ -1963,7 +3403,7 @@ function Sidebar({
     icon: "fa-file-invoice",
     label: "รายการเบิกของ"
   }];
-  const nav = systemId === "assets" ? assetNav : systemId === "consume" ? consumeNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const nav = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
   return React.createElement(React.Fragment, null, open && React.createElement("div", {
     className: "sidebar-scrim show",
     onClick: onClose
@@ -1995,10 +3435,21 @@ function Sidebar({
   }, n.badge))), React.createElement("div", {
     className: "section"
   }, "\u0E17\u0E31\u0E48\u0E27\u0E44\u0E1B"), React.createElement("div", {
-    className: "nav-item"
+    className: `nav-item ${active === "notifications" ? "active" : ""}`,
+    onClick: () => {
+      onNav("notifications");
+      onClose && onClose();
+    },
+    title: user.role === "Admin" ? "คำขออนุมัติลบข้อมูล" : "สถานะคำขอลบข้อมูลของฉัน"
   }, React.createElement("i", {
     className: "fa-solid fa-bell"
-  }), React.createElement("span", null, "\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19")), React.createElement("div", {
+  }), React.createElement("span", null, "\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19"), delReq.badge > 0 && React.createElement("span", {
+    className: "badge",
+    style: {
+      background: "#FEE2E2",
+      color: "#B91C1C"
+    }
+  }, delReq.badge)), React.createElement("div", {
     className: "nav-item",
     onClick: () => setChangePwModal(true)
   }, React.createElement("i", {
@@ -2026,17 +3477,23 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 6 (ต้นฉบับบรรทัด 1635) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2591) ---- */
 function Projects({
   user
 }) {
-  const [rows, setRows] = React.useState(window.__DATA.projects || []);
+  const [rows, setRows] = React.useState(() => window.visibleProjects(user, {
+    includeInactive: true
+  }));
   const [edit, setEdit] = React.useState(null);
   const [q, setQ] = React.useState("");
   const filtered = rows.filter(p => {
     if (!q) return true;
-    return (p.name || "").toLowerCase().includes(q.toLowerCase()) || (p.code || "").toLowerCase().includes(q.toLowerCase());
+    const kw = q.toLowerCase();
+    return [p.name, p.shortName, p.code, p.desc].some(v => String(v || "").toLowerCase().includes(kw));
   });
+  const syncCache = fn => {
+    window.__DATA.projects = fn(window.__DATA.projects || []);
+  };
   const save = async form => {
     try {
       if (form.id) {
@@ -2044,16 +3501,14 @@ function Projects({
           id: form.id,
           patch: form
         });
-        const upd = rows.map(x => x.id === form.id ? form : x);
-        setRows(upd);
-        window.__DATA.projects = upd;
+        setRows(rows.map(x => x.id === form.id ? form : x));
+        syncCache(all => all.map(x => x.id === form.id ? form : x));
       } else {
         const nu = await window.api("createProject", {
           project: form
         });
-        const upd = [...rows, nu];
-        setRows(upd);
-        window.__DATA.projects = upd;
+        setRows([...rows, nu]);
+        syncCache(all => [...all, nu]);
       }
       setEdit(null);
       Swal.fire({
@@ -2072,43 +3527,20 @@ function Projects({
       });
     }
   };
-  const del = p => {
+  const del = async p => {
     const machineCount = (window.__DATA.machines || []).filter(m => m.project === p.name).length;
-    const html = machineCount > 0 ? `ต้องการลบโครงการ "<strong>${p.name}</strong>"?<br/><span style="color:#EF4444;font-size:13px">มีเครื่องจักรในโครงการนี้ ${machineCount} รายการ</span>` : `ต้องการลบโครงการ "<strong>${p.name}</strong>" ใช่หรือไม่?`;
-    Swal.fire({
-      title: "ลบโครงการ?",
-      html,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ลบ",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
-    }).then(async r => {
-      if (r.isConfirmed) {
-        try {
-          await window.api("deleteProject", {
-            id: p.id
-          });
-          const upd = rows.filter(x => x.id !== p.id);
-          setRows(upd);
-          window.__DATA.projects = upd;
-          Swal.fire({
-            icon: "success",
-            title: "ลบแล้ว",
-            timer: 1000,
-            showConfirmButton: false,
-            toast: true,
-            position: "top-end"
-          });
-        } catch (err) {
-          Swal.fire({
-            icon: "error",
-            title: "ลบไม่สำเร็จ",
-            text: err.message
-          });
-        }
-      }
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteProject",
+      payload: {
+        id: p.id
+      },
+      entityLabel: "โครงการ",
+      targetName: p.name,
+      project: p.name,
+      targetInfo: machineCount > 0 ? `มีเครื่องจักรในโครงการนี้ ${machineCount} รายการ` : ""
     });
+    if (done) setRows(rows.filter(x => x.id !== p.id));
   };
   const STATUS_COLOR = {
     active: "#10B981",
@@ -2127,7 +3559,7 @@ function Projects({
   }, React.createElement("i", {
     className: "fa-solid fa-magnifying-glass"
   }), React.createElement("input", {
-    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E0A\u0E37\u0E48\u0E2D / \u0E23\u0E2B\u0E31\u0E2A\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23...",
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32 \u0E23\u0E2B\u0E31\u0E2A / \u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E48\u0E2D / \u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E47\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23...",
     value: q,
     onChange: e => setQ(e.target.value)
   })), React.createElement("div", {
@@ -2136,6 +3568,7 @@ function Projects({
     className: "btn btn-primary",
     onClick: () => setEdit({
       name: "",
+      shortName: "",
       code: "",
       desc: "",
       status: "active",
@@ -2149,15 +3582,13 @@ function Projects({
     className: "data"
   }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
     style: {
-      width: 44
-    },
-    className: "hide-on-mobile"
-  }, "#"), React.createElement("th", {
+      width: 110
+    }
+  }, "\u0E23\u0E2B\u0E31\u0E2A"), React.createElement("th", {
     style: {
-      width: 100
-    },
-    className: "hide-on-mobile"
-  }, "\u0E23\u0E2B\u0E31\u0E2A"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", {
+      width: 150
+    }
+  }, "\u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E48\u0E2D\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E47\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14"), React.createElement("th", {
     style: {
@@ -2177,21 +3608,13 @@ function Projects({
     style: {
       width: 90
     }
-  }, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, filtered.map((p, i) => {
+  }, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, filtered.map(p => {
     const mCnt = (window.__DATA.machines || []).filter(m => m.project === p.name).length;
     const rCnt = (window.__DATA.repairs || []).filter(r => r.project === p.name).length;
     const sc = STATUS_COLOR[p.status] || "#94A3B8";
     return React.createElement("tr", {
       key: p.id
-    }, React.createElement("td", {
-      className: "hide-on-mobile",
-      style: {
-        color: "var(--muted)",
-        fontSize: 12
-      }
-    }, i + 1), React.createElement("td", {
-      className: "hide-on-mobile"
-    }, React.createElement("span", {
+    }, React.createElement("td", null, React.createElement("span", {
       className: "mono",
       style: {
         fontSize: 12,
@@ -2220,7 +3643,32 @@ function Projects({
       style: {
         fontWeight: 500
       }
-    }, p.name))), React.createElement("td", {
+    }, p.shortName || React.createElement("span", {
+      style: {
+        color: "var(--muted)",
+        fontWeight: 400
+      }
+    }, "\u2014")))), React.createElement("td", null, React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, React.createElement("span", null, p.name), window.hasLatLng(p) ? React.createElement("i", {
+      className: "fa-solid fa-location-dot",
+      title: `ปักหมุดแล้ว · ${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}`,
+      style: {
+        color: "#10B981",
+        fontSize: 12
+      }
+    }) : React.createElement("i", {
+      className: "fa-solid fa-location-crosshairs",
+      title: "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07 \u2014 \u0E08\u0E30\u0E44\u0E21\u0E48\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14",
+      style: {
+        color: "#CBD5E1",
+        fontSize: 12
+      }
+    }))), React.createElement("td", {
       className: "hide-on-mobile",
       style: {
         color: "var(--muted)",
@@ -2328,14 +3776,27 @@ function ProjectForm({
     style: {
       gridColumn: "1/-1"
     }
-  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E47\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("input", {
     value: f.name || "",
     onChange: e => setF({
       ...f,
       name: e.target.value
     }),
     placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E42\u0E23\u0E07\u0E07\u0E32\u0E19 A - \u0E2A\u0E32\u0E22\u0E01\u0E32\u0E23\u0E1C\u0E25\u0E34\u0E15 1"
-  })), React.createElement("div", {
+  }), React.createElement("div", {
+    className: "hint"
+  }, "\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E32\u0E07\u0E01\u0E32\u0E23 \xB7 \u0E43\u0E0A\u0E49\u0E43\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E17\u0E38\u0E01\u0E0A\u0E19\u0E34\u0E14 (\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 \xB7 \u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07 \xB7 Excel)")), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E48\u0E2D\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("input", {
+    value: f.shortName || "",
+    onChange: e => setF({
+      ...f,
+      shortName: e.target.value
+    }),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E42\u0E23\u0E07\u0E07\u0E32\u0E19 A1"
+  }), React.createElement("div", {
+    className: "hint"
+  }, "\u0E43\u0E0A\u0E49\u0E41\u0E2A\u0E14\u0E07\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E27\u0E47\u0E1A\u0E41\u0E17\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E47\u0E21 \xB7 \u0E40\u0E27\u0E49\u0E19\u0E27\u0E48\u0E32\u0E07\u0E44\u0E14\u0E49 (\u0E08\u0E30\u0E43\u0E0A\u0E49\u0E23\u0E2B\u0E31\u0E2A\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E17\u0E19)")), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E23\u0E2B\u0E31\u0E2A\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("input", {
     className: "mono",
@@ -2345,8 +3806,13 @@ function ProjectForm({
       code: e.target.value
     }),
     placeholder: "\u0E40\u0E0A\u0E48\u0E19 PRJ-001"
-  })), React.createElement("div", {
-    className: "form-field"
+  }), React.createElement("div", {
+    className: "hint"
+  }, "\u0E43\u0E0A\u0E49\u0E2D\u0E2D\u0E01\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 \u0E40\u0E0A\u0E48\u0E19 RE-PRJ-001-256808/001")), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
   }, React.createElement("label", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), React.createElement("select", {
     value: f.status || "active",
     onChange: e => setF({
@@ -2387,7 +3853,38 @@ function ProjectForm({
       ...f,
       color: c
     })
-  }))))), React.createElement("div", {
+  })))), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, React.createElement("i", {
+    className: "fa-solid fa-map-location-dot",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), "\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E41\u0E2A\u0E14\u0E07\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14)"), React.createElement("input", {
+    value: f.address || "",
+    onChange: e => setF({
+      ...f,
+      address: e.target.value
+    }),
+    placeholder: "\u0E17\u0E35\u0E48\u0E2D\u0E22\u0E39\u0E48/\u0E08\u0E38\u0E14\u0E2A\u0E31\u0E07\u0E40\u0E01\u0E15 (\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E04\u0E31\u0E1A)",
+    style: {
+      marginBottom: 10
+    }
+  }), React.createElement(LocationPicker, {
+    value: {
+      lat: f.lat,
+      lng: f.lng
+    },
+    onChange: pos => setF(prev => ({
+      ...prev,
+      lat: pos.lat,
+      lng: pos.lng
+    }))
+  }))), React.createElement("div", {
     style: {
       marginTop: 16,
       padding: 14,
@@ -2432,7 +3929,404 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 1797) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 2774) ---- */
+window.parseLatLng = function (text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  const pats = [/@(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)/, /[?&](?:q|ll|center|daddr)=(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)/i, /!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/, /^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/];
+  for (const re of pats) {
+    const m = s.match(re);
+    if (m) {
+      const lat = parseFloat(m[1]),
+        lng = parseFloat(m[2]);
+      if (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return {
+        lat,
+        lng
+      };
+    }
+  }
+  return null;
+};
+window.hasLatLng = p => p && isFinite(Number(p.lat)) && isFinite(Number(p.lng)) && !(Number(p.lat) === 0 && Number(p.lng) === 0);
+const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const MAP_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+const MAP_CENTER_TH = [13.7563, 100.5018];
+function pinIcon(color, count, dim) {
+  return window.L.divIcon({
+    className: "",
+    html: `<div class="map-pin-wrap${dim ? " dim" : ""}">
+             <div class="map-pin" style="background:${color}"><i class="fa-solid fa-location-dot"></i></div>
+             ${count > 0 ? `<div class="map-pin-count">${count > 99 ? "99+" : count}</div>` : ""}
+           </div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 32],
+    popupAnchor: [0, -30]
+  });
+}
+function LocationPicker({
+  value,
+  onChange
+}) {
+  const boxRef = React.useRef(null);
+  const mapRef = React.useRef(null);
+  const markerRef = React.useRef(null);
+  const onChangeRef = React.useRef(onChange);
+  onChangeRef.current = onChange;
+  const [paste, setPaste] = React.useState("");
+  const [ready, setReady] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const has = window.hasLatLng(value);
+  React.useEffect(() => {
+    let dead = false;
+    window.__loadMap().then(() => {
+      if (dead || !boxRef.current || mapRef.current) return;
+      const start = window.hasLatLng(value) ? [Number(value.lat), Number(value.lng)] : MAP_CENTER_TH;
+      const map = window.L.map(boxRef.current, {
+        scrollWheelZoom: false
+      }).setView(start, window.hasLatLng(value) ? 15 : 6);
+      window.L.tileLayer(MAP_TILE, {
+        attribution: MAP_ATTR,
+        maxZoom: 19
+      }).addTo(map);
+      map.on("click", e => onChangeRef.current({
+        lat: +e.latlng.lat.toFixed(6),
+        lng: +e.latlng.lng.toFixed(6)
+      }));
+      mapRef.current = map;
+      setReady(true);
+      setTimeout(() => map.invalidateSize(), 150);
+    }).catch(e => setErr(e.message || String(e)));
+    return () => {
+      dead = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        markerRef.current = null;
+      }
+    };
+  }, []);
+  React.useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (!has) {
+      if (markerRef.current) {
+        map.removeLayer(markerRef.current);
+        markerRef.current = null;
+      }
+      return;
+    }
+    const pos = [Number(value.lat), Number(value.lng)];
+    if (markerRef.current) markerRef.current.setLatLng(pos);else {
+      markerRef.current = window.L.marker(pos, {
+        icon: pinIcon("#EF4444", 0, false),
+        draggable: true
+      }).addTo(map);
+      markerRef.current.on("dragend", e => {
+        const ll = e.target.getLatLng();
+        onChangeRef.current({
+          lat: +ll.lat.toFixed(6),
+          lng: +ll.lng.toFixed(6)
+        });
+      });
+    }
+    map.setView(pos, Math.max(map.getZoom(), 15));
+  }, [ready, has, value && value.lat, value && value.lng]);
+  const applyPaste = () => {
+    const got = window.parseLatLng(paste);
+    if (!got) {
+      Swal.fire({
+        icon: "warning",
+        title: "อ่านพิกัดไม่ออก",
+        html: 'วางได้ทั้งลิงก์ Google Maps (แบบเต็ม ไม่ใช่ลิงก์ย่อ goo.gl)<br/>หรือพิมพ์เป็น <b>13.7563, 100.5018</b>'
+      });
+      return;
+    }
+    onChange(got);
+    setPaste("");
+  };
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      Swal.fire({
+        icon: "info",
+        title: "เบราว์เซอร์นี้ไม่รองรับการหาตำแหน่ง"
+      });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(p => onChange({
+      lat: +p.coords.latitude.toFixed(6),
+      lng: +p.coords.longitude.toFixed(6)
+    }), () => Swal.fire({
+      icon: "error",
+      title: "หาตำแหน่งไม่สำเร็จ",
+      text: "อนุญาตให้เว็บเข้าถึงตำแหน่งก่อน แล้วลองใหม่"
+    }), {
+      enableHighAccuracy: true,
+      timeout: 8000
+    });
+  };
+  return React.createElement("div", null, React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap",
+      marginBottom: 8
+    }
+  }, React.createElement("input", {
+    style: {
+      flex: "1 1 240px",
+      minWidth: 0
+    },
+    value: paste,
+    onChange: e => setPaste(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyPaste();
+      }
+    },
+    placeholder: "\u0E27\u0E32\u0E07\u0E25\u0E34\u0E07\u0E01\u0E4C Google Maps \u0E2B\u0E23\u0E37\u0E2D\u0E1E\u0E34\u0E21\u0E1E\u0E4C 13.7563, 100.5018"
+  }), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    onClick: applyPaste
+  }, React.createElement("i", {
+    className: "fa-solid fa-location-crosshairs"
+  }), " \u0E43\u0E0A\u0E49\u0E1E\u0E34\u0E01\u0E31\u0E14\u0E19\u0E35\u0E49"), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    onClick: useMyLocation
+  }, React.createElement("i", {
+    className: "fa-solid fa-crosshairs"
+  }), " \u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19"), has && React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    style: {
+      color: "#EF4444"
+    },
+    onClick: () => onChange({
+      lat: "",
+      lng: ""
+    })
+  }, React.createElement("i", {
+    className: "fa-solid fa-eraser"
+  }), " \u0E25\u0E49\u0E32\u0E07\u0E1E\u0E34\u0E01\u0E31\u0E14")), err ? React.createElement("div", {
+    style: {
+      padding: 14,
+      background: "#FEF2F2",
+      border: "1px solid #FECACA",
+      borderRadius: 10,
+      fontSize: 13,
+      color: "#B91C1C"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-triangle-exclamation",
+    style: {
+      marginRight: 6
+    }
+  }), "\u0E42\u0E2B\u0E25\u0E14\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: ", err, " \xB7 \u0E22\u0E31\u0E07\u0E01\u0E23\u0E2D\u0E01\u0E1E\u0E34\u0E01\u0E31\u0E14\u0E40\u0E2D\u0E07\u0E44\u0E14\u0E49") : React.createElement("div", {
+    ref: boxRef,
+    className: "map-box sm"
+  }), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginTop: 6
+    }
+  }, has ? React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-location-dot",
+    style: {
+      color: "#EF4444",
+      marginRight: 5
+    }
+  }), "\u0E1E\u0E34\u0E01\u0E31\u0E14 ", React.createElement("span", {
+    className: "mono"
+  }, Number(value.lat).toFixed(6), ", ", Number(value.lng).toFixed(6)), " \xB7 \u0E04\u0E25\u0E34\u0E01\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E2B\u0E23\u0E37\u0E2D\u0E25\u0E32\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E22\u0E49\u0E32\u0E22") : React.createElement(React.Fragment, null, "\u0E04\u0E25\u0E34\u0E01\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \xB7 \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1E\u0E34\u0E01\u0E31\u0E14\u0E08\u0E30\u0E44\u0E21\u0E48\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14")));
+}
+window.LocationPicker = LocationPicker;
+function ProjectMap({
+  projects,
+  byProject,
+  selected,
+  onSelect
+}) {
+  const boxRef = React.useRef(null);
+  const mapRef = React.useRef(null);
+  const layerRef = React.useRef(null);
+  const [err, setErr] = React.useState("");
+  const [ready, setReady] = React.useState(false);
+  const onSelectRef = React.useRef(onSelect);
+  onSelectRef.current = onSelect;
+  React.useEffect(() => {
+    let dead = false;
+    window.__loadMap().then(() => {
+      if (dead || !boxRef.current || mapRef.current) return;
+      const map = window.L.map(boxRef.current, {
+        scrollWheelZoom: false
+      }).setView(MAP_CENTER_TH, 6);
+      window.L.tileLayer(MAP_TILE, {
+        attribution: MAP_ATTR,
+        maxZoom: 19
+      }).addTo(map);
+      layerRef.current = window.L.layerGroup().addTo(map);
+      mapRef.current = map;
+      setReady(true);
+      setTimeout(() => map.invalidateSize(), 150);
+    }).catch(e => setErr(e.message || String(e)));
+    return () => {
+      dead = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        layerRef.current = null;
+      }
+    };
+  }, []);
+  React.useEffect(() => {
+    if (!ready || !layerRef.current || !mapRef.current) return;
+    const L = window.L,
+      map = mapRef.current;
+    layerRef.current.clearLayers();
+    const pts = [];
+    projects.filter(window.hasLatLng).forEach(p => {
+      const info = byProject[p.name] || {
+        open: 0,
+        urgent: 0
+      };
+      const pos = [Number(p.lat), Number(p.lng)];
+      pts.push(pos);
+      const dim = !!selected && selected !== p.name;
+      const m = L.marker(pos, {
+        icon: pinIcon(p.color || "#1E40AF", info.open, dim),
+        title: p.name
+      }).addTo(layerRef.current);
+      m.bindTooltip(`${esc(window.projectShort(p.name))}${info.open ? `<span class="ml-n">${info.open} ใบ</span>` : ""}`, {
+        permanent: true,
+        direction: "right",
+        offset: [13, -13],
+        opacity: 1,
+        className: `map-label${selected === p.name ? " on" : dim ? " dim" : ""}`
+      });
+      m.bindPopup(`
+        <div style="min-width:170px">
+          <div style="font-weight:600;margin-bottom:4px">${esc(window.projectShort(p.name))}</div>
+          <div style="font-size:11.5px;color:#64748B">${esc(p.name)}</div>
+          <div style="margin-top:7px;font-size:13px">
+            งานที่ยังไม่เสร็จ <b style="color:${info.open ? "#EF4444" : "#10B981"}">${info.open}</b> ใบ
+          </div>
+          ${p.address ? `<div style="margin-top:5px;font-size:12px;color:#64748B">${esc(p.address)}</div>` : ""}
+          <div style="margin-top:8px;font-size:12px;color:#1E40AF">คลิกหมุดเพื่อกรองการ์ดด้านล่าง</div>
+        </div>`);
+      m.on("click", () => onSelectRef.current(selected === p.name ? "" : p.name));
+    });
+    if (pts.length === 1) map.setView(pts[0], 14);else if (pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.25));
+  }, [ready, projects, byProject, selected]);
+  if (err) return React.createElement("div", {
+    className: "card-body"
+  }, React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 26
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-triangle-exclamation",
+    style: {
+      color: "#EF4444"
+    }
+  }), React.createElement("div", {
+    className: "t",
+    style: {
+      fontSize: 14
+    }
+  }, "\u0E42\u0E2B\u0E25\u0E14\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"), React.createElement("div", null, err, " \xB7 \u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E40\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E15\u0E48\u0E2D\u0E2D\u0E34\u0E19\u0E40\u0E17\u0E2D\u0E23\u0E4C\u0E40\u0E19\u0E47\u0E15")));
+  return React.createElement("div", {
+    ref: boxRef,
+    className: "map-box"
+  });
+}
+window.ProjectMap = ProjectMap;
+function JobCard({
+  r,
+  onOpen
+}) {
+  const st = window.getStatus(r.status);
+  const cat = window.getCategory(r.categoryId);
+  const mach = (window.__DATA.machines || []).find(m => m.code === r.machineCode);
+  const days = Math.max(0, Math.floor((Date.now() - new Date(r.createdAt).getTime()) / 86400000));
+  const stColor = {
+    new: "#3B82F6",
+    assess: "#F59E0B",
+    progress: "#8B5CF6",
+    parts: "#EC4899",
+    done: "#10B981",
+    cancel: "#94A3B8"
+  }[r.status] || "#64748B";
+  return React.createElement("div", {
+    className: `job-card${r.status === "cancel" ? " is-cancel" : ""}`,
+    style: {
+      "--job-color": stColor
+    },
+    onClick: () => onOpen(r)
+  }, React.createElement("div", {
+    className: "jc-top"
+  }, React.createElement("span", {
+    className: "jc-run"
+  }, r.running || r.id), React.createElement("span", {
+    className: `badge ${st.className}`
+  }, React.createElement("i", {
+    className: `fa-solid ${st.icon}`,
+    style: {
+      marginRight: 4
+    }
+  }), st.label)), React.createElement("div", {
+    className: "jc-title"
+  }, React.createElement(ProblemLines, {
+    title: r.title,
+    max: 2
+  })), React.createElement("div", {
+    className: "jc-meta"
+  }, React.createElement("div", {
+    className: "row"
+  }, React.createElement("i", {
+    className: "fa-solid fa-diagram-project",
+    style: {
+      color: "#1E40AF"
+    }
+  }), React.createElement("span", {
+    title: r.project || ""
+  }, r.project ? window.projectShort(r.project) : "ไม่ระบุโครงการ")), React.createElement("div", {
+    className: "row"
+  }, React.createElement("i", {
+    className: "fa-solid fa-industry",
+    style: {
+      color: "#64748B"
+    }
+  }), React.createElement("span", null, r.machineCode || "—", mach ? ` · ${mach.name}` : "")), React.createElement("div", {
+    className: "row"
+  }, React.createElement("i", {
+    className: `fa-solid ${cat.icon}`,
+    style: {
+      color: cat.color
+    }
+  }), React.createElement("span", null, cat.name))), React.createElement("div", {
+    className: "jc-foot"
+  }, React.createElement("span", null, React.createElement("i", {
+    className: "fa-solid fa-user",
+    style: {
+      marginRight: 5
+    }
+  }), r.reporterName || "—"), React.createElement("span", {
+    className: "jc-age",
+    style: {
+      color: days > 7 ? "#EF4444" : days > 3 ? "#B45309" : "var(--muted)"
+    }
+  }, React.createElement("i", {
+    className: "fa-regular fa-clock"
+  }), days === 0 ? "วันนี้" : `${days} วัน`)));
+}
+window.JobCard = JobCard;
+
+/* ---- block 10 (ต้นฉบับบรรทัด 3020) ---- */
 function Dashboard({
   user,
   goTo
@@ -2441,6 +4335,12 @@ function Dashboard({
   const [costView, setCostView] = React.useState("category");
   const [dashDetail, setDashDetail] = React.useState(null);
   const [tick, setTick] = React.useState(0);
+  const [mapProject, setMapProject] = React.useState("");
+  const [jobStatus, setJobStatus] = React.useState("all");
+  const [jobLimit, setJobLimit] = React.useState(36);
+  const [symptomMode, setSymptomMode] = React.useState("keyword");
+  const [symptomLimit, setSymptomLimit] = React.useState(10);
+  const [openKw, setOpenKw] = React.useState("");
   const doughnutRef = React.useRef(null);
   const barRef = React.useRef(null);
   const costRef = React.useRef(null);
@@ -2452,6 +4352,40 @@ function Dashboard({
   const repairs = React.useMemo(() => {
     return window.filterByUserProjects(user, window.__DATA.repairs, "project");
   }, [user, tick]);
+  const openJobs = React.useMemo(() => repairs.filter(r => r.status !== "done").slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)), [repairs]);
+  const jobsByProject = React.useMemo(() => {
+    const map = {};
+    openJobs.forEach(r => {
+      const key = r.project || "";
+      if (!key) return;
+      if (!map[key]) map[key] = {
+        open: 0
+      };
+      map[key].open++;
+    });
+    return map;
+  }, [openJobs]);
+  const mapProjects = React.useMemo(() => {
+    const allowed = new Set(window.userProjects(user));
+    return (window.__DATA.projects || []).filter(p => allowed.has(p.name));
+  }, [user, tick]);
+  const pinned = React.useMemo(() => mapProjects.filter(window.hasLatLng), [mapProjects]);
+  const jobCards = React.useMemo(() => openJobs.filter(r => !mapProject || r.project === mapProject).filter(r => jobStatus === "all" || r.status === jobStatus), [openJobs, mapProject, jobStatus]);
+  React.useEffect(() => {
+    setJobLimit(36);
+  }, [mapProject, jobStatus]);
+  const jobStatusChips = React.useMemo(() => {
+    const list = window.__DATA.statuses.filter(s => s.key !== "done");
+    return [{
+      key: "all",
+      label: "ทั้งหมด",
+      n: openJobs.filter(r => !mapProject || r.project === mapProject).length
+    }].concat(list.map(s => ({
+      key: s.key,
+      label: s.label,
+      n: openJobs.filter(r => (!mapProject || r.project === mapProject) && r.status === s.key).length
+    }))).filter(c => c.key === "all" || c.n > 0);
+  }, [openJobs, mapProject]);
   const costStats = React.useMemo(() => {
     const total = repairs.reduce((s, r) => s + (Number(r.cost) || 0), 0);
     const done = repairs.filter(r => r.status === "done").reduce((s, r) => s + (Number(r.cost) || 0), 0);
@@ -2489,7 +4423,8 @@ function Dashboard({
     });
     const projColors = ["#1E40AF", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#06B6D4", "#EC4899", "#6366F1", "#14B8A6", "#F97316"];
     const byProj = Object.entries(byProjMap).map(([name, v], i) => ({
-      name,
+      name: window.projectShort(name),
+      fullName: name,
       color: projColors[i % projColors.length],
       ...v
     })).sort((a, b) => b.cost - a.cost);
@@ -2530,10 +4465,12 @@ function Dashboard({
         if (!map[key]) map[key] = {
           label,
           count: 0,
-          done: 0
+          open: 0,
+          jobs: []
         };
         map[key].count++;
-        if (p.status === "done") map[key].done++;
+        if (p.status !== "done") map[key].open++;
+        if (!map[key].jobs.some(x => x.id === r.id)) map[key].jobs.push(r);
       });
     });
     const list = Object.values(map).sort((a, b) => b.count - a.count);
@@ -2543,6 +4480,33 @@ function Dashboard({
       max: list.length ? list[0].count : 0
     };
   }, [repairs]);
+  const keywordStats = React.useMemo(() => {
+    const map = {};
+    repairs.forEach(r => {
+      const text = window.getProblems(r).map(p => p.text).filter(Boolean).join(" ") || r.title || "";
+      new Set(window.extractKeywords(text)).forEach(kw => {
+        if (!map[kw]) map[kw] = {
+          label: kw,
+          count: 0,
+          open: 0,
+          jobs: []
+        };
+        map[kw].count++;
+        if (r.status !== "done") map[kw].open++;
+        map[kw].jobs.push(r);
+      });
+    });
+    const all = Object.values(map).sort((a, b) => b.count - a.count || b.open - a.open);
+    const repeated = all.filter(x => x.count > 1);
+    const list = repeated.length ? repeated : all;
+    return {
+      list,
+      total: repairs.length,
+      max: list.length ? list[0].count : 0
+    };
+  }, [repairs]);
+  const symptomView = symptomMode === "keyword" ? keywordStats : symptomStats;
+  const symptomTop = symptomView.list.slice(0, symptomLimit);
   const counts = {
     all: repairs.length,
     assess: repairs.filter(r => r.status === "assess").length,
@@ -2850,6 +4814,110 @@ function Dashboard({
   }, React.createElement("i", {
     className: `fa-solid fa-arrow-${s.up ? "up" : "down"}`
   })), " ", s.delta)))), React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 18
+    }
+  }, React.createElement("div", {
+    className: "card-h"
+  }, React.createElement("div", null, React.createElement("h3", null, React.createElement("i", {
+    className: "fa-solid fa-map-location-dot",
+    style: {
+      color: "var(--primary)",
+      marginRight: 8
+    }
+  }), "\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("div", {
+    className: "sub"
+  }, "\u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E41\u0E25\u0E49\u0E27 ", pinned.length, "/", mapProjects.length, " \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \xB7 \u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E1A\u0E19\u0E2B\u0E21\u0E38\u0E14\u0E04\u0E37\u0E2D\u0E08\u0E33\u0E19\u0E27\u0E19\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C")), mapProject && React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => setMapProject("")
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark"
+  }), " \u0E40\u0E25\u0E34\u0E01\u0E01\u0E23\u0E2D\u0E07: ", React.createElement("span", {
+    title: mapProject
+  }, window.projectShort(mapProject)))), pinned.length === 0 ? React.createElement("div", {
+    className: "card-body"
+  }, React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-map-pin"
+  }), React.createElement("div", {
+    className: "t",
+    style: {
+      fontSize: 14
+    }
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("div", null, "\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E23\u0E30\u0E1A\u0E1A Asset \u2192 \u0E40\u0E21\u0E19\u0E39 \"\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\" \u2192 \u0E41\u0E01\u0E49\u0E44\u0E02\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2192 \u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14\u0E43\u0E19\u0E0A\u0E48\u0E2D\u0E07 \"\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\""))) : React.createElement(ProjectMap, {
+    projects: pinned,
+    byProject: jobsByProject,
+    selected: mapProject,
+    onSelect: setMapProject
+  })), React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 18
+    }
+  }, React.createElement("div", {
+    className: "card-h"
+  }, React.createElement("div", null, React.createElement("h3", null, React.createElement("i", {
+    className: "fa-solid fa-clipboard-list",
+    style: {
+      color: "#B45309",
+      marginRight: 8
+    }
+  }), "\u0E07\u0E32\u0E19\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C"), React.createElement("div", {
+    className: "sub"
+  }, jobCards.length.toLocaleString("th-TH"), " \u0E43\u0E1A", mapProject ? ` · เฉพาะโครงการ ${window.projectShort(mapProject)}` : "", " \xB7 \u0E44\u0E21\u0E48\u0E23\u0E27\u0E21\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E1B\u0E34\u0E14\u0E40\u0E23\u0E35\u0E22\u0E1A\u0E23\u0E49\u0E2D\u0E22\u0E41\u0E25\u0E49\u0E27")), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      flexWrap: "wrap"
+    }
+  }, jobStatusChips.map(c => React.createElement("button", {
+    key: c.key,
+    className: `btn btn-sm ${jobStatus === c.key ? "btn-primary" : "btn-ghost"}`,
+    onClick: () => setJobStatus(c.key)
+  }, c.label, " ", React.createElement("span", {
+    style: {
+      opacity: .8,
+      marginLeft: 4
+    }
+  }, "(", c.n, ")"))))), React.createElement("div", {
+    className: "card-body"
+  }, jobCards.length === 0 ? React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-check",
+    style: {
+      color: "#10B981"
+    }
+  }), React.createElement("div", {
+    className: "t",
+    style: {
+      fontSize: 14
+    }
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07\u0E43\u0E19\u0E40\u0E07\u0E37\u0E48\u0E2D\u0E19\u0E44\u0E02\u0E19\u0E35\u0E49"), React.createElement("div", null, "\u0E07\u0E32\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C\u0E41\u0E25\u0E49\u0E27")) : React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "job-grid"
+  }, jobCards.slice(0, jobLimit).map(r => React.createElement(JobCard, {
+    key: r.id,
+    r: r,
+    onOpen: setDashDetail
+  }))), jobCards.length > jobLimit && React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 16
+    }
+  }, React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => setJobLimit(n => n + 36)
+  }, React.createElement("i", {
+    className: "fa-solid fa-chevron-down"
+  }), " \u0E41\u0E2A\u0E14\u0E07\u0E40\u0E1E\u0E34\u0E48\u0E21 (\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E2D\u0E35\u0E01 ", (jobCards.length - jobLimit).toLocaleString("th-TH"), " \u0E43\u0E1A)"))))), React.createElement("div", {
     className: "charts-grid"
   }, React.createElement("div", {
     className: "card"
@@ -2888,11 +4956,53 @@ function Dashboard({
     }
   }, React.createElement("div", {
     className: "card-h"
-  }, React.createElement("div", null, React.createElement("h3", null, "\u0E2A\u0E23\u0E38\u0E1B\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E40\u0E2A\u0E35\u0E22\u0E17\u0E35\u0E48\u0E1E\u0E1A\u0E1A\u0E48\u0E2D\u0E22"), React.createElement("div", {
+  }, React.createElement("div", null, React.createElement("h3", null, React.createElement("i", {
+    className: "fa-solid fa-magnifying-glass-chart",
+    style: {
+      color: "#EF4444",
+      marginRight: 8
+    }
+  }), "\u0E2A\u0E23\u0E38\u0E1B\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E40\u0E2A\u0E35\u0E22\u0E17\u0E35\u0E48\u0E1E\u0E1A\u0E1A\u0E48\u0E2D\u0E22"), React.createElement("div", {
     className: "sub"
-  }, "\u0E08\u0E31\u0E14\u0E2D\u0E31\u0E19\u0E14\u0E31\u0E1A\u0E2D\u0E32\u0E01\u0E32\u0E23/\u0E1B\u0E31\u0E0D\u0E2B\u0E32\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \xB7 ", symptomStats.list.length, " \u0E2D\u0E32\u0E01\u0E32\u0E23 \xB7 ", symptomStats.total, " \u0E04\u0E23\u0E31\u0E49\u0E07"))), React.createElement("div", {
+  }, symptomMode === "keyword" ? React.createElement(React.Fragment, null, "\u0E41\u0E22\u0E01\u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14\u0E08\u0E32\u0E01\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E41\u0E08\u0E49\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 \xB7 \u0E1E\u0E1A ", symptomView.list.length, " \u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14 \u0E08\u0E32\u0E01 ", symptomView.total, " \u0E43\u0E1A\u0E07\u0E32\u0E19") : React.createElement(React.Fragment, null, "\u0E08\u0E31\u0E14\u0E2D\u0E31\u0E19\u0E14\u0E31\u0E1A\u0E2D\u0E32\u0E01\u0E32\u0E23/\u0E1B\u0E31\u0E0D\u0E2B\u0E32\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \xB7 ", symptomView.list.length, " \u0E2D\u0E32\u0E01\u0E32\u0E23 \xB7 ", symptomView.total, " \u0E04\u0E23\u0E31\u0E49\u0E07"))), React.createElement("div", {
+    className: "seg",
+    style: {
+      display: "inline-flex",
+      background: "var(--bg)",
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: 3
+    }
+  }, [{
+    k: "keyword",
+    l: "คีย์เวิร์ด",
+    i: "fa-key"
+  }, {
+    k: "full",
+    l: "ข้อความเต็ม",
+    i: "fa-align-left"
+  }].map(t => React.createElement("button", {
+    key: t.k,
+    onClick: () => {
+      setSymptomMode(t.k);
+      setOpenKw("");
+      setSymptomLimit(10);
+    },
+    style: {
+      padding: "7px 14px",
+      borderRadius: 7,
+      border: "none",
+      fontSize: 13,
+      cursor: "pointer",
+      fontFamily: "Kanit",
+      background: symptomMode === t.k ? "var(--primary)" : "transparent",
+      color: symptomMode === t.k ? "#fff" : "var(--muted)"
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${t.i}`
+  }), " ", t.l)))), React.createElement("div", {
     className: "card-body"
-  }, symptomStats.list.length === 0 ? React.createElement("div", {
+  }, symptomView.list.length === 0 ? React.createElement("div", {
     className: "empty",
     style: {
       padding: 30
@@ -2904,22 +5014,27 @@ function Dashboard({
     style: {
       fontSize: 14
     }
-  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21")) : React.createElement("div", {
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21"), symptomMode === "keyword" && React.createElement("div", null, "\u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14\u0E08\u0E30\u0E02\u0E36\u0E49\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E04\u0E33\u0E17\u0E35\u0E48\u0E0B\u0E49\u0E33\u0E01\u0E31\u0E19\u0E15\u0E31\u0E49\u0E07\u0E41\u0E15\u0E48 2 \u0E43\u0E1A\u0E07\u0E32\u0E19\u0E02\u0E36\u0E49\u0E19\u0E44\u0E1B")) : React.createElement(React.Fragment, null, React.createElement("div", {
     style: {
       display: "grid",
       gap: 12
     }
-  }, symptomStats.list.slice(0, Math.max(6, Math.min(symptomStats.list.length, 8))).map((s, i) => {
-    const pct = symptomStats.max ? s.count / symptomStats.max * 100 : 0;
-    const share = symptomStats.total ? s.count / symptomStats.total * 100 : 0;
+  }, symptomTop.map((s, i) => {
+    const pct = symptomView.max ? s.count / symptomView.max * 100 : 0;
+    const share = symptomView.total ? s.count / symptomView.total * 100 : 0;
     const rankColor = ["#EF4444", "#F59E0B", "#3B82F6", "#8B5CF6", "#0EA5E9", "#10B981", "#EC4899", "#6366F1"][i % 8];
+    const isOpen = openKw === s.label;
     return React.createElement("div", {
-      key: i,
+      key: s.label
+    }, React.createElement("div", {
       style: {
         display: "flex",
         alignItems: "center",
-        gap: 12
-      }
+        gap: 12,
+        cursor: "pointer"
+      },
+      onClick: () => setOpenKw(isOpen ? "" : s.label),
+      title: "\u0E01\u0E14\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E14\u0E39\u0E43\u0E1A\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E21\u0E35\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49"
     }, React.createElement("span", {
       style: {
         width: 26,
@@ -2954,7 +5069,22 @@ function Dashboard({
         textOverflow: "ellipsis",
         whiteSpace: "nowrap"
       }
-    }, s.label), React.createElement("span", {
+    }, React.createElement("i", {
+      className: `fa-solid fa-chevron-${isOpen ? "down" : "right"}`,
+      style: {
+        fontSize: 10,
+        color: "var(--muted)",
+        marginRight: 7
+      }
+    }), s.label, s.open > 0 && React.createElement("span", {
+      className: "badge",
+      style: {
+        background: "#FEF3C7",
+        color: "#B45309",
+        marginLeft: 8,
+        fontSize: 11
+      }
+    }, "\u0E04\u0E49\u0E32\u0E07 ", s.open)), React.createElement("span", {
       style: {
         flexShrink: 0,
         fontSize: 13,
@@ -2965,7 +5095,7 @@ function Dashboard({
         color: rankColor,
         fontSize: 15
       }
-    }, s.count), " \u0E04\u0E23\u0E31\u0E49\u0E07 \xB7 ", share.toFixed(0), "%")), React.createElement("div", {
+    }, s.count), " ", symptomMode === "keyword" ? "ใบงาน" : "ครั้ง", " \xB7 ", share.toFixed(0), "%")), React.createElement("div", {
       style: {
         height: 8,
         borderRadius: 999,
@@ -2980,8 +5110,81 @@ function Dashboard({
         borderRadius: 999,
         transition: "width .4s"
       }
-    }))));
-  })))), React.createElement("div", {
+    })))), isOpen && React.createElement("div", {
+      style: {
+        margin: "10px 0 4px 38px",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        overflow: "hidden"
+      }
+    }, s.jobs.slice(0, 15).map(r => {
+      const st = window.getStatus(r.status);
+      return React.createElement("div", {
+        key: r.id,
+        onClick: () => setDashDetail(r),
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--line-soft)",
+          cursor: "pointer",
+          fontSize: 13,
+          flexWrap: "wrap"
+        }
+      }, React.createElement("span", {
+        className: "mono",
+        style: {
+          color: "var(--primary)",
+          fontSize: 12,
+          fontWeight: 600
+        }
+      }, r.running || r.id), React.createElement("span", {
+        className: `badge ${st.className}`,
+        style: {
+          fontSize: 11
+        }
+      }, st.label), React.createElement("span", {
+        style: {
+          flex: 1,
+          minWidth: 120,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: "var(--text)"
+        }
+      }, String(r.title || "").split("\n")[0]), React.createElement("span", {
+        style: {
+          color: "var(--muted)",
+          fontSize: 12
+        }
+      }, React.createElement(ProjectLabel, {
+        name: r.project
+      })), React.createElement("span", {
+        style: {
+          color: "var(--muted)",
+          fontSize: 12
+        }
+      }, window.__DATA.fmtDate(r.createdAt)));
+    }), s.jobs.length > 15 && React.createElement("div", {
+      style: {
+        padding: "7px 12px",
+        fontSize: 12,
+        color: "var(--muted)",
+        background: "#FAFBFC"
+      }
+    }, "\u0E41\u0E25\u0E30\u0E2D\u0E35\u0E01 ", s.jobs.length - 15, " \u0E43\u0E1A\u0E07\u0E32\u0E19")));
+  })), symptomView.list.length > symptomLimit && React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 14
+    }
+  }, React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => setSymptomLimit(n => n + 10)
+  }, React.createElement("i", {
+    className: "fa-solid fa-chevron-down"
+  }), " \u0E14\u0E39\u0E40\u0E1E\u0E34\u0E48\u0E21 (\u0E2D\u0E35\u0E01 ", symptomView.list.length - symptomLimit, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)"))))), React.createElement("div", {
     className: "stat-grid",
     style: {
       gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))",
@@ -3276,7 +5479,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2083) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3513) ---- */
 function Repairs({
   user
 }) {
@@ -3570,44 +5773,20 @@ function Repairs({
     }
   };
   const deleteRepair = async r => {
-    if (user.role !== "Admin") return;
-    const {
-      isConfirmed
-    } = await Swal.fire({
-      title: "ลบใบแจ้งซ่อมนี้?",
-      html: `เลขที่ <b>${r.running}</b><br/><span style="color:#64748B">การลบไม่สามารถกู้คืนได้</span>`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ใช่, ลบเลย",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteRepair",
+      payload: {
+        id: r.id
+      },
+      entityLabel: "ใบแจ้งซ่อม",
+      targetName: r.running || r.id,
+      project: r.project || "",
+      targetInfo: [r.machineCode, r.problems && r.problems[0] && r.problems[0].text || r.problem || ""].filter(Boolean).join(" · ")
     });
-    if (!isConfirmed) return;
-    setLoading(true);
-    try {
-      await window.api("deleteRepair", {
-        id: r.id,
-        role: user.role
-      });
-      const newRows = rows.filter(x => x.id !== r.id);
-      setRows(newRows);
+    if (done) {
+      setRows(rows.filter(x => x.id !== r.id));
       window.__DATA.repairs = window.__DATA.repairs.filter(x => x.id !== r.id);
-      setLoading(false);
-      Swal.fire({
-        icon: "success",
-        title: "ลบข้อมูลแล้ว",
-        timer: 1400,
-        showConfirmButton: false,
-        toast: true,
-        position: "top-end"
-      });
-    } catch (err) {
-      setLoading(false);
-      Swal.fire({
-        icon: "error",
-        title: "ลบไม่สำเร็จ",
-        text: err.message
-      });
     }
   };
   return React.createElement(React.Fragment, null, React.createElement(Loading, {
@@ -3731,7 +5910,7 @@ function Repairs({
     className: "fa-solid fa-eye"
   })), user.role === "Admin" && React.createElement("button", {
     className: "ia",
-    title: "\u0E25\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (Admin)",
+    title: "\u0E25\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19)",
     onClick: () => deleteRepair(r),
     style: {
       color: "#EF4444"
@@ -4341,8 +6520,7 @@ window.buildRepairFormDoc = function (r, user) {
   const dateStr = fmtDate(r.createdAt);
   const fill = v => v ? "<span class='fld'>" + esc(v) + "</span>" : "";
   const rp = window.getRepairPlace(r);
-  const projCode = window.getProjectCode ? window.getProjectCode(r.project) : "";
-  const projLabel = r.project ? projCode ? "[" + projCode + "] " + r.project : r.project : "";
+  const projLabel = window.projectFull(r.project);
   const box = on => "<span class='chk'>" + (on ? "✓" : "") + "</span>";
   const rowCount = Math.max(5, probs.length);
   let rows = "";
@@ -5308,7 +7486,7 @@ window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 2802) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4218) ---- */
 function Users({
   user
 }) {
@@ -5365,41 +7543,22 @@ function Users({
       });
     }
   };
-  const del = u => {
-    Swal.fire({
-      title: "ลบผู้ใช้งาน?",
-      text: `ต้องการลบ "${u.name}" ใช่หรือไม่?`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ลบ",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
-    }).then(async r => {
-      if (r.isConfirmed) {
-        try {
-          await window.api("deleteUser", {
-            id: u.id
-          });
-          const upd = rows.filter(x => x.id !== u.id);
-          setRows(upd);
-          window.__DATA.users = upd;
-          Swal.fire({
-            icon: "success",
-            title: "ลบแล้ว",
-            timer: 1000,
-            showConfirmButton: false,
-            toast: true,
-            position: "top-end"
-          });
-        } catch (err) {
-          Swal.fire({
-            icon: "error",
-            title: "ลบไม่สำเร็จ",
-            text: err.message
-          });
-        }
-      }
+  const del = async u => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteUser",
+      payload: {
+        id: u.id
+      },
+      entityLabel: "ผู้ใช้งาน",
+      targetName: u.name,
+      targetInfo: `${u.username || "-"} · ${u.role || "-"} · ${u.dept || "-"}`
     });
+    if (done) {
+      const upd = rows.filter(x => x.id !== u.id);
+      setRows(upd);
+      window.__DATA.users = upd;
+    }
   };
   const [revealedPw, setRevealedPw] = React.useState({});
   const togglePw = async u => {
@@ -5436,6 +7595,7 @@ function Users({
     Officer: "#8B5CF6",
     Technician: "#F59E0B",
     Engineer: "#06B6D4",
+    "Safety Officer": "#DB2777",
     Reporter: "#10B981",
     Director: "#EF4444"
   };
@@ -5609,9 +7769,10 @@ function UserForm({
     ...init,
     projects: Array.isArray(init.projects) ? init.projects : []
   });
-  const roles = ["Admin", "Officer", "Engineer", "Technician", "Reporter", "Director"];
+  const roles = ["Admin", "Officer", "Engineer", "Safety Officer", "Technician", "Reporter", "Director"];
   const allProjects = React.useMemo(() => Array.from(new Set((window.__DATA.machines || []).map(m => m.project).filter(Boolean))).sort(), []);
   const isSuperRole = ["Admin", "Director"].includes(f.role);
+  const isProjectLocked = (window.PROJECT_LOCKED_ROLES || []).includes(f.role);
   const toggleProject = p => setF(prev => {
     const cur = prev.projects || [];
     return {
@@ -5633,6 +7794,14 @@ function UserForm({
         icon: "warning",
         title: "กรอกข้อมูลไม่ครบ",
         text: "กรุณาใส่ Username และชื่อ-นามสกุล"
+      });
+      return;
+    }
+    if (isProjectLocked && !(f.projects || []).length) {
+      Swal.fire({
+        icon: "warning",
+        title: "ยังไม่ได้กำหนดโครงการ",
+        text: `บทบาท ${f.role} เห็นได้เฉพาะโครงการที่มอบหมาย — ถ้าไม่เลือกจะไม่เห็นข้อมูลใดเลย`
       });
       return;
     }
@@ -5731,9 +7900,9 @@ function UserForm({
     style: {
       fontWeight: 400,
       fontSize: 12,
-      color: "var(--muted)"
+      color: isProjectLocked && !f.projects?.length ? "#B91C1C" : "var(--muted)"
     }
-  }, f.projects?.length ? `เลือกแล้ว ${f.projects.length}/${allProjects.length}` : `ไม่เลือก = เห็นทุกโครงการ`)), isSuperRole ? React.createElement("div", {
+  }, f.projects?.length ? `เลือกแล้ว ${f.projects.length}/${allProjects.length}` : isProjectLocked ? `ยังไม่เลือก = ไม่เห็นข้อมูลเลย` : `ไม่เลือก = เห็นทุกโครงการ`)), isSuperRole ? React.createElement("div", {
     style: {
       padding: 14,
       background: "rgba(30,64,175,.06)",
@@ -5773,10 +7942,15 @@ function UserForm({
   }), React.createElement("div", {
     style: {
       fontSize: 11.5,
-      color: "var(--muted)",
+      color: isProjectLocked ? "#B45309" : "var(--muted)",
       alignSelf: "center"
     }
-  }, "\u0E44\u0E21\u0E48\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E40\u0E25\u0E22 = \u0E40\u0E2B\u0E47\u0E19\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23")), allProjects.length === 0 ? React.createElement("div", {
+  }, isProjectLocked ? React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-lock",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E1A\u0E17\u0E1A\u0E32\u0E17 ", f.role, " \u0E16\u0E39\u0E01\u0E25\u0E47\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014 \u0E15\u0E49\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22 1 \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23") : "ไม่เลือกเลย = เห็นทุกโครงการ")), allProjects.length === 0 ? React.createElement("div", {
     style: {
       padding: 14,
       background: "var(--bg)",
@@ -5839,7 +8013,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 2964) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4386) ---- */
 function Categories({
   user
 }) {
@@ -5880,41 +8054,21 @@ function Categories({
       });
     }
   };
-  const del = c => {
-    Swal.fire({
-      title: "ลบหมวดหมู่?",
-      text: `ต้องการลบ "${c.name}" ใช่หรือไม่?`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ลบ",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
-    }).then(async r => {
-      if (r.isConfirmed) {
-        try {
-          await window.api("deleteCategory", {
-            id: c.id
-          });
-          const upd = rows.filter(x => x.id !== c.id);
-          setRows(upd);
-          window.__DATA.categories = upd;
-          Swal.fire({
-            icon: "success",
-            title: "ลบแล้ว",
-            timer: 1000,
-            showConfirmButton: false,
-            toast: true,
-            position: "top-end"
-          });
-        } catch (err) {
-          Swal.fire({
-            icon: "error",
-            title: "ลบไม่สำเร็จ",
-            text: err.message
-          });
-        }
-      }
+  const del = async c => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteCategory",
+      payload: {
+        id: c.id
+      },
+      entityLabel: "หมวดหมู่งาน",
+      targetName: c.name
     });
+    if (done) {
+      const upd = rows.filter(x => x.id !== c.id);
+      setRows(upd);
+      window.__DATA.categories = upd;
+    }
   };
   return React.createElement("div", {
     className: "card"
@@ -6122,7 +8276,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3056) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4474) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -6951,6 +9105,9 @@ function Machines({
     "ซ่อม": "#EF4444",
     "รอซ่อม": "#F59E0B"
   })[s] || "#64748B";
+  const syncCache = fn => {
+    window.__DATA.machines = fn(window.__DATA.machines || []);
+  };
   const save = async form => {
     try {
       if (form.id) {
@@ -6958,16 +9115,14 @@ function Machines({
           id: form.id,
           patch: form
         });
-        const upd = rows.map(x => x.id === form.id ? form : x);
-        setRows(upd);
-        window.__DATA.machines = upd;
+        setRows(rows.map(x => x.id === form.id ? form : x));
+        syncCache(all => all.map(x => x.id === form.id ? form : x));
       } else {
         const nu = await window.api("createMachine", {
           m: form
         });
-        const upd = [...rows, nu];
-        setRows(upd);
-        window.__DATA.machines = upd;
+        setRows([...rows, nu]);
+        syncCache(all => [...all, nu]);
       }
       setEdit(null);
       Swal.fire({
@@ -6986,42 +9141,22 @@ function Machines({
       });
     }
   };
-  const remove = m => {
-    Swal.fire({
-      title: "ลบเครื่องจักร?",
-      html: `คุณต้องการลบ <strong>${m.name}</strong> (${m.code}) ใช่หรือไม่?`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#EF4444",
-      confirmButtonText: "ลบ",
-      cancelButtonText: "ยกเลิก"
-    }).then(async r => {
-      if (r.isConfirmed) {
-        try {
-          await window.api("deleteMachine", {
-            id: m.id
-          });
-          const upd = rows.filter(x => x.id !== m.id);
-          setRows(upd);
-          window.__DATA.machines = upd;
-          setDetail(null);
-          Swal.fire({
-            icon: "success",
-            title: "ลบแล้ว",
-            timer: 1000,
-            showConfirmButton: false,
-            toast: true,
-            position: "top-end"
-          });
-        } catch (err) {
-          Swal.fire({
-            icon: "error",
-            title: "ลบไม่สำเร็จ",
-            text: err.message
-          });
-        }
-      }
+  const remove = async m => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteMachine",
+      payload: {
+        id: m.id
+      },
+      entityLabel: "เครื่องจักร",
+      targetName: `${m.name} (${m.code})`,
+      project: m.project || "",
+      targetInfo: [m.brand, m.model, m.serial].filter(Boolean).join(" · ")
     });
+    if (done) {
+      setRows(rows.filter(x => x.id !== m.id));
+      setDetail(null);
+    }
   };
   const handleTransfer = async (machine, {
     toProject,
@@ -7048,9 +9183,8 @@ function Machines({
         ...machine,
         ...patch
       };
-      const upd = rows.map(x => x.id === machine.id ? updated : x);
-      setRows(upd);
-      window.__DATA.machines = upd;
+      setRows(rows.map(x => x.id === machine.id ? updated : x));
+      syncCache(all => all.map(x => x.id === machine.id ? updated : x));
       setDetail(updated);
       Swal.fire({
         icon: "success",
@@ -7219,7 +9353,9 @@ function Machines({
       className: "meta"
     }, React.createElement("span", null, React.createElement("i", {
       className: "fa-solid fa-diagram-project"
-    }), " ", m.project || "—"), m.ownership && React.createElement("span", null, React.createElement("i", {
+    }), " ", React.createElement(ProjectLabel, {
+      name: m.project
+    })), m.ownership && React.createElement("span", null, React.createElement("i", {
       className: "fa-solid fa-handshake"
     }), " ", m.ownership))));
   }), filtered.length === 0 && React.createElement("div", {
@@ -7246,9 +9382,9 @@ function Machines({
     },
     onDelete: () => remove(detail),
     onTransfer: payload => handleTransfer(detail, payload),
-    onPatchMachine: async patch => {
+    onPatchMachine: async (patch, localOnly) => {
       try {
-        await window.api("updateMachine", {
+        if (!localOnly) await window.api("updateMachine", {
           id: detail.id,
           patch
         });
@@ -7256,9 +9392,8 @@ function Machines({
           ...detail,
           ...patch
         };
-        const upd = rows.map(x => x.id === detail.id ? updated : x);
-        setRows(upd);
-        window.__DATA.machines = upd;
+        setRows(rows.map(x => x.id === detail.id ? updated : x));
+        syncCache(all => all.map(x => x.id === detail.id ? updated : x));
         setDetail(updated);
       } catch (err) {
         Swal.fire({
@@ -7271,6 +9406,7 @@ function Machines({
   }), edit && React.createElement(MachineForm, {
     initial: edit.m,
     mode: edit.mode,
+    user: user,
     onClose: () => setEdit(null),
     onSave: save
   }));
@@ -7278,12 +9414,13 @@ function Machines({
 function MachineForm({
   initial,
   mode,
+  user,
   onClose,
   onSave
 }) {
   const [f, setF] = React.useState(initial);
   const [busy, setBusy] = React.useState(false);
-  const projects = React.useMemo(() => (window.__DATA.projects || []).filter(p => p.status !== "inactive"), []);
+  const projects = React.useMemo(() => window.visibleProjects(user), [user]);
   const up = (k, v) => setF(p => ({
     ...p,
     [k]: v
@@ -7663,10 +9800,11 @@ function MachineForm({
 }
 function TransferMachineModal({
   m,
+  user,
   onClose,
   onSave
 }) {
-  const projects = (window.__DATA.projects || []).filter(p => p.status !== "inactive" && p.name !== m.project);
+  const projects = window.visibleProjects(user).filter(p => p.name !== m.project);
   const [toProject, setToProject] = React.useState("");
   const [note, setNote] = React.useState("");
   const inSt = {
@@ -7737,7 +9875,13 @@ function TransferMachineModal({
       fontSize: 15,
       color: "#78350F"
     }
-  }, m.project || "— ไม่ระบุ —")), React.createElement("div", null, React.createElement("label", {
+  }, m.project ? window.projectShort(m.project) : "— ไม่ระบุ —"), m.project && window.projectShort(m.project) !== m.project && React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "#B45309",
+      marginTop: 2
+    }
+  }, m.project)), React.createElement("div", null, React.createElement("label", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -7804,14 +9948,14 @@ function MachineDetail({
   const [editTrForm, setEditTrForm] = React.useState(null);
   const [savingTr, setSavingTr] = React.useState(false);
   const projectNames = React.useMemo(() => {
-    const names = (window.__DATA.projects || []).filter(p => p.status !== "inactive").map(p => p.name);
+    const names = window.visibleProjects(user).map(p => p.name);
     (m.transferHistory || []).forEach(t => {
       [t.from, t.to].forEach(n => {
         if (n && !names.includes(n)) names.push(n);
       });
     });
     return names;
-  }, [m.transferHistory]);
+  }, [m.transferHistory, user]);
   const toDateStr = d => {
     try {
       return new Date(d).toISOString().slice(0, 10);
@@ -8012,32 +10156,29 @@ function MachineDetail({
       setSavingTr(false);
     }
   };
-  const deleteTransferEntry = (idx, t) => {
-    Swal.fire({
-      title: "ลบประวัติการย้าย?",
-      html: `<div style="font-size:14px">${t.from || "ไม่ระบุ"} → <strong>${t.to || ""}</strong><br><span style="color:#64748B;font-size:12px">${window.__DATA.fmtDate(t.when)}</span></div><div style="margin-top:8px;font-size:12px;color:#B45309">ลบแล้วกู้คืนไม่ได้ และไม่กระทบโครงการปัจจุบันของเครื่องจักร</div>`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonColor: "#EF4444",
-      confirmButtonText: "ลบ",
-      cancelButtonText: "ยกเลิก"
-    }).then(async r => {
-      if (!r.isConfirmed) return;
-      const newHistory = (m.transferHistory || []).filter((_, i) => i !== idx);
-      await onPatchMachine({
-        transferHistory: newHistory
-      });
-      setEditTrIdx(null);
-      setEditTrForm(null);
-      Swal.fire({
-        icon: "success",
-        title: "ลบแล้ว",
-        timer: 1000,
-        showConfirmButton: false,
-        toast: true,
-        position: "top-end"
-      });
+  const deleteTransferEntry = async (idx, t) => {
+    const res = await window.deleteWithApproval({
+      user,
+      action: "deleteTransferEntry",
+      payload: {
+        machineId: m.id,
+        index: idx,
+        when: t.when,
+        to: t.to || ""
+      },
+      entityLabel: "ประวัติการย้ายเครื่องจักร",
+      targetName: `${m.name || ""} (${m.code || ""})`,
+      project: m.project || "",
+      targetInfo: `${t.from || "ไม่ระบุ"} → ${t.to || ""} · ${window.__DATA.fmtDate(t.when)}`,
+      warnHtml: "ลบแล้วกู้คืนไม่ได้ และไม่กระทบโครงการปัจจุบันของเครื่องจักร"
     });
+    if (!res) return;
+    const history = res && res.transferHistory || (m.transferHistory || []).filter((_, i) => i !== idx);
+    await onPatchMachine({
+      transferHistory: history
+    }, true);
+    setEditTrIdx(null);
+    setEditTrForm(null);
   };
   const saveEdit = async (r, patch) => {
     try {
@@ -8236,7 +10377,9 @@ function MachineDetail({
     className: "k"
   }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("div", {
     className: "v"
-  }, m.project || "—")), React.createElement("div", null, React.createElement("div", {
+  }, React.createElement(ProjectLabel, {
+    name: m.project
+  }))), React.createElement("div", null, React.createElement("div", {
     className: "k"
   }, "\u0E0B\u0E35\u0E40\u0E23\u0E35\u0E22\u0E25"), React.createElement("div", {
     className: "v mono",
@@ -8793,6 +10936,7 @@ function MachineDetail({
     onSave: saveEdit
   }), transferModal && React.createElement(TransferMachineModal, {
     m: m,
+    user: user,
     onClose: () => setTransferModal(false),
     onSave: payload => {
       setTransferModal(false);
@@ -8802,7 +10946,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3882) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5307) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -9057,22 +11201,24 @@ function Withdrawals({
       position: "top-end"
     });
   };
-  const remove = doc => Swal.fire({
-    title: "ลบรายการเบิก?",
-    icon: "warning",
-    showCancelButton: true,
-    confirmButtonText: "ลบ",
-    cancelButtonText: "ยกเลิก",
-    confirmButtonColor: "#EF4444"
-  }).then(async r => {
-    if (!r.isConfirmed) return;
-    await window.api("deleteWithdrawal", {
-      key: doc.key
+  const remove = async doc => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteWithdrawal",
+      payload: {
+        key: doc.key
+      },
+      entityLabel: "รายการเบิกของ",
+      targetName: doc.docNo || doc.key,
+      project: doc.project || "",
+      targetInfo: [doc.docDate, doc.department || doc.project, doc.requester].filter(Boolean).join(" · ")
     });
-    const upd = rows.filter(x => x.key !== doc.key);
-    setRows(upd);
-    window.__DATA.withdrawals = upd;
-  });
+    if (done) {
+      const upd = rows.filter(x => x.key !== doc.key);
+      setRows(upd);
+      window.__DATA.withdrawals = upd;
+    }
+  };
   const filtered = rows.filter(x => !q || [x.docNo, x.docDate, x.project, x.department, x.requester].join(" ").toLowerCase().includes(q.toLowerCase()));
   return React.createElement(React.Fragment, null, React.createElement("div", {
     className: "card"
@@ -9357,7 +11503,7 @@ function DocPJ2({
   const [filterProj, setFilterProj] = React.useState("all");
   const [editCell, setEditCell] = React.useState(null);
   const [uploading, setUploading] = React.useState(null);
-  const canEdit = ["Admin", "Officer", "Engineer"].includes(user.role);
+  const canEdit = ["Admin", "Officer", "Engineer", "Safety Officer"].includes(user.role);
   const today = React.useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -9790,7 +11936,9 @@ function DocPJ2({
     style: {
       fontSize: 13
     }
-  }, m.project || "—"), React.createElement("td", null, renderDateCell(m, "inspectionDate")), React.createElement("td", null, renderDateCell(m, "nextInspectionDate")))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
+  }, React.createElement(ProjectLabel, {
+    name: m.project
+  })), React.createElement("td", null, renderDateCell(m, "inspectionDate")), React.createElement("td", null, renderDateCell(m, "nextInspectionDate")))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
     colSpan: "8"
   }, React.createElement("div", {
     className: "empty"
@@ -9802,6 +11950,7 @@ function DocPJ2({
 }
 function LoginLogs() {
   const [logs, setLogs] = React.useState([]);
+  const [keep, setKeep] = React.useState(100);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [q, setQ] = React.useState("");
@@ -9812,6 +11961,16 @@ function LoginLogs() {
     setErr(null);
     window.api("getLoginLogs").then(r => {
       setLogs(r.logs || []);
+      if (r.keep) setKeep(r.keep);
+      if (r.removed > 0) Swal.fire({
+        icon: "info",
+        title: `ลบประวัติเก่า ${r.removed} รายการ`,
+        text: `ระบบเก็บประวัติการล็อกอินล่าสุด ${r.keep} รายการ`,
+        timer: 2600,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
       setLoading(false);
     }).catch(e => {
       setErr(e.message || "โหลดข้อมูลไม่สำเร็จ");
@@ -9825,6 +11984,7 @@ function LoginLogs() {
     "Admin": "#7C3AED",
     "Officer": "#1D4ED8",
     "Engineer": "#0369A1",
+    "Safety Officer": "#DB2777",
     "Technician": "#047857",
     "Director": "#B45309",
     "Reporter": "#64748B"
@@ -9927,7 +12087,18 @@ function LoginLogs() {
       fontSize: 13,
       alignSelf: "center"
     }
-  }, filtered.length, " / ", logs.length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("button", {
+  }, filtered.length, " / ", logs.length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23", React.createElement("span", {
+    title: `ระบบเก็บประวัติล่าสุด ${keep} รายการ ที่เกินมาจะถูกลบอัตโนมัติ`,
+    style: {
+      marginLeft: 8,
+      color: "#B45309"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-clock-rotate-left",
+    style: {
+      marginRight: 4
+    }
+  }), "\u0E40\u0E01\u0E47\u0E1A\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14 ", keep, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23")), React.createElement("button", {
     className: "btn btn-ghost",
     onClick: fetchLogs,
     disabled: loading,
@@ -10229,7 +12400,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4363) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5804) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -10504,7 +12675,7 @@ function NewRequest({
         confirmButtonColor: "#1E40AF"
       }).then(async () => {
         await window.shareRepairImage(saved, user);
-        goTo(["Admin", "Officer", "Engineer"].includes(user.role) ? "repairs" : "r-mine");
+        goTo(window.isOpsRole(user) ? "repairs" : "r-mine");
       });
     } catch (err) {
       setLoading(false);
@@ -10920,7 +13091,7 @@ function NewRequest({
     }
   }, React.createElement("button", {
     className: "btn btn-ghost",
-    onClick: () => goTo(["Admin", "Officer", "Engineer"].includes(user.role) ? "repairs" : "r-dashboard")
+    onClick: () => goTo(window.isOpsRole(user) ? "repairs" : "r-dashboard")
   }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
     className: "btn btn-primary",
     onClick: submit
@@ -11069,7 +13240,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4565) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6006) ---- */
 function AssetRegistry({
   user
 }) {
@@ -11098,17 +13269,18 @@ function AssetRegistry({
       alive = false;
     };
   }, [rows]);
-  const sites = React.useMemo(() => [...new Set((rows || []).map(r => r.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [rows]);
-  const owners = React.useMemo(() => [...new Set((rows || []).map(r => r.ownership).filter(Boolean))].sort(), [rows]);
+  const scoped = React.useMemo(() => window.filterByUserProjects(user, rows || [], "site"), [rows, user]);
+  const sites = React.useMemo(() => [...new Set(scoped.map(r => r.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [scoped]);
+  const owners = React.useMemo(() => [...new Set(scoped.map(r => r.ownership).filter(Boolean))].sort(), [scoped]);
   const filtered = React.useMemo(() => {
     const kw = q.trim().toLowerCase();
-    return (rows || []).filter(r => {
+    return scoped.filter(r => {
       if (site && r.site !== site) return false;
       if (owner && r.ownership !== owner) return false;
       if (!kw) return true;
       return [r.assetCode, r.name, r.brand, r.model, r.serial, r.site, r.holder, r.note].some(v => String(v || "").toLowerCase().includes(kw));
     });
-  }, [rows, q, site, owner]);
+  }, [scoped, q, site, owner]);
   const totalQty = React.useMemo(() => filtered.reduce((s, r) => s + (Number(r.quantity) || 0), 0), [filtered]);
   const GROUP_META = {
     site: {
@@ -11249,38 +13421,18 @@ function AssetRegistry({
     });
   };
   const remove = async r => {
-    const {
-      isConfirmed
-    } = await Swal.fire({
-      title: "ลบทรัพย์สินนี้?",
-      html: `<b>${r.assetCode || r.id || ""}</b> ${r.name || ""}<br/><span style="color:#64748B">การลบไม่สามารถกู้คืนได้</span>`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ใช่, ลบเลย",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
-    });
-    if (!isConfirmed) return;
-    try {
-      await window.api("deleteAssetRegistry", {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteAssetRegistry",
+      payload: {
         key: r.key
-      });
-      commit((rows || []).filter(x => x.key !== r.key));
-      Swal.fire({
-        icon: "success",
-        title: "ลบข้อมูลแล้ว",
-        timer: 1400,
-        showConfirmButton: false,
-        toast: true,
-        position: "top-end"
-      });
-    } catch (e) {
-      Swal.fire({
-        icon: "error",
-        title: "ลบไม่สำเร็จ",
-        text: e.message
-      });
-    }
+      },
+      entityLabel: "ทะเบียนทรัพย์สิน",
+      targetName: `${r.assetCode || r.id || ""} ${r.name || ""}`.trim(),
+      project: r.site || "",
+      targetInfo: [r.brand, r.model, r.serial, r.holder].filter(Boolean).join(" · ")
+    });
+    if (done) commit((rows || []).filter(x => x.key !== r.key));
   };
   const blank = {
     assetCode: "",
@@ -11374,7 +13526,7 @@ function AssetRegistry({
       fontSize: 13,
       alignSelf: "center"
     }
-  }, filtered.length.toLocaleString("th-TH"), " / ", rows.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("button", {
+  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("button", {
     className: "btn btn-ghost",
     title: "\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E08\u0E32\u0E01\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E40\u0E0A\u0E48\u0E19 \u0E2B\u0E25\u0E31\u0E07\u0E2D\u0E2D\u0E01/\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07)",
     onClick: () => {
@@ -11454,6 +13606,7 @@ function AssetRegistry({
     initial: edit.data,
     sites: sites,
     owners: owners,
+    user: user,
     onClose: () => setEdit(null),
     onSave: save
   }), history && React.createElement(AssetHistoryModal, {
@@ -11537,7 +13690,7 @@ function TransferAssetsModal({
   onClose,
   onSaved
 }) {
-  const projects = React.useMemo(() => (window.__DATA.projects || []).filter(p => p.status !== "inactive"), []);
+  const projects = React.useMemo(() => window.visibleProjects(user), [user]);
   const [assets, setAssets] = React.useState(() => window.__DATA.assetRegistry || null);
   const [loadErr, setLoadErr] = React.useState("");
   const [toProject, setToProject] = React.useState("");
@@ -11943,12 +14096,13 @@ function AssetForm({
   initial,
   sites,
   owners,
+  user,
   onClose,
   onSave
 }) {
   const [f, setF] = React.useState(initial);
   const [busy, setBusy] = React.useState(false);
-  const projects = React.useMemo(() => (window.__DATA.projects || []).filter(p => p.status !== "inactive"), []);
+  const projects = React.useMemo(() => window.visibleProjects(user), [user]);
   const up = (k, v) => setF(p => ({
     ...p,
     [k]: v
@@ -12314,39 +14468,22 @@ function DeliveryOrders({
     }
   };
   const remove = async doc => {
-    const {
-      isConfirmed
-    } = await Swal.fire({
-      title: "ลบใบส่งของนี้?",
-      html: `เลขที่ <b>${doc.docNo || doc.key}</b><br/><span style="color:#64748B">ประวัติการย้ายของทรัพย์สินจะยังอยู่ · การลบไม่สามารถกู้คืนได้</span>`,
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "ใช่, ลบเลย",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
-    });
-    if (!isConfirmed) return;
-    try {
-      await window.api("deleteDeliveryOrder", {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteDeliveryOrder",
+      payload: {
         key: doc.key
-      });
+      },
+      entityLabel: "ใบส่งของ (DO)",
+      targetName: doc.docNo || doc.key,
+      project: doc.toProject || "",
+      targetInfo: [doc.toProject && "ปลายทาง: " + doc.toProject, doc.by && "ผู้ทำรายการ: " + doc.by].filter(Boolean).join(" · "),
+      warnHtml: "ประวัติการย้ายของทรัพย์สินจะยังอยู่ · การลบไม่สามารถกู้คืนได้"
+    });
+    if (done) {
       const upd = rows.filter(x => x.key !== doc.key);
       window.__DATA.deliveryOrders = upd;
       setRows(upd);
-      Swal.fire({
-        icon: "success",
-        title: "ลบแล้ว",
-        timer: 1200,
-        showConfirmButton: false,
-        toast: true,
-        position: "top-end"
-      });
-    } catch (e) {
-      Swal.fire({
-        icon: "error",
-        title: "ลบไม่สำเร็จ",
-        text: e.message
-      });
     }
   };
   if (err) return React.createElement("div", {
@@ -12378,8 +14515,9 @@ function DeliveryOrders({
     show: true,
     text: "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07..."
   });
-  const cancelledCount = rows.filter(d => d.cancelled).length;
-  const filtered = rows.filter(d => {
+  const scoped = rows.filter(d => window.userCanSeeProject(user, d.toProject) || (d.items || []).some(it => window.userCanSeeProject(user, it.from)));
+  const cancelledCount = scoped.filter(d => d.cancelled).length;
+  const filtered = scoped.filter(d => {
     if (hideCancelled && d.cancelled) return false;
     return !q || [d.docNo, d.toProject, d.fromProjectLabel, d.sender, d.receiver, d.note].join(" ").toLowerCase().includes(q.toLowerCase());
   });
@@ -12427,7 +14565,7 @@ function DeliveryOrders({
       fontSize: 13,
       alignSelf: "center"
     }
-  }, filtered.length.toLocaleString("th-TH"), " / ", rows.length.toLocaleString("th-TH"), " \u0E43\u0E1A"), canEdit && React.createElement("button", {
+  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E43\u0E1A"), canEdit && React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => setTransferOpen(true)
   }, React.createElement("i", {
@@ -12928,7 +15066,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5459) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6896) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -12936,27 +15074,15 @@ function WorkspacePicker({
 }) {
   const erpSystems = window.__DATA.erpSystems || [];
   const projects = window.userProjects(user);
-  const [step, setStep] = React.useState("system");
-  const [erpId, setErpId] = React.useState("");
-  const [project, setProject] = React.useState("");
-  const selected = erpSystems.find(x => x.id === erpId);
   const readySystems = erpSystems.filter(x => window.canUseErp(user, x));
-  const inProject = (item, projectName) => !projectName || !item?.project || item.project === projectName;
-  const rowsForSystem = (sys, projectName = "") => {
-    const id = sys?.id;
-    let rows = [];
-    if (id === "repairs") rows = window.__DATA.repairs || [];else if (id === "assets") rows = window.__DATA.machines || [];else if (id === "consume") rows = window.__DATA.withdrawals || [];else if (id === "hr-time") return window.__DATA.users || [];else return [];
-    if (projectName) return rows.filter(x => inProject(x, projectName));
-    return window.filterByUserProjects(user, rows, "project");
-  };
-  const linkedStats = (projectName = "") => ({
-    repairs: (window.__DATA.repairs || []).filter(x => inProject(x, projectName)).length,
-    assets: (window.__DATA.machines || []).filter(x => inProject(x, projectName)).length,
+  const seesAll = window.userCanSeeAllProjects(user);
+  const stats = {
+    repairs: (window.__DATA.repairs || []).length,
+    assets: (window.__DATA.machines || []).length,
     users: (window.__DATA.users || []).length,
-    withdrawals: (window.__DATA.withdrawals || []).filter(x => inProject(x, projectName)).length
-  });
+    withdrawals: (window.__DATA.withdrawals || []).length
+  };
   const systemLine = sys => {
-    const stats = linkedStats("");
     if (sys.id === "repairs") return `${stats.repairs} ใบงาน · เชื่อม Asset ${stats.assets} รายการ`;
     if (sys.id === "assets") return `${stats.assets} รายการ · เชื่อมงานซ่อม ${stats.repairs} ใบงาน`;
     if (sys.id === "production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
@@ -12964,31 +15090,6 @@ function WorkspacePicker({
     if (sys.id === "pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
     if (sys.id === "hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
     return "พร้อมเชื่อมข้อมูล";
-  };
-  const optionCount = projectName => selected ? rowsForSystem(selected, projectName).length : 0;
-  const projectOptions = [{
-    value: "",
-    label: `ดูจัดการทั้งหมด${selected ? ` (${optionCount("")} รายการ)` : ""}`
-  }].concat(projects.map(p => ({
-    value: p,
-    label: `${p}${selected ? ` (${optionCount(p)} รายการ)` : ""}`
-  })));
-  const selectedProjectLabel = projectOptions.find(p => p.value === project)?.label || "ดูจัดการทั้งหมด";
-  const currentStats = linkedStats(project);
-  const submit = e => {
-    e.preventDefault();
-    if (!selected || !window.canUseErp(user, selected)) {
-      Swal.fire({
-        icon: "warning",
-        title: "กรุณาเลือกระบบงานที่พร้อมใช้งาน"
-      });
-      return;
-    }
-    onContinue({
-      erp: selected,
-      project,
-      projectLabel: selectedProjectLabel
-    });
   };
   const selectSystem = sys => {
     if (!window.canUseErp(user, sys)) {
@@ -13003,8 +15104,11 @@ function WorkspacePicker({
       });
       return;
     }
-    setErpId(sys.id);
-    setStep("project");
+    onContinue({
+      erp: sys,
+      project: "",
+      projectLabel: ""
+    });
   };
   return React.createElement("div", {
     className: "login-wrap"
@@ -13029,9 +15133,9 @@ function WorkspacePicker({
       color: "rgba(255,255,255,.6)",
       marginTop: 2
     }
-  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E07\u0E32\u0E19\u0E41\u0E25\u0E30\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))), React.createElement("div", {
+  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E08\u0E30\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49"))), React.createElement("div", {
     className: "login-hero"
-  }, React.createElement("h1", null, step === "system" ? "เลือกระบบงาน" : "เลือกโครงการ", React.createElement("br", null), "\u0E01\u0E48\u0E2D\u0E19\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19"), React.createElement("p", null, step === "system" ? "เลือกว่าจะเข้าใช้งานระบบใด รายการที่รอพัฒนาจะแสดงไว้เพื่อเตรียมต่อยอดในอนาคต" : "เลือกโครงการที่ต้องการทำงาน หรือเลือกดูจัดการทั้งหมดตามสิทธิ์ของบัญชีนี้"), React.createElement("div", {
+  }, React.createElement("h1", null, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19", React.createElement("br", null), "\u0E01\u0E48\u0E2D\u0E19\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19"), React.createElement("p", null, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E08\u0E30\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E23\u0E30\u0E1A\u0E1A\u0E43\u0E14 \u0E01\u0E14\u0E41\u0E25\u0E49\u0E27\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49\u0E17\u0E31\u0E19\u0E17\u0E35 \xB7 \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E23\u0E2D\u0E1E\u0E31\u0E12\u0E19\u0E32\u0E08\u0E30\u0E41\u0E2A\u0E14\u0E07\u0E44\u0E27\u0E49\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E23\u0E35\u0E22\u0E21\u0E15\u0E48\u0E2D\u0E22\u0E2D\u0E14\u0E43\u0E19\u0E2D\u0E19\u0E32\u0E04\u0E15"), React.createElement("div", {
     className: "chips"
   }, React.createElement("span", {
     className: "chip"
@@ -13047,23 +15151,23 @@ function WorkspacePicker({
     style: {
       marginRight: 6
     }
-  }), user.role), selected && React.createElement("span", {
+  }), user.role), React.createElement("span", {
     className: "chip"
   }, React.createElement("i", {
-    className: `fa-solid ${selected.icon}`,
+    className: "fa-solid fa-diagram-project",
     style: {
       marginRight: 6
     }
-  }), selected.name))), React.createElement("div", {
+  }), seesAll ? "ทุกโครงการ" : `${projects.length} โครงการที่ได้รับมอบหมาย`))), React.createElement("div", {
     className: "login-foot"
   }, "Repair Management System")), React.createElement("div", {
     className: "login-card-wrap"
   }, React.createElement("form", {
     className: "login-card",
-    onSubmit: submit
-  }, step === "system" ? React.createElement(React.Fragment, null, React.createElement("h2", null, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19"), React.createElement("p", {
+    onSubmit: e => e.preventDefault()
+  }, React.createElement("h2", null, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19"), React.createElement("p", {
     className: "sub"
-  }, "\u0E23\u0E30\u0E1A\u0E1A\u0E17\u0E35\u0E48\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E15\u0E48\u0E2D\u0E44\u0E14\u0E49\u0E17\u0E31\u0E19\u0E17\u0E35"), React.createElement("div", {
+  }, "\u0E01\u0E14\u0E17\u0E35\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E17\u0E31\u0E19\u0E17\u0E35"), React.createElement("div", {
     style: {
       display: "grid",
       gap: 10,
@@ -13158,90 +15262,22 @@ function WorkspacePicker({
       color: "var(--danger)",
       marginBottom: 14
     }
-  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E30\u0E1A\u0E1A\u0E17\u0E35\u0E48\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19")) : React.createElement(React.Fragment, null, React.createElement("button", {
-    type: "button",
-    className: "btn btn-ghost",
-    onClick: () => setStep("system"),
-    style: {
-      marginBottom: 14
-    }
-  }, React.createElement("i", {
-    className: "fa-solid fa-arrow-left"
-  }), " \u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E30\u0E1A\u0E1A\u0E07\u0E32\u0E19"), React.createElement("h2", null, selected?.name || "เลือกระบบงาน"), React.createElement("p", {
-    className: "sub"
-  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E08\u0E30\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19 \u0E2B\u0E23\u0E37\u0E2D\u0E14\u0E39\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"), React.createElement("div", {
-    className: "field"
-  }, React.createElement("label", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("i", {
-    className: "fa-solid fa-diagram-project"
-  }), React.createElement("select", {
-    value: project,
-    onChange: e => setProject(e.target.value),
-    style: {
-      width: "100%",
-      padding: "13px 14px 13px 42px",
-      border: "1.5px solid var(--line)",
-      borderRadius: 10,
-      background: "#fff",
-      outline: "none"
-    }
-  }, projectOptions.map(p => React.createElement("option", {
-    key: p.value || "__all",
-    value: p.value
-  }, p.label)))), projects.length === 0 && React.createElement("div", {
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E30\u0E1A\u0E1A\u0E17\u0E35\u0E48\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19"), !seesAll && projects.length === 0 && React.createElement("div", {
     style: {
       fontSize: 13,
-      color: "var(--muted)",
+      color: "#B45309",
+      background: "#FFFBEB",
+      border: "1px solid #FDE68A",
+      borderRadius: 8,
+      padding: "10px 12px",
       marginBottom: 14
     }
-  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E22\u0E01\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E08\u0E30\u0E40\u0E02\u0E49\u0E32\u0E40\u0E1B\u0E47\u0E19\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"), React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(3,minmax(0,1fr))",
-      gap: 8,
-      margin: "0 0 14px"
-    }
-  }, [{
-    label: "งานซ่อม",
-    value: currentStats.repairs,
-    icon: "fa-screwdriver-wrench"
-  }, {
-    label: "Asset",
-    value: currentStats.assets,
-    icon: "fa-boxes-stacked"
-  }, {
-    label: "ผู้ใช้งาน",
-    value: currentStats.users,
-    icon: "fa-users"
-  }].map(x => React.createElement("div", {
-    key: x.label,
-    style: {
-      border: "1px solid var(--line)",
-      borderRadius: 10,
-      padding: "10px 11px",
-      background: "#fff"
-    }
-  }, React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: "var(--muted)",
-      display: "flex",
-      alignItems: "center",
-      gap: 6
-    }
   }, React.createElement("i", {
-    className: `fa-solid ${x.icon}`
-  }), x.label), React.createElement("div", {
+    className: "fa-solid fa-triangle-exclamation",
     style: {
-      fontSize: 20,
-      fontWeight: 700,
-      marginTop: 2
+      marginRight: 6
     }
-  }, x.value.toLocaleString("th-TH"))))), React.createElement("button", {
-    className: "login-btn",
-    type: "submit"
-  }, React.createElement("i", {
-    className: "fa-solid fa-arrow-right-to-bracket"
-  }), " \u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19")), React.createElement("button", {
+  }), "\u0E1A\u0E31\u0E0D\u0E0A\u0E35\u0E19\u0E35\u0E49\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E23\u0E31\u0E1A\u0E21\u0E2D\u0E1A\u0E2B\u0E21\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u0E08\u0E30\u0E44\u0E21\u0E48\u0E40\u0E2B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E14\u0E40\u0E25\u0E22 \xB7 \u0E41\u0E08\u0E49\u0E07\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E43\u0E2B\u0E49\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19"), React.createElement("button", {
     className: "btn btn-ghost",
     type: "button",
     onClick: onLogout,
@@ -13671,10 +15707,12 @@ function App() {
             const erp = (window.__DATA.erpSystems || []).find(x => x.id === parsed.erp?.id) || parsed.erp;
             if (window.canUseErp(fresh, erp)) {
               window.__DATA.activeErp = erp;
-              window.__DATA.activeProject = parsed.project;
+              window.__DATA.activeProject = "";
               setWorkspace({
                 ...parsed,
-                erp
+                erp,
+                project: "",
+                projectLabel: ""
               });
             } else {
               localStorage.removeItem("rms_workspace");
@@ -13684,12 +15722,20 @@ function App() {
       } catch (e) {}
     }
   }, [booting]);
+  React.useEffect(() => {
+    if (!user) {
+      window.__DELREQ.stop();
+      return;
+    }
+    window.__DELREQ.start(user);
+    window.askNotifyPermission(user);
+  }, [user && user.id, user && user.role]);
   const login = u => {
     setUser(u);
     localStorage.setItem("rms_user", JSON.stringify(u));
     setWorkspace(null);
     localStorage.removeItem("rms_workspace");
-    setPage(["Admin", "Officer", "Director"].includes(u.role) ? "dashboard" : u.role === "Technician" ? "dashboard" : "r-dashboard");
+    setPage(window.defaultPageFor(u));
   };
   const enterWorkspace = ws => {
     window.__DATA.activeErp = ws.erp;
@@ -13699,7 +15745,7 @@ function App() {
     if (ws.erp?.startPage) {
       setPage(ws.erp.startPage);
     } else {
-      setPage(["Admin", "Officer", "Director"].includes(user.role) ? "dashboard" : user.role === "Technician" ? "dashboard" : "r-dashboard");
+      setPage(window.defaultPageFor(user));
     }
   };
   const clearWorkspace = () => {
@@ -13829,7 +15875,8 @@ function App() {
     activeProject: workspace.project
   };
   const systemId = workspace.erp?.id || "repairs";
-  const allowedPages = systemId === "assets" ? ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history", "projects"] : systemId === "consume" ? ["withdrawals"] : ["dashboard", "repairs", "spare-parts", "machines", "users", "categories", "login-logs", "r-dashboard", "r-new", "r-mine"];
+  const isSafety = user.role === "Safety Officer";
+  const allowedPages = (systemId === "assets" ? isSafety ? ["doc-pj2", "machines", "transfer-history"] : ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history", "projects"] : systemId === "consume" ? ["withdrawals"] : isSafety ? ["dashboard", "repairs", "spare-parts", "machines", "r-new"] : ["dashboard", "repairs", "spare-parts", "machines", "users", "categories", "login-logs", "r-dashboard", "r-new", "r-mine"]).concat("notifications");
   const safePage = allowedPages.includes(page) ? page : workspace.erp?.startPage || allowedPages[0];
   const pageTitles = {
     "dashboard": {
@@ -13878,15 +15925,15 @@ function App() {
     },
     "login-logs": {
       t: "ประวัติการล็อกอิน",
-      c: "บันทึกการเข้าสู่ระบบของผู้ใช้ทั้งหมด · เฉพาะ Admin"
+      c: "บันทึกการเข้าสู่ระบบล่าสุด 100 รายการ · ที่เกินมาระบบลบทิ้งอัตโนมัติ · เฉพาะ Admin"
     },
     "projects": {
       t: "โครงการ",
       c: "Projects · จัดการข้อมูลโครงการทั้งหมด"
     },
     "r-dashboard": {
-      t: "แดชบอร์ด",
-      c: "สรุปงานแจ้งซ่อมของฉัน"
+      t: "สรุปงานของฉัน",
+      c: "ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"
     },
     "r-new": {
       t: "แจ้งซ่อมใหม่",
@@ -13895,6 +15942,10 @@ function App() {
     "r-mine": {
       t: "ติดตามสถานะ",
       c: "รายการแจ้งซ่อมของฉัน"
+    },
+    "notifications": {
+      t: "การแจ้งเตือน",
+      c: "คำขออนุมัติลบข้อมูล · การลบทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin)"
     }
   };
   const pt = pageTitles[safePage] || pageTitles.dashboard;
@@ -13948,6 +15999,9 @@ function App() {
     if (safePage === "r-mine") return React.createElement(MyRepairs, {
       user: activeUser
     });
+    if (safePage === "notifications") return React.createElement(DeleteApprovals, {
+      user: activeUser
+    });
     return null;
   };
   return React.createElement("div", {
@@ -13982,7 +16036,7 @@ function App() {
     placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E17\u0E31\u0E49\u0E07\u0E23\u0E30\u0E1A\u0E1A..."
   })), React.createElement("button", {
     className: "btn btn-ghost",
-    title: `${workspace.erp?.name || "ระบบงาน"} · ${workspace.projectLabel || workspace.project || "ดูจัดการทั้งหมด"}`,
+    title: `${workspace.erp?.name || "ระบบงาน"} · กดเพื่อเปลี่ยนระบบงาน`,
     onClick: clearWorkspace,
     style: {
       maxWidth: 320,
@@ -13992,7 +16046,7 @@ function App() {
     }
   }, React.createElement("i", {
     className: `fa-solid ${workspace.erp?.icon || "fa-layer-group"}`
-  }), " ", workspace.erp?.name || "ระบบงาน", " \xB7 ", workspace.projectLabel || workspace.project || "ดูจัดการทั้งหมด"), safePage === "repairs" && systemId === "repairs" && ["Admin", "Officer", "Engineer"].includes(user.role) && React.createElement("button", {
+  }), " ", workspace.erp?.name || "ระบบงาน"), safePage === "repairs" && systemId === "repairs" && window.isOpsRole(user) && React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => setPage("r-new")
   }, React.createElement("i", {
