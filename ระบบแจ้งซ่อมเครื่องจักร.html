@@ -217,7 +217,7 @@ a{color:inherit;text-decoration:none}
 .ow-hint>i{color:var(--primary);margin-top:2px;flex:0 0 auto}
 @media (max-width:960px){.ow-login{grid-template-columns:1fr}.ow-brand{padding:36px 30px;gap:28px}.ow-hero h1{font-size:33px}}
 @media (max-width:600px){.ow-brand{padding:28px 22px}.ow-hero h1{font-size:27px}.ow-hero p{font-size:14px}.ow-modules{grid-template-columns:1fr}.ow-auth{padding:28px 20px}.ow-foot{flex-direction:column;align-items:flex-start;gap:6px}}
-.shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh;min-height:100dvh}
+.shell{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh;min-height:100dvh}
 .sidebar{background:linear-gradient(180deg,#1E3A8A 0%,#172554 100%);color:#fff;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:20;}
 .sidebar .brand{padding:22px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,.08)}
 .sidebar .brand .mark{width:38px;height:38px;border-radius:10px;background:rgba(255,255,255,.12);display:grid;place-items:center;border:1px solid rgba(255,255,255,.18)}
@@ -239,88 +239,7 @@ a{color:inherit;text-decoration:none}
 .sidebar .me .logout:hover{background:rgba(255,255,255,.08);color:#fff}
 .sidebar-toggle{display:none;position:fixed;top:14px;left:14px;z-index:30;width:44px;height:44px;border-radius:12px;background:#fff;box-shadow:var(--shadow);color:var(--text);place-items:center;font-size:16px}
 .sidebar-scrim{display:none}
-@media (max-width:1024px){
-  .shell{grid-template-columns:1fr;overflow-x:clip;max-width:100vw}
-  .sidebar{position:fixed;left:0;top:0;width:280px;transform:translateX(-100%);transition:transform .22s ease-out;height:100dvh;z-index:25}
-  .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}
-  .sidebar-toggle{display:grid}
-  .sidebar-scrim.show{display:block;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:19;backdrop-filter:blur(2px)}
-  .main{padding:70px 18px 80px !important}
-  .topbar{margin-bottom:16px;flex-wrap:wrap}
-  .topbar .actions{width:100%;order:2;flex-wrap:wrap}
-  .topbar .actions .search-input{display:none}
-  .search-input input{width:100%}
-  .role-quick{flex:1}
-  .charts-grid{grid-template-columns:1fr}
-  .stat-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
-  .filters .search-input input{width:100%}
-}
-@media (max-width:640px){
-  .main{padding:62px 12px 60px !important}
-  .topbar{flex-direction:column;align-items:stretch;gap:10px}
-  .topbar .title h1{font-size:19px}
-  .topbar .title .crumb{font-size:12px}
-  .topbar .actions{flex-wrap:wrap;gap:8px}
-  .topbar .actions .btn-primary{flex:1;justify-content:center}
-  .topbar .actions .search-input{display:none}
-  .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}
-  .stat{padding:13px}
-  .stat .val{font-size:22px}
-  .stat .ic{width:34px;height:34px;margin-bottom:10px}
-  .card-h{padding:13px 14px}
-  .card-body{padding:14px}
-  .filters{flex-direction:column;align-items:stretch;padding:10px;gap:8px}
-  .filters .search-input input,.filters select{width:100%;min-width:0}
-  .filters .spacer{display:none}
-  table.data{font-size:12.5px}
-  table.data th,table.data td{padding:9px 10px}
-  .cell-title{max-width:160px}
-  .modal{max-height:94dvh;border-radius:16px 16px 0 0;align-self:end}
-  .modal-scrim{padding:0;align-items:flex-end}
-  .modal.lg,.modal.xl{max-width:100%}
-  .modal-b{padding:16px;overflow-x:hidden}
-  .modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .modal-h{padding:14px 16px}
-  .modal-f{padding:12px 16px;flex-wrap:wrap;gap:8px}
-  .modal-f .btn{flex:1;min-width:0;justify-content:center}
-  .form-grid{grid-template-columns:1fr !important}
-  .form-grid .full{grid-column:1/-1}
-  .detail-grid{grid-template-columns:1fr !important}
-  .detail-header{grid-template-columns:1fr !important}
-  .kpi-line{grid-template-columns:1fr !important}
-  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
-  .status-actions{gap:4px}
-  .quick-action{flex:1;justify-content:center;font-size:11.5px;padding:6px 8px}
-  .login-wrap{grid-template-columns:1fr}
-  .login-brand{padding:22px;min-height:auto}
-  .login-hero h1{font-size:24px}
-  .login-hero p{font-size:13.5px}
-  .login-card-wrap{padding:22px 18px}
-  .sidebar-toggle{top:10px;left:10px;width:40px;height:40px}
-  .ticket-id{font-size:11px;padding:2px 6px}
-  .badge{font-size:11px;padding:2px 8px}
-  .cat-chip{font-size:11px;padding:2px 7px}
-  .row-actions{gap:2px}
-  .ia{width:28px;height:28px}
-  .hide-on-mobile{display:none !important}
-}
-@media (max-width:420px){
-  .main{padding:58px 10px 56px !important}
-  .topbar .title h1{font-size:17px}
-  .stat-grid{grid-template-columns:repeat(2,1fr);gap:8px}
-  .stat{padding:11px}
-  .stat .val{font-size:20px}
-  .stat .ic{width:30px;height:30px;font-size:14px;margin-bottom:8px}
-  .machines-grid{grid-template-columns:1fr}
-  .btn{padding:8px 12px;font-size:13px}
-  .login-hero h1{font-size:20px}
-  .login-card h2{font-size:22px}
-  .modal-h h3{font-size:15px}
-}
-@media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:40px;min-height:40px}.btn-sm{min-height:36px}input,select,textarea{font-size:16px !important}table.data td{padding:13px 12px}}
-@media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}}
-.main{padding:28px 32px 80px}
+.main{padding:28px 32px 80px;min-width:0}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px;flex-wrap:wrap}
 .topbar .title h1{font-size:24px;margin:0 0 4px;font-weight:600;letter-spacing:-.01em}
 .topbar .title .crumb{color:var(--muted);font-size:13px}
@@ -406,7 +325,7 @@ a{color:inherit;text-decoration:none}
 .filters .search-input input{width:320px}
 .filters select{padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;outline:none;font-size:13.5px;min-width:150px}
 .filters .spacer{flex:1}
-.table-wrap{overflow-x:auto}
+.table-wrap{overflow-x:auto;max-width:100%}
 table.data{width:100%;border-collapse:collapse;font-size:13.5px}
 table.data th{text-align:left;padding:12px 14px;background:#FAFBFC;color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line);white-space:nowrap}
 table.data td{padding:14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
@@ -428,7 +347,30 @@ table.data tr:last-child td{border-bottom:0}
 .cat-chip i{font-size:10px}
 .avatar-xs{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;font-weight:500;color:#fff;margin-right:6px;vertical-align:middle}
 .row-actions{display:flex;gap:4px}
-@media (max-width:900px){.hide-on-mobile{display:none !important}}
+/* ── ตารางบนมือถือ: เลื่อนแนวนอนได้จริง + ตรึงคอลัมน์แรก + แสดงครบทุกคอลัมน์ ── */
+@media (max-width:1024px){
+  .table-wrap{-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:thin;
+    background:
+      linear-gradient(90deg,#fff 30%,rgba(255,255,255,0)) 0 0/28px 100% no-repeat local,
+      linear-gradient(90deg,rgba(255,255,255,0),#fff 70%) 100% 0/28px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%,rgba(15,23,42,.13),rgba(15,23,42,0)) 0 0/12px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%,rgba(15,23,42,.13),rgba(15,23,42,0)) 100% 0/12px 100% no-repeat scroll;}
+  .table-wrap::-webkit-scrollbar{height:6px}
+  .table-wrap::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:99px}
+  table.data{min-width:max-content}
+  table.data td{max-width:210px;overflow-wrap:anywhere}
+  table.data th:first-child,table.data td:first-child{position:sticky;left:0;z-index:2;
+    background:#fff;box-shadow:1px 0 0 var(--line);max-width:150px}
+  table.data th:first-child{background:#FAFBFC;z-index:3}
+  table.data tr:hover td:first-child{background:#FAFBFC}
+  /* แถวหัวกลุ่ม / แถวว่าง ที่ใช้ colspan ไม่ต้องตรึงทั้งช่อง — ตรึงเฉพาะข้อความข้างใน */
+  table.data td[colspan],table.data th[colspan]{position:static;max-width:none;box-shadow:none}
+  table.data td[colspan] .group-label{position:sticky;left:0;display:inline-flex;align-items:center;
+    max-width:calc(100vw - 60px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  table.data td[colspan] .empty{position:sticky;left:0;max-width:calc(100vw - 60px)}
+  .hide-on-mobile{display:table-cell !important}
+  .cell-title{max-width:210px}
+}
 @media (max-width:640px){.detail-header{grid-template-columns:1fr !important}}
 .ia{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--muted);transition:background .12s,color .12s}
 .ia:hover{background:var(--accent-soft);color:var(--primary)}
@@ -518,6 +460,107 @@ table.data tr:last-child td{border-bottom:0}
 .kpi-line{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
 .kpi-line .k{color:var(--muted);font-size:11.5px}
 .kpi-line .v{font-size:15px;font-weight:500;margin-top:2px}
+/* ══ ปรับหน้าจอมือถือ/แท็บเล็ต — วางไว้ท้ายสุดเพื่อให้ทับกฎพื้นฐานได้ ══ */
+@media (max-width:1024px){
+  .shell{grid-template-columns:minmax(0,1fr);overflow-x:clip;max-width:100vw}
+  .sidebar{position:fixed;left:0;top:0;width:min(86vw,300px);transform:translateX(-100%);transition:transform .22s ease-out;height:100dvh;z-index:25}
+  .sidebar.open{transform:translateX(0);box-shadow:0 0 40px rgba(0,0,0,.3)}
+  .sidebar .nav{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+  .sidebar-toggle{display:grid;top:calc(11px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left))}
+  .sidebar-scrim.show{display:block;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:19;backdrop-filter:blur(2px)}
+  /* ── แถบหัวเรื่องแบบ App bar: ติดขอบบน + เว้นที่ให้ปุ่มเมนู ── */
+  .main{min-width:0;max-width:100%;padding:0 14px calc(72px + env(safe-area-inset-bottom)) !important}
+  .topbar{position:sticky;top:0;z-index:18;display:flex;flex-direction:column;align-items:stretch;
+    gap:8px;flex-wrap:nowrap;margin:0 -14px 14px;
+    padding:calc(10px + env(safe-area-inset-top)) 14px 10px 64px;
+    background:rgba(255,255,255,.94);-webkit-backdrop-filter:saturate(180%) blur(10px);
+    backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
+  .topbar .title{min-width:0}
+  .topbar .title h1{font-size:19px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topbar .title .crumb{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topbar .actions{width:100%;order:2;display:flex;flex-wrap:wrap;gap:8px}
+  .topbar .actions>*{min-width:0;max-width:100%}
+  .topbar .actions .search-input{display:none}
+  .topbar .actions .btn{flex:1 1 140px;justify-content:center;overflow:hidden;text-overflow:ellipsis}
+  .search-input input{width:100%}
+  .role-quick{flex:1}
+  .charts-grid{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .filters .search-input input{width:100%}
+  .card,.card-body,.card-h{max-width:100%;min-width:0}
+}
+@media (max-width:640px){
+  .main{padding:0 12px calc(64px + env(safe-area-inset-bottom)) !important}
+  .topbar{margin:0 -12px 12px;padding:calc(9px + env(safe-area-inset-top)) 12px 9px 60px;gap:7px}
+  .topbar .title h1{font-size:18px}
+  .topbar .title .crumb{font-size:11px}
+  .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{padding:13px}
+  .stat .val{font-size:22px}
+  .stat .ic{width:34px;height:34px;margin-bottom:10px}
+  .card-h{padding:13px 14px}
+  .card-body{padding:14px}
+  /* ── ตัวกรอง: จัดเป็นตาราง 2 คอลัมน์ ไม่ยาวเป็นหางว่าว ── */
+  .filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;padding:10px;gap:8px}
+  .filters>*{min-width:0;max-width:100%;grid-column:1/-1}
+  .filters>select,.filters>.btn{grid-column:auto;width:100%}
+  .filters>select{min-width:0;padding:10px 11px}
+  .filters>.btn{justify-content:center;white-space:normal;line-height:1.3;text-align:center;padding:9px 10px}
+  .filters .search-input input{width:100%}
+  .filters .spacer{display:none}
+  table.data{font-size:12.5px}
+  table.data th,table.data td{padding:10px 10px}
+  .cell-title{max-width:190px}
+  .modal{max-height:94dvh;border-radius:16px 16px 0 0;align-self:end}
+  .modal-scrim{padding:0;align-items:flex-end}
+  .modal.lg,.modal.xl{max-width:100%}
+  .modal-b{padding:16px;overflow-x:hidden}
+  .modal-b .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .modal-h{padding:14px 16px}
+  /* ── ปุ่มท้าย Modal: กริด 2 คอลัมน์ ไม่ล้นขอบ ── */
+  .modal-f{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+  .modal-f .btn{width:100%;min-width:0;justify-content:center;padding:11px 8px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .modal-f>.btn:only-child{grid-column:1/-1}
+  .form-grid{grid-template-columns:1fr !important}
+  .form-grid .full{grid-column:1/-1}
+  .detail-grid{grid-template-columns:1fr !important}
+  .detail-header{grid-template-columns:1fr !important}
+  .kpi-line{grid-template-columns:1fr !important}
+  .machines-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+  .status-actions{gap:4px}
+  .quick-action{flex:1;justify-content:center;font-size:11.5px;padding:6px 8px}
+  .login-wrap{grid-template-columns:1fr}
+  .login-brand{padding:22px;min-height:auto}
+  .login-hero h1{font-size:24px}
+  .login-hero p{font-size:13.5px}
+  .login-card-wrap{padding:22px 18px}
+  .sidebar-toggle{top:calc(9px + env(safe-area-inset-top));left:calc(10px + env(safe-area-inset-left));width:40px;height:40px}
+  .ticket-id{font-size:11px;padding:2px 6px}
+  .badge{font-size:11px;padding:2px 8px}
+  .cat-chip{font-size:11px;padding:2px 7px}
+  .row-actions{gap:2px}
+  .ia{width:30px;height:30px}
+  .photo-grid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}
+}
+@media (max-width:420px){
+  .main{padding:0 10px calc(58px + env(safe-area-inset-bottom)) !important}
+  .topbar{margin:0 -10px 10px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px 56px}
+  .topbar .title h1{font-size:17px}
+  .stat-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+  .stat{padding:11px}
+  .stat .val{font-size:20px}
+  .stat .ic{width:30px;height:30px;font-size:14px;margin-bottom:8px}
+  .machines-grid{grid-template-columns:1fr}
+  .btn{padding:8px 12px;font-size:13px}
+  .login-hero h1{font-size:20px}
+  .login-card h2{font-size:22px}
+  .modal-h h3{font-size:15px}
+}
+@media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:38px;min-height:38px}.btn-sm{min-height:36px}input,select,textarea{font-size:16px !important}table.data td{padding:11px 10px}}
+@media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}}
 </style>
 </head>
 <body>
@@ -6175,9 +6218,12 @@ function AssetRegistry({user}){
                 <React.Fragment key={g.key}>
                   <tr className="group-row" onClick={()=>toggleGroup(g.key)} style={{cursor:"pointer",background:"var(--bg)"}}>
                     <td colSpan={colCount} style={{fontWeight:600,fontSize:13.5,padding:"9px 14px",borderTop:"2px solid var(--line)"}}>
-                      <i className={`fa-solid ${isCollapsed?"fa-chevron-right":"fa-chevron-down"}`} style={{marginRight:8,color:"var(--muted)",fontSize:11}}></i>
-                      {groupBy==="site" ? <ProjectLabel name={g.label}/> : g.label}
-                      <span style={{marginLeft:10,fontWeight:400,color:"var(--muted)",fontSize:12.5}}>{g.rows.length.toLocaleString("th-TH")} รายการ · รวม {g.qty.toLocaleString("th-TH")} หน่วย</span>
+                      {/* ห่อไว้ใน .group-label เพื่อให้ชื่อกลุ่มยังเห็นอยู่ตอนเลื่อนตารางแนวนอนบนมือถือ */}
+                      <span className="group-label">
+                        <i className={`fa-solid ${isCollapsed?"fa-chevron-right":"fa-chevron-down"}`} style={{marginRight:8,color:"var(--muted)",fontSize:11}}></i>
+                        {groupBy==="site" ? <ProjectLabel name={g.label}/> : g.label}
+                        <span style={{marginLeft:10,fontWeight:400,color:"var(--muted)",fontSize:12.5}}>{g.rows.length.toLocaleString("th-TH")} รายการ · รวม {g.qty.toLocaleString("th-TH")} หน่วย</span>
+                      </span>
                     </td>
                   </tr>
                   {!isCollapsed && g.rows.map(r=>renderRow(r))}

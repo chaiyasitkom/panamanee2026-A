@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 527) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 570) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -1327,7 +1327,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1426) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1469) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1901,7 +1901,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 1746) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 1789) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2205,7 +2205,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 1989) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2032) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -2620,7 +2620,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2182) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2225) ---- */
 const {
   useState,
   useEffect,
@@ -2789,7 +2789,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2249) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2292) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -3017,7 +3017,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2432) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2475) ---- */
 function ChangePasswordModal({
   user,
   onClose
@@ -3477,7 +3477,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2591) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2634) ---- */
 function Projects({
   user
 }) {
@@ -3929,7 +3929,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 2774) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 2817) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -4326,7 +4326,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3020) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3063) ---- */
 function Dashboard({
   user,
   goTo
@@ -5479,7 +5479,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3513) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3556) ---- */
 function Repairs({
   user
 }) {
@@ -7486,7 +7486,7 @@ window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4218) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4261) ---- */
 function Users({
   user
 }) {
@@ -8013,7 +8013,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4386) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4429) ---- */
 function Categories({
   user
 }) {
@@ -8276,7 +8276,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4474) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4517) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -10946,7 +10946,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5307) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5350) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -12400,7 +12400,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5804) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5847) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -13240,7 +13240,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6006) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6049) ---- */
 function AssetRegistry({
   user
 }) {
@@ -13576,6 +13576,8 @@ function AssetRegistry({
         padding: "9px 14px",
         borderTop: "2px solid var(--line)"
       }
+    }, React.createElement("span", {
+      className: "group-label"
     }, React.createElement("i", {
       className: `fa-solid ${isCollapsed ? "fa-chevron-right" : "fa-chevron-down"}`,
       style: {
@@ -13592,7 +13594,7 @@ function AssetRegistry({
         color: "var(--muted)",
         fontSize: 12.5
       }
-    }, g.rows.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", g.qty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"))), !isCollapsed && g.rows.map(r => renderRow(r)));
+    }, g.rows.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", g.qty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22")))), !isCollapsed && g.rows.map(r => renderRow(r)));
   }), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
     colSpan: colCount
   }, React.createElement("div", {
@@ -15066,7 +15068,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6896) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6942) ---- */
 function WorkspacePicker({
   user,
   onContinue,
