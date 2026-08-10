@@ -765,6 +765,14 @@ const _DELETE_OPS = {
   },
 };
 
+// การ "แก้ไข" ที่ส่งขออนุมัติได้ — จำกัดรายการไว้ กัน action อื่นหลุดเข้ามาทำงานผ่านคำขอ
+// ใช้กล่องเดียวกับคำขอลบ (/deleteRequests) แยกกันด้วยฟิลด์ kind: 'delete' | 'edit'
+const _CHANGE_OPS = {
+  updateRepair:      { label: 'ใบแจ้งซ่อม',       key: 'id'  },
+  updateMachine:     { label: 'เครื่องจักร',       key: 'id'  },
+  saveAssetRegistry: { label: 'ทะเบียนทรัพย์สิน', key: 'key' },
+};
+
 function _delTargetKey(action, payload = {}) {
   const op = _DELETE_OPS[action];
   const base = String((op && payload[op.key]) || payload.id || payload.key || '');
@@ -857,6 +865,7 @@ async function api(action, payload = {}) {
       const ref = _db.ref('/deleteRequests').push();
       const rec = {
         id: ref.key,
+        kind: 'delete',
         action: req.action,
         entityLabel: req.entityLabel || op.label,
         targetKey,
@@ -865,6 +874,41 @@ async function api(action, payload = {}) {
         project: String(req.project || ''),
         // ล้าง undefined / Date ออกก่อนเขียนลง Firebase (Firebase ไม่รับค่า undefined)
         payload: JSON.parse(JSON.stringify(req.payload || {})),
+        reason: String(req.reason).trim(),
+        requesterId: String(req.requesterId || ''),
+        requesterName: String(req.requesterName || ''),
+        requesterRole: String(req.requesterRole || ''),
+        requestedAt: new Date().toISOString(),
+        status: 'pending',
+      };
+      await ref.set(rec);
+      return rec;
+    }
+
+    // ── ขออนุมัติ "แก้ไข" ข้อมูล (เช่น Reporter แก้ใบแจ้งซ่อมของตัวเอง) ────────
+    case 'requestChange': {
+      const req = payload.req || {};
+      if (!_CHANGE_OPS[req.action]) throw new Error('ไม่รองรับการขอแก้ไขข้อมูลประเภทนี้');
+      if (!String(req.reason || '').trim()) throw new Error('กรุณาระบุเหตุผลที่ต้องการแก้ไข');
+      const idKey = _CHANGE_OPS[req.action].key || 'id';
+      const targetKey = String((req.payload && req.payload[idKey]) || '');
+      if (!targetKey) throw new Error('ไม่พบรายการที่ต้องการแก้ไข');
+      const all = Object.values(((await _db.ref('/deleteRequests').get()).val()) || {});
+      if (all.some(x => x && x.status === 'pending' && x.kind === 'edit' && x.action === req.action && String(x.targetKey) === targetKey)) {
+        throw new Error('รายการนี้มีคำขอแก้ไขรออนุมัติอยู่แล้ว กรุณารอผลอนุมัติก่อน');
+      }
+      const ref = _db.ref('/deleteRequests').push();
+      const rec = {
+        id: ref.key,
+        kind: 'edit',
+        action: req.action,
+        entityLabel: req.entityLabel || _CHANGE_OPS[req.action].label,
+        targetKey,
+        targetName: String(req.targetName || ''),
+        targetInfo: String(req.targetInfo || ''),
+        project: String(req.project || ''),
+        payload: JSON.parse(JSON.stringify(req.payload || {})),
+        changes: JSON.parse(JSON.stringify(req.changes || [])),   // สรุปว่าแก้อะไรบ้าง ให้ Admin ตัดสินใจได้โดยไม่ต้องเปิดเทียบเอง
         reason: String(req.reason).trim(),
         requesterId: String(req.requesterId || ''),
         requesterName: String(req.requesterName || ''),
@@ -889,13 +933,21 @@ async function api(action, payload = {}) {
       const rec = (await ref.get()).val();
       if (!rec) throw new Error('ไม่พบคำขอนี้');
       if (rec.status !== 'pending') throw new Error('คำขอนี้ถูกดำเนินการไปแล้ว');
-      const op = _DELETE_OPS[rec.action];
-      if (!op) throw new Error('ไม่รองรับการลบข้อมูลประเภทนี้');
+      const isEdit = rec.kind === 'edit';
+      const op = isEdit ? _CHANGE_OPS[rec.action] : _DELETE_OPS[rec.action];
+      if (!op) throw new Error(isEdit ? 'ไม่รองรับการแก้ไขข้อมูลประเภทนี้' : 'ไม่รองรับการลบข้อมูลประเภทนี้');
       let result = null;
       try {
-        result = await op.exec(rec.payload || {});
+        // อนุมัติแก้ไข = สั่งงานตัวเดียวกับที่ Admin กดแก้เอง (เช่น updateRepair) จึงผ่าน ALLOW list เดิมทุกอย่าง
+        result = isEdit
+          ? await api(rec.action, {
+              ...(rec.payload || {}),
+              by: by.name || 'ผู้ดูแลระบบ',
+              note: 'อนุมัติคำขอแก้ไขของ ' + (rec.requesterName || 'ผู้แจ้ง'),
+            })
+          : await op.exec(rec.payload || {});
       } catch (e) {
-        // ลบไม่สำเร็จ = คำขอต้องยังค้างอยู่ ไม่ตีตราว่าอนุมัติแล้ว
+        // ทำไม่สำเร็จ = คำขอต้องยังค้างอยู่ ไม่ตีตราว่าอนุมัติแล้ว
         await ref.update({ lastError: String((e && e.message) || e) });
         throw e;
       }
@@ -906,7 +958,8 @@ async function api(action, payload = {}) {
         decideNote: String(note || ''), lastError: null,
       };
       await ref.update(patch);
-      await _logDelete({
+      // /deleteLogs เก็บเฉพาะหลักฐานการลบ — คำขอแก้ไขไม่ต้องลง ไม่งั้นรายงานการลบจะเพี้ยน
+      if (!isEdit) await _logDelete({
         action: rec.action, via: 'approved', requestId: rec.id,
         entityLabel: rec.entityLabel, targetKey: rec.targetKey, targetName: rec.targetName,
         byId: by.id || '', byName: by.name || '', byRole: 'Admin',
@@ -955,6 +1008,16 @@ async function api(action, payload = {}) {
       const safe = { ...user };
       delete safe.password;
       return safe;
+    }
+
+    // ยืนยันตัวตนซ้ำก่อนทำงานสำคัญ (เช่น Admin ลบข้อมูล) — ไม่บันทึกลงประวัติล็อกอิน เพราะไม่ใช่การเข้าใช้งานใหม่
+    case 'verifyPassword': {
+      const { userId, password } = payload;
+      const snap = await _db.ref('/users/' + userId).get();
+      const user = snap.val();
+      if (!user) throw new Error('ไม่พบบัญชีผู้ใช้นี้');
+      if (String(user.password) !== String(password)) throw new Error('รหัสผ่านไม่ถูกต้อง');
+      return { ok: true };
     }
 
     case 'bootstrap': {
@@ -1119,7 +1182,8 @@ async function api(action, payload = {}) {
     // moves: [{key, qty}] — ย้ายไม่ครบจำนวนได้ (เช่น แผ่นเหล็ก 10 แผ่น ย้ายแค่ 4)
     // ย้ายครบ = ย้ายทั้งรายการ · ย้ายบางส่วน = ตัดจำนวนต้นทางลง แล้วแตกรายการใหม่ที่ปลายทาง
     case 'transferAssets': {
-      const { moves, toProject, note, by, doc } = payload;
+      const { moves, toProject, toSubSite, note, by, doc } = payload;
+      const dstSubSite = toSubSite || '';   // ไซต์งานย่อยผูกกับโครงการ — ย้ายโครงการแล้วต้องเขียนทับของเดิมเสมอ
       const when = new Date().toISOString();
       const snap = await _assetDb.ref('/assets').get();
       const all = snap.val() || {};
@@ -1133,34 +1197,36 @@ async function api(action, payload = {}) {
         const qty = Math.min(Math.max(Number(mv.qty) || 0, 0), total || Number(mv.qty) || 0);
         if (qty <= 0) return;
         const from = a.site || '';
+        const fromSub = a.subSite || '';
         const partial = total > 0 && qty < total;
-        const entry = { from, to: toProject, when, by: by || '', note: note || '', docNo: (doc && doc.docNo) || '', qty, partial };
+        const entry = { from, to: toProject, fromSubSite: fromSub, toSubSite: dstSubSite, when, by: by || '', note: note || '', docNo: (doc && doc.docNo) || '', qty, partial };
         const hist = Array.isArray(a.transferHistory) ? a.transferHistory.slice() : [];
 
         if (!partial) {
           updates['/assets/' + k + '/site'] = toProject;
+          updates['/assets/' + k + '/subSite'] = dstSubSite;
           updates['/assets/' + k + '/transferHistory'] = hist.concat([entry]);
           updates['/assets/' + k + '/updatedAt'] = when;
         } else {
-          // ต้นทางเหลือของเดิม, ปลายทางเป็นรายการใหม่ (รหัสทรัพย์สินเดิม อาจว่างได้)
+          // ต้นทางเหลือของเดิม (คงไซต์ย่อยเดิมไว้), ปลายทางเป็นรายการใหม่ (รหัสทรัพย์สินเดิม อาจว่างได้)
           updates['/assets/' + k + '/quantity'] = total - qty;
           updates['/assets/' + k + '/transferHistory'] = hist.concat([{ ...entry, splitOut: qty }]);
           updates['/assets/' + k + '/updatedAt'] = when;
           const newKey = _assetDb.ref('/assets').push().key;
           updates['/assets/' + newKey] = {
-            ...a, quantity: qty, site: toProject, updatedAt: when,
+            ...a, quantity: qty, site: toProject, subSite: dstSubSite, updatedAt: when,
             splitFrom: k, transferHistory: hist.concat([entry]),
           };
         }
         items.push({
           key: k, assetCode: a.assetCode || a.id || '', name: a.name || '',
           brand: a.brand || '', model: a.model || '', serial: a.serial || '',
-          quantity: qty, totalBefore: total, partial, unit: a.unit || '', from,
+          quantity: qty, totalBefore: total, partial, unit: a.unit || '', from, fromSubSite: fromSub,
         });
       });
       if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
       const docKey = String((doc && doc.docNo) || ('DO-' + when)).replace(/[.#$/\[\]]/g, '-');
-      const record = { ...(doc || {}), key: docKey, toProject, note: note || '', by: by || '', when, items };
+      const record = { ...(doc || {}), key: docKey, toProject, toSubSite: dstSubSite, note: note || '', by: by || '', when, items };
       updates['/deliveryOrders/' + docKey] = record;
       await _assetDb.ref().update(updates);
       return { doc: record, when, items };
@@ -1203,6 +1269,7 @@ async function api(action, payload = {}) {
         const pushHist = (k, e) => { (histAdd[k] = histAdd[k] || []).push(e); };
         const newAssets = {};
         const siteBack = {};    // แถวที่ต้องย้าย site กลับ (กรณีย้ายทั้งรายการ)
+        const subSiteBack = {}; // ไซต์งานย่อยเดิมของแถวนั้น — คืนพร้อมกับ site
         const dropKeys = {};    // แถวที่แตกออกตอนย้ายบางส่วน — คืนหมดแล้วต้องลบทิ้ง ไม่ให้เหลือแถวจำนวน 0
         const findAsset = (code, site) => Object.keys(assets).find((k) => {
           const a = assets[k] || {};
@@ -1231,6 +1298,7 @@ async function api(action, payload = {}) {
               return;
             }
             siteBack[k] = srcSite;
+            subSiteBack[k] = it.fromSubSite || '';
             pushHist(k, hist);
             restored.push({ key: k, code, name: label, qty: need, to: srcSite, mode: 'site' });
           } else {
@@ -1256,7 +1324,7 @@ async function api(action, payload = {}) {
               const base = assets[dk] || { assetCode: code, name: it.name || '', unit: it.unit || '', brand: it.brand || '', model: it.model || '', serial: it.serial || '' };
               const nk = _assetDb.ref('/assets').push().key;
               const { splitFrom, ...cleanBase } = base;
-              newAssets[nk] = { ...cleanBase, quantity: need, site: srcSite, updatedAt: when, transferHistory: [{ ...hist, note: 'สร้างคืนจากการยกเลิกใบส่งของ' }] };
+              newAssets[nk] = { ...cleanBase, quantity: need, site: srcSite, subSite: it.fromSubSite || '', updatedAt: when, transferHistory: [{ ...hist, note: 'สร้างคืนจากการยกเลิกใบส่งของ' }] };
               restored.push({ key: nk, code, name: label, qty: need, to: srcSite, mode: 'new' });
             }
           }
@@ -1269,6 +1337,7 @@ async function api(action, payload = {}) {
         });
         Object.keys(siteBack).forEach((k) => {
           updates['/assets/' + k + '/site'] = siteBack[k];
+          updates['/assets/' + k + '/subSite'] = subSiteBack[k] || '';
           updates['/assets/' + k + '/updatedAt'] = when;
         });
         Object.keys(histAdd).forEach((k) => {
@@ -1421,13 +1490,13 @@ async function api(action, payload = {}) {
     }
 
     case 'updateRepair': {
-      const { id, patch, by } = payload;
+      const { id, patch, by, note } = payload;
       const clean = { ...patch };
       clean.updatedAt = new Date().toISOString();
       delete clean.id; delete clean.running; delete clean.timeline;
       const tlKey = _db.ref('/repairs/' + id + '/timeline').push().key;
       clean['timeline/' + tlKey] = {
-        id: tlKey, status: clean.status || '', when: new Date().toISOString(), by: by || '', note: 'แก้ไขข้อมูลโดย Admin'
+        id: tlKey, status: clean.status || '', when: new Date().toISOString(), by: by || '', note: note || 'แก้ไขข้อมูลโดย Admin'
       };
       await _db.ref('/repairs/' + id).update(clean);
       return { ok: true };
@@ -1435,7 +1504,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','repairNote','siteId','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost'];
+      const ALLOW = ['title','desc','repairNote','siteId','subSite','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost','odometerKm','hourMeter','driverName'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();
@@ -1555,6 +1624,15 @@ window.canUseErp = (user, sys) => {
   return true;
 };
 
+// สิทธิ์ที่ "ขึ้นกับระบบงานที่กำลังใช้อยู่" — Reporter ที่เข้าระบบ Asset Management ทำงานได้เท่า Engineer
+// ใช้เฉพาะตอนเช็คว่า "แก้ไขได้ไหม" · ไม่เปลี่ยน role จริงของบัญชี และไม่มีผลกับระบบงานซ่อม
+window.effectiveRole = (user) => {
+  if(!user) return "";
+  const sysId = (window.getActiveErp(user) || {}).id || "";
+  if(user.role === "Reporter" && sysId === "assets") return "Engineer";
+  return user.role;
+};
+
 // Role ที่ต้องระบุโครงการเสมอ — ไม่มีสิทธิ์เห็นข้ามโครงการไม่ว่ากรณีใด
 // (ไม่ได้มอบหมายโครงการไว้ = ไม่เห็นข้อมูลของโครงการใดเลย ไม่ใช่เห็นทั้งหมด)
 window.PROJECT_LOCKED_ROLES = ["Engineer","Safety Officer"];
@@ -1615,6 +1693,19 @@ window.visibleProjects = (user, {includeInactive=false} = {}) => {
   return (window.__DATA.projects||[])
     .filter(p => includeInactive || p.status !== "inactive")
     .filter(p => allowed.has(p.name));
+};
+
+// ไซต์งานย่อยของโครงการ (เช่น Rig1 / Rig2) — ตั้งได้ที่หน้า "โครงการ" → แก้ไข → ไซต์งานย่อย
+// รับได้ทั้ง object โครงการ และชื่อโครงการ · Firebase จะตัดฟิลด์ทิ้งเมื่อลบครบทุกไซต์ จึงต้องกัน undefined เสมอ
+window.projectSites = (projectOrName) => {
+  const p = (projectOrName && typeof projectOrName === "object")
+    ? projectOrName
+    : (window.__DATA.projects||[]).find(x => x.name === projectOrName);
+  const raw = p && p.sites;
+  if(Array.isArray(raw)) return raw.map(s=>String(s||"").trim()).filter(Boolean);
+  if(typeof raw === "string") return raw.split(",").map(s=>s.trim()).filter(Boolean);
+  if(raw && typeof raw === "object") return Object.values(raw).map(s=>String(s||"").trim()).filter(Boolean);
+  return [];
 };
 
 window.avatarColor = (name) => {
@@ -1824,8 +1915,13 @@ window.__DELREQ = {
           const before = prev.get(r.id);
           if(before === undefined && r.status === "pending") this._announceNew(r);
           else if(before === "pending" && r.status !== "pending"){
-            // อนุมัติแล้ว = ข้อมูลถูกลบจริง → ตัดออกจากแคชของทุกเครื่องที่เปิดเว็บอยู่
-            if(r.status === "approved") { try{ window.applyDeleteLocally(r.action, r.payload || {}); }catch(e){} }
+            // อนุมัติแล้ว = ข้อมูลถูกลบ/แก้จริง → อัปเดตแคชของทุกเครื่องที่เปิดเว็บอยู่
+            if(r.status === "approved") {
+              try{
+                if(r.kind === "edit") window.applyEditLocally(r.action, r.payload || {});
+                else window.applyDeleteLocally(r.action, r.payload || {});
+              }catch(e){}
+            }
             this._announceDecision(r);
           }
         });
@@ -1865,8 +1961,9 @@ window.__DELREQ = {
   // ── แจ้งเตือน ─────────────────────────────────────────────────────────
   _announceNew(r){
     if(!this.user || this.user.role !== "Admin") return;
-    const title = "มีคำขอลบข้อมูลรออนุมัติ";
-    const text  = `${r.requesterName || "ผู้ใช้งาน"} ขอลบ${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}"`;
+    const isEdit = r.kind === "edit";
+    const title = isEdit ? "มีคำขอแก้ไขข้อมูลรออนุมัติ" : "มีคำขอลบข้อมูลรออนุมัติ";
+    const text  = `${r.requesterName || "ผู้ใช้งาน"} ขอ${isEdit?"แก้ไข":"ลบ"}${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}"`;
     if(window.Swal) Swal.fire({
       toast:true, position:"top-end", icon:"warning", title, text,
       showConfirmButton:false, timer:6000, timerProgressBar:true
@@ -1877,7 +1974,8 @@ window.__DELREQ = {
   _announceDecision(r){
     if(!this.user || r.requesterId !== this.user.id) return;
     const ok = r.status === "approved";
-    const title = ok ? "คำขอลบได้รับการอนุมัติแล้ว" : "คำขอลบไม่ได้รับอนุมัติ";
+    const kindTxt = r.kind === "edit" ? "คำขอแก้ไข" : "คำขอลบ";
+    const title = ok ? `${kindTxt}ได้รับการอนุมัติแล้ว` : `${kindTxt}ไม่ได้รับอนุมัติ`;
     const text  = `${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}" · โดย ${r.decidedByName || "ผู้ดูแลระบบ"}`;
     if(window.Swal) Swal.fire({
       toast:true, position:"top-end", icon: ok ? "success" : "info", title, text,
@@ -1950,11 +2048,175 @@ window.applyDeleteLocally = function(action, payload = {}){
   }
 };
 
+// อัปเดตแคชในหน้าเว็บหลังคำขอ "แก้ไข" ถูกอนุมัติ ไม่ต้องโหลดใหม่ทั้งหน้า
+window.applyEditLocally = function(action, payload = {}){
+  const D = window.__DATA;
+  if(action === "updateRepair"){
+    const patch = payload.patch || {};
+    D.repairs = (D.repairs||[]).map(x => x.id === payload.id ? {...x, ...patch} : x);
+  } else if(action === "updateMachine"){
+    const patch = payload.patch || {};
+    D.machines = (D.machines||[]).map(x => x.id === payload.id ? {...x, ...patch} : x);
+  } else if(action === "saveAssetRegistry"){
+    // ทะเบียนทรัพย์สินโหลดแบบ lazy — ยังไม่เคยเปิดหน้า (null) ก็ไม่ต้องทำอะไร เดี๋ยวโหลดใหม่เอง
+    if(Array.isArray(D.assetRegistry)){
+      const asset = payload.asset || {};
+      D.assetRegistry = D.assetRegistry.map(x => x.key === payload.key ? {...x, ...asset, key:x.key} : x);
+    }
+  }
+};
+
+// ป้ายกำกับฟิลด์ + วิธีแสดงค่า สำหรับสรุป "แก้อะไรบ้าง" ในคำขออนุมัติ
+window.REPAIR_FIELD_LABELS = {
+  title:      { label:"อาการ/ปัญหา", fmt:v=>String(v||"").split("\n").filter(Boolean).join(" · ") },
+  desc:       { label:"รายละเอียดปัญหา" },
+  siteId:     { label:"เลขที่ไซต์งาน" },
+  subSite:    { label:"ไซต์งานย่อย" },
+  machineCode:{ label:"รหัสเครื่องจักร" },
+  odometerKm: { label:"เลขมิเตอร์กิโลเมตร" },
+  hourMeter:  { label:"เลขมิเตอร์ชั่วโมง" },
+  driverName: { label:"พนักงานขับ / ผู้ควบคุม" },
+  categoryId: { label:"หมวดหมู่", fmt:v=>(window.getCategory(v)||{}).name||"—" },
+  createdAt:  { label:"วันที่แจ้ง", fmt:v=>window.__DATA.fmtDate(v) },
+  photos:     { label:"รูปภาพประกอบ", fmt:v=>`${(v||[]).filter(Boolean).length} รูป` },
+};
+
+window.MACHINE_FIELD_LABELS = {
+  code:{label:"รหัสเครื่องจักร"}, name:{label:"ชื่อเครื่องจักร"}, brand:{label:"ยี่ห้อ"}, model:{label:"รุ่น"},
+  year:{label:"ปีที่ผลิต"}, size:{label:"ขนาด / ความยาว"}, serial:{label:"ซีเรียล"}, ownership:{label:"กรรมสิทธิ์/เช่า"},
+  categoryId:{label:"หมวดหมู่", fmt:v=>(window.getCategory(v)||{}).name||"—"},
+  status:{label:"สถานะ"}, project:{label:"โครงการ"}, subSite:{label:"ไซต์งานย่อย"},
+  location:{label:"สถานที่ติดตั้ง"}, hours:{label:"ชั่วโมงทำงานสะสม"}, lastService:{label:"ซ่อมบำรุงล่าสุด"},
+  inspectionDate:{label:"วันที่ตรวจสอบ (ปจ2)"}, nextInspectionDate:{label:"วันที่ตรวจสอบครั้งถัดไป"},
+  driverName:{label:"พนักงานขับ / ผู้ควบคุม"}, drivePhoto:{label:"ลิงก์รูปภาพ"},
+  driveLink1:{label:"ลิงก์เอกสาร (1)"}, driveLink2:{label:"ลิงก์เอกสาร (2)"}, driveLinkPL:{label:"ลิงก์ PL (ประกัน)"},
+  note:{label:"หมายเหตุ"}, icon:{label:"ไอคอน"},
+};
+
+window.ASSET_FIELD_LABELS = {
+  assetCode:{label:"รหัสทรัพย์สิน"}, name:{label:"ชื่อทรัพย์สิน"}, brand:{label:"ยี่ห้อ"}, model:{label:"รุ่น"},
+  serial:{label:"Serial No."}, size:{label:"ขนาด"}, quantity:{label:"จำนวน"}, unit:{label:"หน่วย"},
+  ownership:{label:"กรรมสิทธิ์"}, holder:{label:"ผู้ถือครอง"},
+  site:{label:"สถานที่ (โครงการ)"}, subSite:{label:"ไซต์งานย่อย"},
+  receivedAt:{label:"วันที่รับเข้า"}, note:{label:"หมายเหตุ"},
+};
+
+// เทียบค่าก่อน/หลัง คืนเฉพาะฟิลด์ที่เปลี่ยนจริง → [{field,label,from,to}]
+window.diffFields = function(before, patch, labels){
+  const out = [];
+  Object.keys(labels||{}).forEach(k=>{
+    if(!(k in (patch||{}))) return;
+    const meta = labels[k];
+    const fmt = meta.fmt || (v => (v===0 || v) ? String(v) : "");
+    const a = fmt(before ? before[k] : "");
+    const b = fmt(patch[k]);
+    if(String(a) !== String(b)) out.push({ field:k, label:meta.label, from:a||"— ว่าง —", to:b||"— ว่าง —" });
+  });
+  return out;
+};
+
+/**
+ * ขออนุมัติ "แก้ไข" ข้อมูล — ใช้กับ role ที่แก้เองไม่ได้ (เช่น Reporter แก้ใบแจ้งซ่อมของตัวเอง)
+ * คืน true = ส่งคำขอแล้ว · false = ยกเลิก / ส่งไม่สำเร็จ
+ */
+window.requestEditApproval = async function(opts){
+  const { user, action, payload = {}, entityLabel = "ข้อมูล", targetName = "", targetInfo = "", project = "", changes = [] } = opts || {};
+  if(!user){ Swal.fire({icon:"error",title:"ไม่พบข้อมูลผู้ใช้งาน"}); return false; }
+  if(!changes.length){ Swal.fire({icon:"info",title:"ยังไม่ได้แก้ไขอะไร",text:"ปรับข้อมูลที่ต้องการก่อนส่งคำขอ"}); return false; }
+
+  const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const rowsHtml = changes.map(c=>`
+    <div style="padding:6px 0;border-bottom:1px dashed #E2E8F0">
+      <div style="font-size:12px;color:#64748B">${esc(c.label)}</div>
+      <div style="font-size:13px"><span style="color:#B91C1C;text-decoration:line-through">${esc(c.from)}</span>
+        <i class="fa-solid fa-arrow-right" style="margin:0 6px;color:#94A3B8;font-size:10px"></i>
+        <span style="color:#047857;font-weight:500">${esc(c.to)}</span></div>
+    </div>`).join("");
+
+  const r = await Swal.fire({
+    title: "ขออนุมัติแก้ไขข้อมูล",
+    html: `<div style="text-align:left;font-size:14px">
+             <div style="background:#FEF3C7;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+               <i class="fa-solid fa-shield-halved" style="margin-right:6px"></i>
+               การแก้ไขต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน ข้อมูลเดิมจะยังไม่เปลี่ยนจนกว่าจะอนุมัติ
+             </div>
+             <div style="color:#64748B;font-size:12px">รายการที่ขอแก้</div>
+             <div style="margin-top:2px">${esc(entityLabel)}${targetName ? " · <b>"+esc(targetName)+"</b>" : ""}</div>
+             <div style="margin-top:10px;color:#64748B;font-size:12px">สิ่งที่เปลี่ยน (${changes.length} รายการ)</div>
+             <div style="max-height:190px;overflow:auto;margin-top:4px">${rowsHtml}</div>
+           </div>`,
+    input: "textarea",
+    inputLabel: "เหตุผลที่ต้องการแก้ไข",
+    inputPlaceholder: "ระบุเหตุผล เช่น กรอกอาการผิด / ใส่เลขมิเตอร์ผิด",
+    inputValidator: (v) => (!String(v||"").trim() ? "กรุณาระบุเหตุผลที่ต้องการแก้ไข" : null),
+    showCancelButton: true,
+    confirmButtonText: "ส่งคำขออนุมัติ", cancelButtonText: "ยกเลิก", confirmButtonColor: "#2563EB",
+  });
+  if(!r.isConfirmed) return false;
+
+  try{
+    await window.api("requestChange", { req:{
+      action, payload, entityLabel, targetName, targetInfo, changes,
+      project: project || window.getActiveProject(user) || "",
+      reason: r.value,
+      requesterId: user.id, requesterName: user.name, requesterRole: user.role,
+    }});
+    Swal.fire({
+      icon:"success", title:"ส่งคำขอแก้ไขแล้ว",
+      html:`ระบบแจ้งผู้ดูแลระบบ (Admin) แล้ว<br/><span style="color:#64748B;font-size:13px">ข้อมูลจะเปลี่ยนเมื่อได้รับอนุมัติ · ติดตามได้ที่เมนู "การแจ้งเตือน"</span>`,
+      confirmButtonText:"รับทราบ",
+    });
+    return true;
+  }catch(err){
+    Swal.fire({icon:"error",title:"ส่งคำขอไม่สำเร็จ",text:err.message});
+    return false;
+  }
+};
+
 /**
  * ปุ่มลบทุกปุ่มในระบบเรียกฟังก์ชันนี้
  *   คืนค่า true  = ลบจริงแล้ว (Admin) → ให้หน้าจอตัดแถวออกได้เลย
  *   คืนค่า false = ยกเลิก หรือ ส่งคำขอไปรออนุมัติ → ห้ามตัดแถวออก
  */
+// ยืนยันตัวตนซ้ำด้วยรหัสผ่านของบัญชีที่ล็อกอินอยู่ — ใช้ก่อนลบข้อมูลจริงทุกครั้ง
+// คืน true = รหัสถูก · false = กดยกเลิก (รหัสผิดจะวนให้กรอกใหม่ในหน้าต่างเดิม)
+window.confirmWithPassword = async function(user, {title, html, confirmText} = {}){
+  if(!user || !user.id){ Swal.fire({icon:"error",title:"ไม่พบข้อมูลผู้ใช้งาน"}); return false; }
+  const r = await Swal.fire({
+    title: title || "ยืนยันตัวตนก่อนลบ",
+    html: `<div style="text-align:left;font-size:13.5px">
+             <div style="background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+               <i class="fa-solid fa-shield-halved" style="margin-right:6px"></i>
+               ${html || "การลบข้อมูลต้องกรอกรหัสผ่านของบัญชีคุณเพื่อยืนยันทุกครั้ง"}
+             </div>
+             <div style="color:#64748B;font-size:12px">บัญชี</div>
+             <div style="margin-top:2px;font-weight:500">${user.name || ""} <span style="color:#64748B;font-weight:400">(${user.username || ""})</span></div>
+           </div>`,
+    icon: "warning",
+    input: "password",
+    inputLabel: "รหัสผ่านของคุณ",
+    inputPlaceholder: "กรอกรหัสผ่านเพื่อยืนยัน",
+    inputAttributes: { autocomplete:"current-password", "aria-label":"รหัสผ่านยืนยันการลบ" },
+    showCancelButton: true,
+    confirmButtonText: confirmText || "ยืนยันการลบ",
+    cancelButtonText: "ยกเลิก",
+    confirmButtonColor: "#EF4444",
+    allowOutsideClick: () => !Swal.isLoading(),
+    showLoaderOnConfirm: true,
+    preConfirm: async (pw) => {
+      if(!String(pw||"")){ Swal.showValidationMessage("กรุณากรอกรหัสผ่าน"); return false; }
+      try{
+        await window.api("verifyPassword", { userId:user.id, password:pw });
+        return true;
+      }catch(err){
+        Swal.showValidationMessage(err.message || "ยืนยันรหัสผ่านไม่สำเร็จ");
+        return false;
+      }
+    },
+  });
+  return !!(r.isConfirmed && r.value);
+};
+
 window.deleteWithApproval = async function(opts){
   const {
     user, action, payload = {},
@@ -1976,6 +2238,11 @@ window.deleteWithApproval = async function(opts){
       confirmButtonText: "ใช่, ลบเลย", cancelButtonText: "ยกเลิก", confirmButtonColor: "#EF4444",
     });
     if(!r.isConfirmed) return false;
+    // Admin ลบได้ทันทีโดยไม่ต้องรออนุมัติ จึงต้องกรอกรหัสผ่านยืนยันตัวตนซ้ำทุกครั้ง กันลบพลาด/กันคนอื่นใช้เครื่องที่เปิดค้างไว้
+    const ok = await window.confirmWithPassword(user, {
+      html: `ยืนยันการลบ<b> ${label}${targetName ? " · " + targetName : ""}</b><div style="margin-top:4px">การลบไม่สามารถกู้คืนได้</div>`,
+    });
+    if(!ok) return false;
     try{
       const res = await window.api(action, { ...payload, role:"Admin", by:{id:user.id,name:user.name,role:user.role}, targetName });
       window.applyDeleteLocally(action, payload);
@@ -2037,6 +2304,10 @@ const DELREQ_STATUS = {
   rejected: { label:"ไม่อนุมัติ",  color:"#B91C1C", bg:"#FEE2E2", icon:"fa-circle-xmark" },
 };
 
+// ข้อความในคำขอมาจากผู้ใช้ (ชื่อรายการ/เหตุผล/ค่าที่แก้) และถูกยัดลง html ของ Swal — ต้อง escape ก่อนเสมอ
+// ชื่อ escReq ไม่ใช่ esc เพราะบล็อกแผนที่ประกาศ const esc ไว้แล้ว — ชนกันทั้งสองตัวจะพังทั้งหน้า
+const escReq = (s) => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
 function DeleteApprovals({user}){
   const { mine } = window.useDeleteRequests(user);
   const [tab,setTab] = React.useState("pending");
@@ -2058,24 +2329,46 @@ function DeleteApprovals({user}){
     .filter(r => !kw || [r.entityLabel,r.targetName,r.targetInfo,r.requesterName,r.reason,r.project].some(v=>String(v||"").toLowerCase().includes(kw)));
 
   const approve = async (r) => {
+    const isEdit = r.kind === "edit";
+    const changeHtml = isEdit && (r.changes||[]).length
+      ? `<div style="margin-top:8px;color:#64748B;font-size:12px">สิ่งที่จะเปลี่ยน</div>
+         <div style="max-height:170px;overflow:auto;margin-top:2px">${(r.changes||[]).map(c=>`
+           <div style="padding:5px 0;border-bottom:1px dashed #E2E8F0">
+             <div style="font-size:12px;color:#64748B">${escReq(c.label)}</div>
+             <div style="font-size:13px"><span style="color:#B91C1C;text-decoration:line-through">${escReq(c.from)}</span>
+               <i class="fa-solid fa-arrow-right" style="margin:0 6px;color:#94A3B8;font-size:10px"></i>
+               <span style="color:#047857;font-weight:500">${escReq(c.to)}</span></div>
+           </div>`).join("")}</div>`
+      : "";
     const res = await Swal.fire({
-      title:"อนุมัติให้ลบข้อมูล?",
+      title: isEdit ? "อนุมัติให้แก้ไขข้อมูล?" : "อนุมัติให้ลบข้อมูล?",
       html:`<div style="text-align:left;font-size:14px">
-              <div><b>${r.entityLabel||"ข้อมูล"}</b> · ${r.targetName||"-"}</div>
-              <div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${r.requesterName||"-"} (${r.requesterRole||"-"})</div>
-              <div style="color:#64748B;font-size:13px">เหตุผล: ${r.reason||"-"}</div>
-              <div style="color:#B91C1C;font-size:13px;margin-top:8px">เมื่ออนุมัติ ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้</div>
+              <div><b>${escReq(r.entityLabel||"ข้อมูล")}</b> · ${escReq(r.targetName||"-")}</div>
+              <div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${escReq(r.requesterName||"-")} (${escReq(r.requesterRole||"-")})</div>
+              <div style="color:#64748B;font-size:13px">เหตุผล: ${escReq(r.reason||"-")}</div>
+              ${changeHtml}
+              <div style="color:${isEdit?"#1D4ED8":"#B91C1C"};font-size:13px;margin-top:8px">${isEdit?"เมื่ออนุมัติ ข้อมูลจะถูกแก้ตามรายการด้านบนทันที":"เมื่ออนุมัติ ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้"}</div>
             </div>`,
       icon:"warning", showCancelButton:true,
-      input:"text", inputLabel:"หมายเหตุ (ถ้ามี)", inputPlaceholder:"เช่น ตรวจสอบแล้วเป็นข้อมูลซ้ำ",
-      confirmButtonText:"อนุมัติและลบ", cancelButtonText:"ยกเลิก", confirmButtonColor:"#EF4444",
+      input:"text", inputLabel:"หมายเหตุ (ถ้ามี)", inputPlaceholder:"เช่น ตรวจสอบแล้วถูกต้อง",
+      confirmButtonText: isEdit ? "อนุมัติและแก้ไข" : "อนุมัติและลบ",
+      cancelButtonText:"ยกเลิก", confirmButtonColor: isEdit ? "#2563EB" : "#EF4444",
     });
     if(!res.isConfirmed) return;
+    // อนุมัติลบ = ลบจริงทันที จึงต้องยืนยันรหัสผ่านเหมือนตอน Admin กดลบเองที่หน้าอื่น (การแก้ไขย้อนกลับได้ ไม่ต้องยืนยันซ้ำ)
+    if(!isEdit){
+      const ok = await window.confirmWithPassword(user, {
+        html: `ยืนยันการอนุมัติลบ<b> ${escReq(r.entityLabel||"ข้อมูล")} · ${escReq(r.targetName||"-")}</b><div style="margin-top:4px">ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้</div>`,
+        confirmText: "ยืนยันอนุมัติและลบ",
+      });
+      if(!ok) return;
+    }
     setBusy(r.id);
     try{
       await window.api("approveDelete",{ id:r.id, note:res.value||"", by:{id:user.id,name:user.name,role:user.role} });
-      window.applyDeleteLocally(r.action, r.payload||{});
-      Swal.fire({icon:"success",title:"อนุมัติและลบข้อมูลแล้ว",timer:1600,showConfirmButton:false,toast:true,position:"top-end"});
+      if(isEdit) window.applyEditLocally(r.action, r.payload||{});
+      else window.applyDeleteLocally(r.action, r.payload||{});
+      Swal.fire({icon:"success",title:isEdit?"อนุมัติและแก้ไขข้อมูลแล้ว":"อนุมัติและลบข้อมูลแล้ว",timer:1600,showConfirmButton:false,toast:true,position:"top-end"});
     }catch(err){
       Swal.fire({icon:"error",title:"อนุมัติไม่สำเร็จ",text:err.message});
     }finally{ setBusy(""); }
@@ -2121,11 +2414,11 @@ function DeleteApprovals({user}){
             <i className="fa-solid fa-shield-halved"></i>
           </div>
           <div style={{flex:1,minWidth:220}}>
-            <div style={{fontWeight:600}}>{isAdmin ? "คำขออนุมัติลบข้อมูล" : "คำขอลบข้อมูลของฉัน"}</div>
+            <div style={{fontWeight:600}}>{isAdmin ? "คำขออนุมัติลบ / แก้ไขข้อมูล" : "คำขอของฉัน"}</div>
             <div style={{color:"var(--muted)",fontSize:13,marginTop:2}}>
               {isAdmin
-                ? "ทุกการลบข้อมูลของผู้ใช้งานอื่นต้องผ่านการอนุมัติที่นี่ · ข้อมูลจะถูกลบเมื่อกดอนุมัติเท่านั้น"
-                : "การลบข้อมูลทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน"}
+                ? "การลบข้อมูลของผู้ใช้งานอื่น และการแก้ไขใบแจ้งซ่อมของผู้แจ้ง ต้องผ่านการอนุมัติที่นี่ · ข้อมูลจะเปลี่ยนเมื่อกดอนุมัติเท่านั้น"
+                : "การลบข้อมูล และการแก้ไขใบแจ้งซ่อม ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน"}
             </div>
           </div>
           {isAdmin && canPush && pushState==="default" && (
@@ -2157,11 +2450,12 @@ function DeleteApprovals({user}){
             <div className="empty">
               <i className="fa-solid fa-inbox"></i>
               <div className="t">{tab==="pending" ? "ไม่มีคำขอรออนุมัติ" : "ไม่มีรายการ"}</div>
-              <div>{isAdmin ? "เมื่อมีผู้ใช้งานขอลบข้อมูล จะแสดงที่นี่ทันที" : "คำขอลบข้อมูลของคุณจะแสดงที่นี่"}</div>
+              <div>{isAdmin ? "เมื่อมีผู้ใช้งานขอลบหรือขอแก้ไขข้อมูล จะแสดงที่นี่ทันที" : "คำขอลบ/แก้ไขข้อมูลของคุณจะแสดงที่นี่"}</div>
             </div>
           )}
           {rows.map(r=>{
             const st = DELREQ_STATUS[r.status] || DELREQ_STATUS.pending;
+            const isEdit = r.kind === "edit";
             return (
               <div key={r.id} style={{border:"1px solid var(--line)",borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"12px 14px",background:"#fff"}}>
                 <div style={{display:"flex",gap:10,alignItems:"flex-start",flexWrap:"wrap"}}>
@@ -2169,6 +2463,9 @@ function DeleteApprovals({user}){
                     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                       <span className="badge" style={{background:st.bg,color:st.color}}>
                         <i className={`fa-solid ${st.icon}`} style={{marginRight:5}}></i>{st.label}
+                      </span>
+                      <span className="badge" style={isEdit?{background:"#DBEAFE",color:"#1D4ED8"}:{background:"#FEE2E2",color:"#B91C1C"}}>
+                        <i className={`fa-solid ${isEdit?"fa-pen":"fa-trash"}`} style={{marginRight:5}}></i>{isEdit?"ขอแก้ไข":"ขอลบ"}
                       </span>
                       <span style={{fontWeight:600}}>{r.entityLabel||"ข้อมูล"}</span>
                       {r.targetName && <span style={{color:"var(--text)"}}>· {r.targetName}</span>}
@@ -2185,6 +2482,19 @@ function DeleteApprovals({user}){
                     <div style={{fontSize:13,marginTop:4,background:"#F8FAFC",border:"1px solid var(--line-soft)",borderRadius:8,padding:"7px 10px"}}>
                       <span style={{color:"var(--muted)"}}>เหตุผล:</span> {r.reason||"-"}
                     </div>
+                    {isEdit && (r.changes||[]).length>0 && (
+                      <div style={{marginTop:6,border:"1px solid var(--line-soft)",borderRadius:8,padding:"7px 10px",background:"#FAFBFC"}}>
+                        <div style={{color:"var(--muted)",fontSize:12,marginBottom:3}}>สิ่งที่ขอแก้ ({r.changes.length} รายการ)</div>
+                        {r.changes.map((c,i)=>(
+                          <div key={i} style={{fontSize:12.5,padding:"3px 0",borderBottom:i<r.changes.length-1?"1px dashed var(--line)":"none"}}>
+                            <span style={{color:"var(--muted)"}}>{c.label}: </span>
+                            <span style={{color:"#B91C1C",textDecoration:"line-through"}}>{c.from}</span>
+                            <i className="fa-solid fa-arrow-right" style={{margin:"0 6px",color:"var(--muted)",fontSize:10}}></i>
+                            <span style={{color:"#047857",fontWeight:500}}>{c.to}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {r.status!=="pending" && (
                       <div style={{fontSize:12.5,color:"var(--muted)",marginTop:6}}>
                         <i className={`fa-solid ${st.icon}`} style={{marginRight:5,color:st.color}}></i>
@@ -2203,10 +2513,10 @@ function DeleteApprovals({user}){
                       <button className="btn btn-sm btn-ghost" disabled={busy===r.id} onClick={()=>reject(r)}>
                         <i className="fa-solid fa-xmark"></i> ไม่อนุมัติ
                       </button>
-                      <button className="btn btn-sm btn-primary" disabled={busy===r.id} style={{background:"#EF4444",borderColor:"#EF4444"}} onClick={()=>approve(r)}>
+                      <button className="btn btn-sm btn-primary" disabled={busy===r.id} style={isEdit?undefined:{background:"#EF4444",borderColor:"#EF4444"}} onClick={()=>approve(r)}>
                         {busy===r.id
-                          ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังลบ...</>
-                          : <><i className="fa-solid fa-check"></i> อนุมัติและลบ</>}
+                          ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> {isEdit?"กำลังแก้ไข...":"กำลังลบ..."}</>
+                          : <><i className="fa-solid fa-check"></i> {isEdit?"อนุมัติและแก้ไข":"อนุมัติและลบ"}</>}
                       </button>
                     </div>
                   )}
@@ -2263,6 +2573,42 @@ function ProjectLabel({name}){
   const isCode = short !== name;
   return <span className={isCode?"mono":""} title={name} style={isCode?{fontWeight:500}:undefined}>{short}</span>;
 }
+// ── ไซต์งานย่อยของโครงการ (เช่น Rig1 / Rig2) — ใช้ร่วมกันทุกหน้า ─────────────
+// ตั้งรายชื่อไซต์ได้ที่หน้า "โครงการ" → แก้ไข → ไซต์งานย่อย
+// โครงการที่ยังไม่ได้ตั้งไซต์ย่อย ช่องนี้จะซ่อนตัวเองไปเลย ฟอร์มจะได้ไม่รก
+// showWhenEmpty = แสดงช่องเสมอแม้โครงการยังไม่มีไซต์ย่อย (ใช้ในหน้าทะเบียน เพื่อให้รู้ว่ามีฟิลด์นี้อยู่และตั้งค่าที่ไหน)
+function SubSiteField({project,value,onChange,className="form-field",style,label,hint,disabled,placeholder,showWhenEmpty}){
+  const sites = window.projectSites(project);
+  const legacy = value && !sites.includes(value);   // ไซต์ที่ถูกลบ/เปลี่ยนชื่อทีหลัง — ต้องคงค่าเดิมไว้ ไม่ให้หายตอนแก้ไข
+  if(!sites.length && !legacy && !showWhenEmpty) return null;
+  const empty = !sites.length && !legacy;
+  return (
+    <div className={className} style={style}>
+      <label><i className="fa-solid fa-sitemap" style={{color:"var(--primary)",marginRight:6}}></i>{label||"ไซต์งานย่อย"}</label>
+      <select value={value||""} onChange={e=>onChange(e.target.value)} disabled={disabled||empty}>
+        <option value="">{empty ? (project ? "— โครงการนี้ยังไม่มีไซต์งานย่อย —" : "— เลือกโครงการก่อน —") : (placeholder||"— ทั้งโครงการ (ไม่ระบุไซต์) —")}</option>
+        {sites.map(s=><option key={s} value={s}>{s}</option>)}
+        {legacy && <option value={value}>{value} (ไม่มีในโครงการแล้ว)</option>}
+      </select>
+      {empty && project
+        ? <div className="hint" style={{color:"#B45309"}}><i className="fa-solid fa-circle-info" style={{marginRight:5}}></i>เพิ่มไซต์งานย่อย (เช่น Rig1, Rig2) ได้ที่เมนู <b>โครงการ</b> → แก้ไขโครงการนี้ → ไซต์งานย่อย</div>
+        : (hint && <div className="hint">{hint}</div>)}
+    </div>
+  );
+}
+
+// ป้ายไซต์งานย่อยสำหรับตาราง/การ์ด — ไม่มีค่าก็ไม่แสดงอะไรเลย
+function SubSiteTag({value,project,style}){
+  if(!value) return null;
+  const p = (window.__DATA.projects||[]).find(x=>x.name===project);
+  const c = (p && p.color) || "#7C3AED";
+  return (
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"1px 8px",borderRadius:6,background:c+"18",color:c,fontSize:11.5,fontWeight:500,whiteSpace:"nowrap",...(style||{})}}>
+      <i className="fa-solid fa-sitemap" style={{fontSize:9,opacity:.8}}></i>{value}
+    </span>
+  );
+}
+
 function Modal({open,onClose,title,children,footer,size=""}){
   useEffect(()=>{
     if(!open) return;
@@ -2558,6 +2904,9 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"r-dashboard", icon:"fa-chart-pie", label:"สรุปงานของฉัน" },
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"r-mine", icon:"fa-clipboard-check", label:"ติดตามสถานะ" },
+    // สองหน้านี้เปิดให้ผู้แจ้งดูอย่างเดียว (ปุ่มเพิ่ม/แก้ไขยังคุมด้วย role เหมือนเดิม)
+    { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
   ];
   // จป. (Safety Officer) — ดูงานซ่อม/เครื่องจักรเพื่อความปลอดภัย แจ้งซ่อมได้ แต่แก้ไขงานซ่อมไม่ได้
   const safetyNav = [
@@ -2608,7 +2957,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
           ))}
           <div className="section">ทั่วไป</div>
           <div className={`nav-item ${active==="notifications"?"active":""}`} onClick={()=>{onNav("notifications"); onClose&&onClose();}}
-               title={user.role==="Admin" ? "คำขออนุมัติลบข้อมูล" : "สถานะคำขอลบข้อมูลของฉัน"}>
+               title={user.role==="Admin" ? "คำขออนุมัติลบ / แก้ไขข้อมูล" : "สถานะคำขอลบ / แก้ไขข้อมูลของฉัน"}>
             <i className="fa-solid fa-bell"></i>
             <span>การแจ้งเตือน</span>
             {delReq.badge>0 && <span className="badge" style={{background:"#FEE2E2",color:"#B91C1C"}}>{delReq.badge}</span>}
@@ -2641,7 +2990,7 @@ function Projects({user}){
   const filtered = rows.filter(p=>{
     if(!q) return true;
     const kw = q.toLowerCase();
-    return [p.name,p.shortName,p.code,p.desc].some(v=>String(v||"").toLowerCase().includes(kw));
+    return [p.name,p.shortName,p.code,p.desc,...window.projectSites(p)].some(v=>String(v||"").toLowerCase().includes(kw));
   });
 
   // rows = เฉพาะโครงการที่ผู้ใช้เห็น — ห้ามเอา rows ไปทับ __DATA.projects ตรงๆ ไม่งั้นโครงการที่ถูกกรองออกจะหายจากแคชทั้งระบบ
@@ -2693,6 +3042,7 @@ function Projects({user}){
             <th style={{width:110}}>รหัส</th>
             <th style={{width:150}}>ชื่อย่อโครงการ</th>
             <th>ชื่อเต็มโครงการ</th>
+            <th style={{width:190}}>ไซต์งานย่อย</th>
             <th className="hide-on-mobile">รายละเอียด</th>
             <th style={{width:100}}>สถานะ</th>
             <th style={{width:80}} className="hide-on-mobile">เครื่องจักร</th>
@@ -2704,6 +3054,7 @@ function Projects({user}){
               const mCnt=(window.__DATA.machines||[]).filter(m=>m.project===p.name).length;
               const rCnt=(window.__DATA.repairs||[]).filter(r=>r.project===p.name).length;
               const sc=STATUS_COLOR[p.status]||"#94A3B8";
+              const sites=window.projectSites(p);
               return (
                 <tr key={p.id}>
                   <td><span className="mono" style={{fontSize:12,fontWeight:500,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 8px",borderRadius:6}}>{p.code||"—"}</span></td>
@@ -2721,6 +3072,15 @@ function Projects({user}){
                         : <i className="fa-solid fa-location-crosshairs" title="ยังไม่ได้ปักหมุดที่ตั้ง — จะไม่ขึ้นบนแผนที่หน้าแดชบอร์ด" style={{color:"#CBD5E1",fontSize:12}}></i>}
                     </div>
                   </td>
+                  <td>
+                    {sites.length ? (
+                      <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                        {sites.map(s=>(
+                          <span key={s} style={{fontSize:11.5,padding:"2px 8px",borderRadius:6,background:(p.color||"#3B82F6")+"18",color:p.color||"#3B82F6",fontWeight:500,whiteSpace:"nowrap"}}>{s}</span>
+                        ))}
+                      </div>
+                    ) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
+                  </td>
                   <td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:13,maxWidth:260}}><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.desc||"—"}</div></td>
                   <td><span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:500,padding:"3px 10px",borderRadius:999,background:sc+"22",color:sc}}><span style={{width:6,height:6,borderRadius:"50%",background:sc}}></span>{STATUS_LABEL[p.status]||p.status}</span></td>
                   <td className="hide-on-mobile" style={{textAlign:"center"}}><strong>{mCnt}</strong> <span style={{color:"var(--muted)",fontSize:12}}>รายการ</span></td>
@@ -2736,7 +3096,7 @@ function Projects({user}){
                 </tr>
               );
             })}
-            {filtered.length===0 && <tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-diagram-project"></i><div className="t">ยังไม่มีโครงการ</div><div>กดปุ่ม "เพิ่มโครงการ" เพื่อเริ่มต้น</div></div></td></tr>}
+            {filtered.length===0 && <tr><td colSpan="9"><div className="empty"><i className="fa-solid fa-diagram-project"></i><div className="t">ยังไม่มีโครงการ</div><div>กดปุ่ม "เพิ่มโครงการ" เพื่อเริ่มต้น</div></div></td></tr>}
           </tbody>
         </table>
       </div>
@@ -2749,11 +3109,40 @@ function ProjectForm({init,onClose,onSave}){
   const [f,setF] = React.useState(init);
   const palette = ["#3B82F6","#8B5CF6","#EF4444","#10B981","#F59E0B","#06B6D4","#EC4899","#6366F1","#F97316","#14B8A6","#A855F7","#0EA5E9","#DC2626","#16A34A","#D97706","#64748B"];
 
+  // ไซต์งานย่อย — พิมพ์แล้วกด Enter หรือ "," เพื่อเพิ่มทีละอัน (วางหลายชื่อคั่นด้วย , ได้)
+  const [siteInput,setSiteInput] = React.useState("");
+  const sites = window.projectSites(f);
+  const addSites = (raw) => {
+    const parts = String(raw||"").split(",").map(s=>s.trim()).filter(Boolean);
+    if(!parts.length) return;
+    const next = sites.slice();
+    parts.forEach(s=>{ if(!next.some(x=>x.toLowerCase()===s.toLowerCase())) next.push(s); });
+    setF(prev=>({...prev,sites:next}));
+    setSiteInput("");
+  };
+  const removeSite = (s) => setF(prev=>({...prev,sites:sites.filter(x=>x!==s)}));
+  const moveSite = (i,dir) => {
+    const next = sites.slice();
+    const j = i+dir;
+    if(j<0 || j>=next.length) return;
+    [next[i],next[j]] = [next[j],next[i]];
+    setF(prev=>({...prev,sites:next}));
+  };
+
+  // กดบันทึกทั้งที่ยังพิมพ์ชื่อไซต์ค้างอยู่ในช่อง — เก็บให้ด้วย ไม่ให้พิมพ์แล้วหาย
+  // ไม่มีไซต์เลยส่ง null เพื่อให้ Firebase ลบฟิลด์ทิ้ง (update ด้วย [] จะไม่ลบของเดิม)
+  const submit = () => {
+    const merged = sites.slice();
+    String(siteInput||"").split(",").map(s=>s.trim()).filter(Boolean)
+      .forEach(s=>{ if(!merged.some(x=>x.toLowerCase()===s.toLowerCase())) merged.push(s); });
+    onSave({...f, sites: merged.length ? merged : null});
+  };
+
   return (
     <Modal open={true} onClose={onClose} title={init.id?"แก้ไขโครงการ":"เพิ่มโครงการใหม่"}
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button>
-        <button className="btn btn-primary" onClick={()=>onSave(f)}><i className="fa-solid fa-floppy-disk"></i> บันทึก</button>
+        <button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึก</button>
       </>}>
       <div className="form-grid">
         <div className="form-field" style={{gridColumn:"1/-1"}}>
@@ -2777,6 +3166,36 @@ function ProjectForm({init,onClose,onSave}){
             <option value="active">ดำเนินการ</option>
             <option value="inactive">ปิดโครงการ</option>
           </select>
+        </div>
+        <div className="form-field" style={{gridColumn:"1/-1"}}>
+          <label><i className="fa-solid fa-sitemap" style={{color:"var(--primary)",marginRight:6}}></i>ไซต์งานย่อย</label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <input style={{flex:"1 1 200px",minWidth:0}} value={siteInput}
+              onChange={e=>{ const v=e.target.value; if(v.includes(",")) addSites(v); else setSiteInput(v); }}
+              onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); addSites(siteInput); } }}
+              placeholder="เช่น Rig1 แล้วกด Enter" />
+            <button type="button" className="btn btn-ghost" onClick={()=>addSites(siteInput)} disabled={!siteInput.trim()}>
+              <i className="fa-solid fa-plus"></i> เพิ่มไซต์
+            </button>
+          </div>
+          {sites.length>0 && (
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:10}}>
+              {sites.map((s,i)=>(
+                <span key={s} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 6px 4px 11px",borderRadius:999,background:(f.color||"#3B82F6")+"1A",color:f.color||"#3B82F6",fontSize:12.5,fontWeight:500}}>
+                  <span style={{cursor:"default"}}>{s}</span>
+                  <span style={{display:"inline-flex",gap:2}}>
+                    <button type="button" title="เลื่อนขึ้น" onClick={()=>moveSite(i,-1)} disabled={i===0}
+                      style={{border:"none",background:"none",cursor:i===0?"default":"pointer",color:"inherit",opacity:i===0?.25:.65,padding:"0 1px",fontSize:10}}><i className="fa-solid fa-chevron-left"></i></button>
+                    <button type="button" title="เลื่อนลง" onClick={()=>moveSite(i,1)} disabled={i===sites.length-1}
+                      style={{border:"none",background:"none",cursor:i===sites.length-1?"default":"pointer",color:"inherit",opacity:i===sites.length-1?.25:.65,padding:"0 1px",fontSize:10}}><i className="fa-solid fa-chevron-right"></i></button>
+                    <button type="button" title="ลบไซต์นี้" onClick={()=>removeSite(s)}
+                      style={{border:"none",background:"none",cursor:"pointer",color:"inherit",opacity:.75,padding:"0 3px",fontSize:11}}><i className="fa-solid fa-xmark"></i></button>
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="hint">ไซต์งานย่อยภายในโครงการ เช่น Rig1 · Rig2 · แคมป์คนงาน — ชื่อห้ามซ้ำกันในโครงการเดียว · เว้นว่างได้ถ้าโครงการไม่มีไซต์ย่อย</div>
         </div>
         <div className="form-field" style={{gridColumn:"1/-1"}}>
           <label>รายละเอียด</label>
@@ -3586,7 +4005,7 @@ function Repairs({user}){
     return rows.filter(r=>{
       if(q){
         const qq = q.toLowerCase();
-        if(!(r.running.toLowerCase().includes(qq) || r.title.toLowerCase().includes(qq) || (r.siteId||"").toLowerCase().includes(qq))) return false;
+        if(!(r.running.toLowerCase().includes(qq) || r.title.toLowerCase().includes(qq) || (r.siteId||"").toLowerCase().includes(qq) || (r.subSite||"").toLowerCase().includes(qq))) return false;
       }
       if(status!=="all" && r.status!==status) return false;
       if(cat!=="all" && r.categoryId!==cat) return false;
@@ -3728,7 +4147,7 @@ function Repairs({user}){
                   <td className="hide-on-mobile"><span className="site-id">{r.siteId||"—"}</span></td>
                   <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td><div className="cell-title"><ProblemLines title={r.title} max={4}/><div className="desc">{r.machineCode&&<span className="mono" style={{marginRight:6}}>{r.machineCode}</span>}{r.desc.slice(0,60)}{r.desc.length>60?"…":""}</div></div></td>
-                  <td style={{fontSize:13}}><ProjectLabel name={r.project}/></td>
+                  <td style={{fontSize:13}}><ProjectLabel name={r.project}/>{r.subSite && <div style={{marginTop:3}}><SubSiteTag value={r.subSite} project={r.project}/></div>}</td>
                   <td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td>
                   <td><Badge status={r.status}/></td>
                   <td className="hide-on-mobile"><Avatar name={r.reporterName}/>{r.reporterName}</td>
@@ -3774,7 +4193,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
         {onEditParts && <button className="btn btn-ghost" onClick={()=>onEditParts(r)} style={{color:"var(--primary)"}}><i className="fa-solid fa-list-check"></i> แก้ไขอะไหล่</button>}
-        {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i> แก้ไขข้อมูล</button>}
+        {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i> {user.role==="Reporter"?"ขอแก้ไขข้อมูล":"แก้ไขข้อมูล"}</button>}
         <button className="btn btn-ghost" onClick={()=>window.shareRepairImage(r,user)}><i className="fa-solid fa-share-nodes"></i> แชร์รูปภาพ</button>
       </>}>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
@@ -3790,9 +4209,12 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
                 <span style={{width:18,textAlign:"right",color:"var(--muted)",fontSize:13,flexShrink:0}}>{i+1}.</span>
                 <span style={{flex:1,minWidth:120,fontSize:15,fontWeight:500}}>{p.text}</span>
                 <Badge status={p.status}/>
-                <select className="inp" style={{width:"auto",padding:"4px 8px",fontSize:13,flexShrink:0}} value={p.status} onChange={e=>setProbStatus(i,e.target.value)}>
-                  {window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}
-                </select>
+                {/* ผู้แจ้งดูสถานะได้อย่างเดียว — การเปลี่ยนสถานะเป็นงานของช่าง/เจ้าหน้าที่ และการแก้ใบต้องผ่านการอนุมัติ */}
+                {user.role!=="Reporter" && (
+                  <select className="inp" style={{width:"auto",padding:"4px 8px",fontSize:13,flexShrink:0}} value={p.status} onChange={e=>setProbStatus(i,e.target.value)}>
+                    {window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}
+                  </select>
+                )}
               </div>
             ))}
           </div>
@@ -3801,7 +4223,10 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         {r.repairNote && <div className="full"><div className="k" style={{color:"var(--primary)"}}><i className="fa-solid fa-screwdriver-wrench" style={{marginRight:5}}></i>รายละเอียดการซ่อม</div><div className="v" style={{fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 12px",marginTop:4}}>{r.repairNote}</div></div>}
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
         <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
-        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v"><ProjectLabel name={r.project}/></div></div>
+        <div><div className="k">เลขมิเตอร์กิโลเมตร</div><div className="v">{r.odometerKm ? Number(r.odometerKm).toLocaleString("th-TH") : "—"}</div></div>
+        <div><div className="k">เลขมิเตอร์ชั่วโมง</div><div className="v">{r.hourMeter ? Number(r.hourMeter).toLocaleString("th-TH") : "—"}</div></div>
+        <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{r.driverName||"—"}</div></div>
+        <div><div className="k">โครงการ/หน่วยงาน</div><div className="v"><ProjectLabel name={r.project}/>{r.subSite && <SubSiteTag value={r.subSite} project={r.project} style={{marginLeft:6}}/>}</div></div>
         <div><div className="k">หมวดหมู่</div><div className="v"><CategoryChip categoryId={r.categoryId}/></div></div>
         <div><div className="k">ผู้แจ้ง</div><div className="v"><Avatar name={r.reporterName}/>{r.reporterName}</div></div>
         <div><div className="k">ผู้รับผิดชอบ</div><div className="v">{r.assignedId ? <><Avatar name={window.getUser(r.assignedId)?.name}/>{window.getUser(r.assignedId)?.name}</> : <span style={{color:"var(--muted)"}}>ยังไม่มอบหมาย</span>}</div></div>
@@ -3946,12 +4371,12 @@ window.buildRepairFormDoc = function(r, user){
     + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>"+fill(cat.name)+"</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>"+fill(r.machineCode)+"</span><b>กรรมสิทธิ์</b><span class='dot f1'>"+fill(m.ownership)+"</span></div>"
     + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>"+fill(m.brand)+"</span><b>รุ่น</b><span class='dot f1'>"+fill(m.model)+"</span><b>ขนาด</b><span class='dot f1'>"+fill(m.size)+"</span><b>ปี</b><span class='dot f1'>"+fill(m.year)+"</span><b>ทะเบียน</b><span class='dot f1'></span></div>"
     + "<div class='ln'><b>Serial No.</b><span class='dot f1'>"+fill(m.serial)+"</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>"
-    + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'></span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>"+fill(m.hours)+"</span></div>"
-    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>"+fill(projLabel)+"</span><b>สถานที่</b><span class='dot f1'>"+fill(m.location)+"</span></div>"
+    + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'>"+fill(r.odometerKm)+"</span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>"+fill(r.hourMeter||m.hours)+"</span></div>"
+    + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>"+fill(projLabel)+"</span><b>ไซต์งาน</b><span class='dot f1'>"+fill(r.subSite||m.subSite)+"</span><b>สถานที่</b><span class='dot f1'>"+fill(m.location)+"</span></div>"
     + "</div>"
     + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>"+rows+"</tbody></table></div>"
     + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>"
-    + "<tr class='sig-name'><td>"+fill(m.driverName)+"</td><td>"+fill(r.reporterName)+"</td><td></td><td></td></tr>"
+    + "<tr class='sig-name'><td>"+fill(r.driverName||m.driverName)+"</td><td>"+fill(r.reporterName)+"</td><td></td><td></td></tr>"
     + "<tr class='sig-paren'><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td></tr>"
     + "<tr class='sig-date'><td>วันที่ "+fill(dateStr)+"</td><td>วันที่ "+fill(dateStr)+"</td><td>วันที่ ..............</td><td>วันที่ ..............</td></tr></table>"
     + "<div class='box'><div class='box-hd'>สถานที่ทำการซ่อม</div><div class='loc'>"
@@ -4103,36 +4528,73 @@ function ProblemsField({value,onChange,disabled,placeholder}){
   );
 }
 
-function EditRepairModal({r,onClose,onSave}){
+// scope="reporter" = โหมดผู้แจ้งแก้ใบของตัวเอง — แก้ได้เฉพาะข้อมูลที่ตัวเองกรอกตอนแจ้ง
+// ซ่อนช่องฝั่งปฏิบัติการ (สถานะ / ค่าใช้จ่าย / ผู้รับผิดชอบ / รายละเอียดการซ่อม / ผู้แจ้ง / โครงการ)
+function EditRepairModal({r,onClose,onSave,scope}){
   const toDateStr = (d) => { if(!d) return ""; const dt = typeof d==="string"?new Date(d):d; return dt.toISOString().slice(0,10); };
-  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",machineCode:r.machineCode||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||"",photos:Array.isArray(r.photos)?r.photos.filter(Boolean):[],createdAt:toDateStr(r.createdAt)});
+  const [f,setF] = React.useState({title:r.title||"",desc:r.desc||"",repairNote:r.repairNote||"",siteId:r.siteId||"",subSite:r.subSite||"",machineCode:r.machineCode||"",odometerKm:r.odometerKm||"",hourMeter:r.hourMeter||"",driverName:r.driverName||"",project:r.project||"",categoryId:r.categoryId||"",status:r.status||"new",reporterName:r.reporterName||"",assignedId:r.assignedId||"",cost:r.cost||"",photos:Array.isArray(r.photos)?r.photos.filter(Boolean):[],createdAt:toDateStr(r.createdAt)});
   const set = (k,v)=>setF(p=>({...p,[k]:v}));
-  const submit = () => { const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n"); const existing = window.getProblems(r); const problems = title.split("\n").filter(Boolean).map((t,i)=>({text:t, status:(existing[i]&&existing[i].status)||r.status||"new"})); const patch = {...f, title, problems, photos:(f.photos||[]).filter(Boolean).slice(0,5), cost: f.cost===""?"":Number(f.cost)||0, createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt}; onSave(r, patch); };
+  const isReporter = scope === "reporter";
+  // ฟิลด์ที่ผู้แจ้งแก้ได้ — ตัดฝั่งปฏิบัติการออกที่ตัว patch ด้วย ไม่ใช่แค่ซ่อนช่องบนหน้าจอ
+  const REPORTER_FIELDS = ["title","desc","siteId","subSite","machineCode","odometerKm","hourMeter","driverName","categoryId","createdAt","photos","problems"];
+  const submit = () => {
+    const title = (f.title||"").split("\n").map(s=>s.trim()).filter(Boolean).join("\n");
+    const existing = window.getProblems(r);
+    const problems = title.split("\n").filter(Boolean).map((t,i)=>({text:t, status:(existing[i]&&existing[i].status)||r.status||"new"}));
+    const full = {...f, title, problems, photos:(f.photos||[]).filter(Boolean).slice(0,5), cost: f.cost===""?"":Number(f.cost)||0, createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt};
+    if(!isReporter){ onSave(r, full); return; }
+    const patch = {};
+    REPORTER_FIELDS.forEach(k=>{ if(k in full) patch[k] = full[k]; });
+    onSave(r, patch);
+  };
   const technicians = (window.__DATA.users||[]).filter(u=>["Technician","Officer","Admin","Engineer"].includes(u.role));
   return (
     <Modal open={true} onClose={onClose} size="lg"
-      title={<><i className="fa-solid fa-user-pen" style={{color:"#1E40AF",marginRight:8}}></i>แก้ไขข้อมูล · <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>}
-      footer={<><button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> บันทึกการแก้ไข</button></>}>
-      <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
-        <i className="fa-solid fa-pen-to-square" style={{marginRight:6}}></i>โหมดแก้ไข — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
-      </div>
+      title={<><i className="fa-solid fa-user-pen" style={{color:"#1E40AF",marginRight:8}}></i>{isReporter?"ขอแก้ไขใบแจ้งซ่อม":"แก้ไขข้อมูล"} · <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>ยกเลิก</button><button className="btn btn-primary" onClick={submit}><i className={`fa-solid ${isReporter?"fa-paper-plane":"fa-floppy-disk"}`}></i> {isReporter?"ส่งคำขอแก้ไข":"บันทึกการแก้ไข"}</button></>}>
+      {isReporter ? (
+        <div style={{background:"#FEF3C7",border:"1px solid #FDE68A",color:"#92400E",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
+          <i className="fa-solid fa-shield-halved" style={{marginRight:6}}></i>
+          แก้ได้เฉพาะข้อมูลที่คุณกรอกตอนแจ้ง · กดส่งแล้ว <b>ต้องรอผู้ดูแลระบบ (Admin) อนุมัติ</b> ข้อมูลเดิมจะยังไม่เปลี่ยนจนกว่าจะอนุมัติ
+        </div>
+      ) : (
+        <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",padding:"10px 14px",borderRadius:8,fontSize:13,marginBottom:16}}>
+          <i className="fa-solid fa-pen-to-square" style={{marginRight:6}}></i>โหมดแก้ไข — แก้ไขข้อมูลใบแจ้งซ่อมได้ทุกฟิลด์ ประวัติการแก้ไขจะถูกบันทึกไว้ใน Timeline
+        </div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
         <div style={{gridColumn:"1 / -1"}}><label className="k">อาการ/ปัญหา</label><ProblemsField value={f.title} onChange={v=>set("title",v)} /></div>
         <div style={{gridColumn:"1 / -1"}}><label className="k">รายละเอียดปัญหา</label><textarea className="inp" rows="2" value={f.desc} onChange={e=>set("desc",e.target.value)} /></div>
-        <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>
+        {!isReporter && <div style={{gridColumn:"1 / -1"}}><label className="k" style={{color:"var(--primary)",fontWeight:500}}>รายละเอียดการซ่อม <span style={{fontWeight:400,color:"var(--muted)"}}>(บันทึกโดยช่าง/เจ้าหน้าที่)</span></label><textarea className="inp" rows="3" placeholder="บันทึกขั้นตอนการซ่อม วิธีแก้ไข อุปกรณ์ที่ใช้..." value={f.repairNote} onChange={e=>set("repairNote",e.target.value)} /></div>}
         <div style={{gridColumn:"1 / -1"}}><label className="k"><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพประกอบ <span style={{fontWeight:400,color:"var(--muted)"}}>(สูงสุด 5 รูป)</span></label><PhotosField value={f.photos} onChange={v=>set("photos",v)} uploadContext={{running:r.running}} /></div>
         <div><label className="k">เลขที่ไซต์งาน</label><input className="inp" value={f.siteId} onChange={e=>set("siteId",e.target.value)} /></div>
         <div><label className="k">รหัสเครื่องจักร</label>
           <input className="inp" list="edit-machine-dl" value={f.machineCode} onChange={e=>{const code=e.target.value;const m=(window.__DATA.machines||[]).find(x=>x.code===code);setF(p=>({...p,machineCode:code,...(m&&!p.project?{project:m.project||""}:{})}));}} placeholder="พิมพ์หรือเลือกรหัสเครื่องจักร..." />
           <datalist id="edit-machine-dl">{(window.__DATA.machines||[]).map(m=>(<option key={m.id} value={m.code}>{m.name}{m.project?` · ${m.project}`:""}</option>))}</datalist>
         </div>
-        <div><label className="k">โครงการ/หน่วยงาน</label><select className="inp" value={f.project} onChange={e=>set("project",e.target.value)}><option value="">— ไม่ระบุ —</option>{Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort().map(p=>(<option key={p} value={p}>{p}</option>))}</select></div>
+        {/* โครงการล็อกไว้สำหรับผู้แจ้ง — เลขที่ใบแจ้งซ่อมออกตามรหัสโครงการ เปลี่ยนแล้วเลขที่จะไม่ตรงกับโครงการ */}
+        {isReporter
+          ? <div><label className="k">โครงการ/หน่วยงาน</label><input className="inp" value={f.project||"— ไม่ระบุ —"} disabled style={{background:"#F8FAFC",color:"var(--muted)"}} /></div>
+          : <div><label className="k">โครงการ/หน่วยงาน</label><select className="inp" value={f.project} onChange={e=>setF(p=>({...p,project:e.target.value,subSite:""}))}><option value="">— ไม่ระบุ —</option>{Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort().map(p=>(<option key={p} value={p}>{p}</option>))}</select></div>}
+        {(()=>{ const sites=window.projectSites(f.project); const legacy=f.subSite&&!sites.includes(f.subSite);
+          return (sites.length||legacy) ? (
+            <div><label className="k">ไซต์งานย่อย</label>
+              <select className="inp" value={f.subSite} onChange={e=>set("subSite",e.target.value)}>
+                <option value="">— ทั้งโครงการ (ไม่ระบุไซต์) —</option>
+                {sites.map(s=><option key={s} value={s}>{s}</option>)}
+                {legacy && <option value={f.subSite}>{f.subSite} (ไม่มีในโครงการแล้ว)</option>}
+              </select>
+            </div>
+          ) : null; })()}
+        <div><label className="k">เลขมิเตอร์กิโลเมตร</label><input className="inp" type="number" min="0" step="any" value={f.odometerKm} onChange={e=>set("odometerKm",e.target.value)} /></div>
+        <div><label className="k">เลขมิเตอร์ชั่วโมง</label><input className="inp" type="number" min="0" step="any" value={f.hourMeter} onChange={e=>set("hourMeter",e.target.value)} /></div>
+        <div><label className="k">พนักงานขับ / ผู้ควบคุม</label><input className="inp" value={f.driverName} onChange={e=>set("driverName",e.target.value)} /></div>
         <div><label className="k">หมวดหมู่</label><select className="inp" value={f.categoryId} onChange={e=>set("categoryId",e.target.value)}>{window.__DATA.categories.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select></div>
-        <div><label className="k">สถานะ</label><select className="inp" value={f.status} onChange={e=>set("status",e.target.value)}>{window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}</select></div>
-        <div><label className="k">ค่าใช้จ่าย (บาท)</label><input className="inp" type="number" value={f.cost} onChange={e=>set("cost",e.target.value)} /></div>
+        {!isReporter && <div><label className="k">สถานะ</label><select className="inp" value={f.status} onChange={e=>set("status",e.target.value)}>{window.__DATA.statuses.map(s=>(<option key={s.key} value={s.key}>{s.label}</option>))}</select></div>}
+        {!isReporter && <div><label className="k">ค่าใช้จ่าย (บาท)</label><input className="inp" type="number" value={f.cost} onChange={e=>set("cost",e.target.value)} /></div>}
         <div><label className="k">วันที่แจ้ง</label><input className="inp" type="date" value={f.createdAt} onChange={e=>set("createdAt",e.target.value)} /></div>
-        <div><label className="k">ผู้แจ้ง</label><input className="inp" value={f.reporterName} onChange={e=>set("reporterName",e.target.value)} /></div>
-        <div><label className="k">ผู้รับผิดชอบ</label><select className="inp" value={f.assignedId} onChange={e=>set("assignedId",e.target.value)}><option value="">— ยังไม่มอบหมาย —</option>{technicians.map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}</select></div>
+        {!isReporter && <div><label className="k">ผู้แจ้ง</label><input className="inp" value={f.reporterName} onChange={e=>set("reporterName",e.target.value)} /></div>}
+        {!isReporter && <div><label className="k">ผู้รับผิดชอบ</label><select className="inp" value={f.assignedId} onChange={e=>set("assignedId",e.target.value)}><option value="">— ยังไม่มอบหมาย —</option>{technicians.map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}</select></div>}
       </div>
       <style>{`.inp{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-family:Kanit;font-size:13.5;background:#fff}.inp:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,64,175,.1)}label.k{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}`}</style>
     </Modal>
@@ -4711,6 +5173,7 @@ async function exportMachinesExcel(list){
       "ขนาด": m.size||"",
       "หมายเลขเครื่อง (Serial)": m.serial||"",
       "โครงการ": m.project||"",
+      "ไซต์งานย่อย": m.subSite||"",
       "สถานที่": m.location||"",
       "กรรมสิทธิ์": m.ownership||"",
       "สถานะ": m.status||"",
@@ -4795,10 +5258,19 @@ function Machines({user}){
   const [q,setQ] = React.useState("");
   const [catF,setCatF] = React.useState([]);   // ติ๊กหลายหมวดหมู่ได้ — ว่าง = ทุกหมวดหมู่
   const [ownF,setOwnF] = React.useState([]);   // ติ๊กหลายกรรมสิทธิ์ได้ — ว่าง = ทุกกรรมสิทธิ์
+  const [siteF,setSiteF] = React.useState([]); // ติ๊กหลายไซต์งานย่อยได้ — ว่าง = ทุกไซต์
   const [sortF,setSortF] = React.useState("none");
   const [detail,setDetail] = React.useState(null);
   const [edit,setEdit] = React.useState(null);
   React.useEffect(()=>{ setRows(visibleRows); },[visibleRows]);
+
+  // คำขอแก้ไขทะเบียนเครื่องจักรที่ตัวเองส่งไว้ — ใช้ขึ้นป้าย "รออนุมัติ" และดึงค่าใหม่ลงตารางหลังอนุมัติ
+  const { mine: myReqs } = window.useDeleteRequests(user);
+  const pendingEditIds = React.useMemo(()=>new Set(
+    (myReqs||[]).filter(x=>x.kind==="edit" && x.status==="pending" && x.action==="updateMachine").map(x=>String(x.targetKey))
+  ),[myReqs]);
+  const decidedCount = (myReqs||[]).filter(x=>x.status!=="pending").length;
+  React.useEffect(()=>{ setRows(window.filterByUserProjects(user, window.__DATA.machines, "project")); },[decidedCount]);
 
   // ตัวเลือกหมวดหมู่ — แสดงจำนวนเครื่องในแต่ละหมวด + ตัวเลือก "ไม่ระบุ"
   const catOptions = React.useMemo(()=>{
@@ -4818,10 +5290,20 @@ function Machines({user}){
     return opts;
   },[rows]);
 
+  // ตัวเลือกไซต์งานย่อย — รวมทุกโครงการที่ผู้ใช้เห็น (ชื่อซ้ำข้ามโครงการถือเป็นตัวเลือกเดียวกัน)
+  const siteOptions = React.useMemo(()=>{
+    const tally = {};
+    rows.forEach(m=>{ const s=(m.subSite||"").trim()||"__none__"; tally[s]=(tally[s]||0)+1; });
+    const opts = Object.keys(tally).filter(s=>s!=="__none__").sort((a,b)=>a.localeCompare(b,"th",{numeric:true})).map(s=>({value:s,label:`${s} (${tally[s]})`}));
+    if(opts.length && tally.__none__) opts.push({value:"__none__",label:`— ไม่ระบุไซต์ — (${tally.__none__})`});
+    return opts;
+  },[rows]);
+
   const filtered = rows.filter(m=>{
-    if(q){ const qq=q.toLowerCase(); const hay=[m.name,m.code,m.brand,m.model,m.year,m.serial,m.project].map(x=>String(x||"").toLowerCase()).join(" "); if(!hay.includes(qq)) return false; }
+    if(q){ const qq=q.toLowerCase(); const hay=[m.name,m.code,m.brand,m.model,m.year,m.serial,m.project,m.subSite].map(x=>String(x||"").toLowerCase()).join(" "); if(!hay.includes(qq)) return false; }
     if(catF.length && !catF.includes(m.categoryId||"__none__")) return false;
     if(ownF.length && !ownF.includes((m.ownership||"").trim()||"__none__")) return false;
+    if(siteF.length && !siteF.includes((m.subSite||"").trim()||"__none__")) return false;
     return true;
   });
 
@@ -4846,6 +5328,19 @@ function Machines({user}){
   const save = async (form) => {
     try{
       if(form.id){
+        // แก้ไขทะเบียนเครื่องจักรต้องผ่านการอนุมัติของ Admin (เพิ่มเครื่องใหม่ไม่ต้อง)
+        if(user.role !== "Admin"){
+          const before = (window.__DATA.machines||[]).find(x=>x.id===form.id) || {};
+          const changes = window.diffFields(before, form, window.MACHINE_FIELD_LABELS);
+          const sent = await window.requestEditApproval({
+            user, action:"updateMachine", payload:{ id:form.id, patch:form },
+            entityLabel:"เครื่องจักร", targetName:`${form.name||""} (${form.code||""})`.trim(), project:form.project||"",
+            targetInfo:[form.brand,form.model,form.serial].filter(Boolean).join(" · "),
+            changes,
+          });
+          if(sent) setEdit(null);
+          return;
+        }
         await window.api("updateMachine",{id:form.id,patch:form});
         setRows(rows.map(x=>x.id===form.id?form:x));
         syncCache(all=>all.map(x=>x.id===form.id?form:x));
@@ -4868,10 +5363,11 @@ function Machines({user}){
     if(done){ setRows(rows.filter(x=>x.id!==m.id)); setDetail(null); }   // applyDeleteLocally จัดการแคชกลางให้แล้ว
   };
 
-  const handleTransfer = async (machine, {toProject, note}) => {
-    const entry = {from:machine.project||"ไม่ระบุ", to:toProject, when:new Date().toISOString(), by:user.name, note:note||""};
+  const handleTransfer = async (machine, {toProject, toSubSite, note}) => {
+    // ไซต์งานย่อยผูกกับโครงการ — ย้ายโครงการแล้วต้องเปลี่ยนตาม (ไม่เลือก = ทั้งโครงการ)
+    const entry = {from:machine.project||"ไม่ระบุ", to:toProject, fromSubSite:machine.subSite||"", toSubSite:toSubSite||"", when:new Date().toISOString(), by:user.name, note:note||""};
     const transferHistory = [...(machine.transferHistory||[]), entry];
-    const patch = {project:toProject, transferHistory};
+    const patch = {project:toProject, subSite:toSubSite||"", transferHistory};
     try{
       await window.api("updateMachine",{id:machine.id, patch});
       const updated = {...machine, ...patch};
@@ -4889,6 +5385,7 @@ function Machines({user}){
         <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา ชื่อ / รหัส / ยี่ห้อ / ซีเรียล / โครงการ..." value={q} onChange={e=>setQ(e.target.value)} /></div>
         <CheckFilter label="ทุกหมวดหมู่" icon="fa-layer-group" selected={catF} onChange={setCatF} options={catOptions} />
         <CheckFilter label="ทุกกรรมสิทธิ์" icon="fa-handshake" selected={ownF} onChange={setOwnF} options={ownOptions} />
+        {siteOptions.length>0 && <CheckFilter label="ทุกไซต์งานย่อย" icon="fa-sitemap" selected={siteF} onChange={setSiteF} options={siteOptions} />}
         <select value={sortF} onChange={e=>setSortF(e.target.value)} title="เรียงลำดับ">
           <option value="none">เรียง: ค่าเริ่มต้น</option>
           <option value="ownership">เรียง: กรรมสิทธิ์</option>
@@ -4901,8 +5398,8 @@ function Machines({user}){
         <button className="btn btn-ghost" onClick={()=>exportMachinesExcel(filtered)} title="ส่งออกข้อมูลที่แสดงอยู่เป็นไฟล์ Excel">
           <i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel
         </button>
-        {["Admin","Officer","Engineer"].includes(user.role) && (
-          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",code:"",name:"",brand:"",model:"",year:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",driveLinkPL:"",inspectionDate:"",nextInspectionDate:""}})}>
+        {["Admin","Officer","Engineer"].includes(window.effectiveRole(user)) && (
+          <button className="btn btn-primary" onClick={()=>setEdit({mode:"create",m:{id:"",project:"",subSite:"",code:"",name:"",brand:"",model:"",year:"",size:"",serial:"",ownership:"",categoryId:"",note:"",status:"ใช้งาน",location:"",lastService:window.__DATA.fmtDate(new Date()),hours:0,icon:"fa-gears",driverName:"",drivePhoto:"",driveLink1:"",driveLink2:"",driveLinkPL:"",inspectionDate:"",nextInspectionDate:""}})}>
             <i className="fa-solid fa-plus"></i> เพิ่มเครื่องจักร
           </button>
         )}
@@ -4918,18 +5415,19 @@ function Machines({user}){
               <div className="ic"><i className={`fa-solid ${m.icon||"fa-gears"}`}></i></div>
               {m.drivePhoto && <img src={gdriveThumb(m.drivePhoto)} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>e.target.style.display="none"} />}
               {m.categoryId && <div className="drive-tag" style={{background:cat.color,color:"#fff"}}><i className={`fa-solid ${cat.icon}`}></i> {cat.name}</div>}
+              {pendingEditIds.has(String(m.id)) && <div style={{position:"absolute",left:8,bottom:8,display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:999,background:"#FEF3C7",color:"#B45309",fontSize:10.5,fontWeight:600}} title="ส่งคำขอแก้ไขแล้ว รอผู้ดูแลระบบอนุมัติ"><i className="fa-solid fa-hourglass-half"></i> รออนุมัติแก้ไข</div>}
               <div className="status-dot" style={{background:statusColor(m.status)}}><span style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}></span>{m.status}</div>
             </div>
             <div className="machine-info">
               <div className="n">{m.name}</div>
               <div className="m">{m.code}{m.brand?` · ${m.brand}`:""}{m.model?` ${m.model}`:""}</div>
               {m.serial && <div className="m mono" style={{fontSize:11,marginTop:1,opacity:.75}}>{m.serial}</div>}
-              <div className="meta"><span><i className="fa-solid fa-diagram-project"></i> <ProjectLabel name={m.project}/></span>{m.ownership&&<span><i className="fa-solid fa-handshake"></i> {m.ownership}</span>}</div>
+              <div className="meta"><span><i className="fa-solid fa-diagram-project"></i> <ProjectLabel name={m.project}/></span>{m.subSite&&<span><i className="fa-solid fa-sitemap"></i> {m.subSite}</span>}{m.ownership&&<span><i className="fa-solid fa-handshake"></i> {m.ownership}</span>}</div>
             </div>
           </div>
         );
       })}
-      {filtered.length===0 && (<div style={{gridColumn:"1/-1"}} className="card"><div className="empty"><i className="fa-solid fa-industry"></i><div className="t">ยังไม่มีเครื่องจักรในระบบ</div><div>{["Admin","Officer","Engineer"].includes(user.role)?"กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น":"รอผู้ดูแลระบบเพิ่มข้อมูล"}</div></div></div>)}
+      {filtered.length===0 && (<div style={{gridColumn:"1/-1"}} className="card"><div className="empty"><i className="fa-solid fa-industry"></i><div className="t">ยังไม่มีเครื่องจักรในระบบ</div><div>{["Admin","Officer","Engineer"].includes(window.effectiveRole(user))?"กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น":"รอผู้ดูแลระบบเพิ่มข้อมูล"}</div></div></div>)}
     </div>
     {detail && <MachineDetail m={detail} user={user} onClose={()=>setDetail(null)} onEdit={()=>{setEdit({mode:"edit",m:detail});setDetail(null);}} onDelete={()=>remove(detail)} onTransfer={(payload)=>handleTransfer(detail,payload)} onPatchMachine={async (patch, localOnly)=>{ try{ if(!localOnly) await window.api("updateMachine",{id:detail.id,patch}); const updated={...detail,...patch}; setRows(rows.map(x=>x.id===detail.id?updated:x)); syncCache(all=>all.map(x=>x.id===detail.id?updated:x)); setDetail(updated); }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }}} />}
     {edit && <MachineForm initial={edit.m} mode={edit.mode} user={user} onClose={()=>setEdit(null)} onSave={save} />}
@@ -4967,7 +5465,7 @@ function MachineForm({initial,mode,user,onClose,onSave}){
               </div>
             ) : (
               <>
-                <select value={f.project||""} onChange={e=>up("project",e.target.value)}>
+                <select value={f.project||""} onChange={e=>setF(p=>({...p,project:e.target.value,subSite:""}))}>
                   <option value="">— เลือกโครงการ —</option>
                   {projects.map(p=>(<option key={p.id} value={p.name}>{p.code ? `[${p.code}] ` : ""}{p.name}</option>))}
                 </select>
@@ -4984,6 +5482,8 @@ function MachineForm({initial,mode,user,onClose,onSave}){
               </>
             )}
           </div>
+          <SubSiteField project={f.project} value={f.subSite} onChange={v=>up("subSite",v)} showWhenEmpty
+            hint="ไซต์งานย่อยที่เครื่องจักรนี้ประจำอยู่ · เปลี่ยนโครงการแล้วต้องเลือกใหม่" />
           <div className="form-field"><label>รหัสเครื่องจักร *</label><input value={f.code||""} onChange={e=>up("code",e.target.value)} placeholder="เช่น XCMG-001" /></div>
           <div className="form-field" style={{gridColumn:"1/-1"}}><label>เครื่องจักร (ชื่อ) *</label><input value={f.name||""} onChange={e=>up("name",e.target.value)} placeholder="เช่น Drilling Rig, เครื่องกลึง CNC" /></div>
           <div className="form-field"><label>ยี่ห้อ</label><input value={f.brand||""} onChange={e=>up("brand",e.target.value)} placeholder="เช่น XCMG, Komatsu, HITACHI" /></div>
@@ -5034,11 +5534,13 @@ function TransferMachineModal({m,user,onClose,onSave}){
   // ย้ายได้เฉพาะไปโครงการที่ตัวเองมีสิทธิ์ — กันย้ายเครื่องจักรหายเข้าโครงการที่มองไม่เห็น
   const projects = window.visibleProjects(user).filter(p=>p.name!==m.project);
   const [toProject,setToProject] = React.useState("");
+  const [toSubSite,setToSubSite] = React.useState("");
   const [note,setNote] = React.useState("");
+  const toSites = window.projectSites(toProject);
   const inSt = {width:"100%",padding:"9px 11px",border:"1px solid var(--line)",borderRadius:8,fontFamily:"Kanit",fontSize:13.5,background:"#fff"};
   const submit = () => {
     if(!toProject){ Swal.fire({icon:"warning",title:"กรุณาเลือกโครงการปลายทาง"}); return; }
-    onSave({toProject,note});
+    onSave({toProject,toSubSite,note});
   };
   return (
     <Modal open={true} onClose={onClose} title={<><i className="fa-solid fa-right-left" style={{color:"#7C3AED",marginRight:8}}></i>ย้ายโครงการ</>} size="sm"
@@ -5048,15 +5550,25 @@ function TransferMachineModal({m,user,onClose,onSave}){
           <div style={{fontSize:11,color:"#92400E",textTransform:"uppercase",letterSpacing:".05em",marginBottom:4}}>โครงการปัจจุบัน</div>
           <div style={{fontWeight:600,fontSize:15,color:"#78350F"}}>{m.project ? window.projectShort(m.project) : "— ไม่ระบุ —"}</div>
           {m.project && window.projectShort(m.project)!==m.project && <div style={{fontSize:12,color:"#B45309",marginTop:2}}>{m.project}</div>}
+          {m.subSite && <div style={{fontSize:12,color:"#B45309",marginTop:3}}><i className="fa-solid fa-sitemap" style={{marginRight:5}}></i>ไซต์งานย่อย: {m.subSite}</div>}
         </div>
         <div>
           <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>ย้ายไปยังโครงการ <span style={{color:"#EF4444"}}>*</span></label>
-          <select style={inSt} value={toProject} onChange={e=>setToProject(e.target.value)}>
+          <select style={inSt} value={toProject} onChange={e=>{ setToProject(e.target.value); setToSubSite(""); }}>
             <option value="">— เลือกโครงการปลายทาง —</option>
             {projects.map(p=>(<option key={p.id} value={p.name}>{p.name}</option>))}
           </select>
           {projects.length===0 && <div style={{fontSize:12,color:"var(--muted)",marginTop:5}}>ไม่มีโครงการอื่นในระบบ กรุณาเพิ่มโครงการก่อน</div>}
         </div>
+        {toSites.length>0 && (
+          <div>
+            <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}><i className="fa-solid fa-sitemap" style={{marginRight:5}}></i>ไซต์งานย่อยปลายทาง</label>
+            <select style={inSt} value={toSubSite} onChange={e=>setToSubSite(e.target.value)}>
+              <option value="">— ทั้งโครงการ (ไม่ระบุไซต์) —</option>
+              {toSites.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        )}
         <div>
           <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>เหตุผล / หมายเหตุ</label>
           <textarea style={{...inSt,resize:"vertical"}} rows="3" value={note} onChange={e=>setNote(e.target.value)} placeholder="เช่น ย้ายตามแผนปรับโครงสร้าง, ส่งมอบให้โครงการ B..." />
@@ -5069,7 +5581,10 @@ function TransferMachineModal({m,user,onClose,onSave}){
 function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine}){
   const [relatedRows, setRelatedRows] = React.useState(()=>window.__DATA.repairs.filter(r=>r.machineCode===m.code).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)));
   const statusColor = ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[m.status]||"#64748B";
-  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const canEdit = ["Admin","Officer","Engineer"].includes(window.effectiveRole(user));
+  // ตารางงานซ่อมด้านล่างเป็นข้อมูลของระบบงานซ่อม ไม่ใช่ทะเบียนทรัพย์สิน — ใช้ role จริงเสมอ
+  // ไม่งั้น Reporter ที่เข้าระบบ Asset จะแก้ใบแจ้งซ่อมได้ตรงๆ ข้ามขั้นตอนขออนุมัติ
+  const canEditRepairs = ["Admin","Officer","Engineer"].includes(user.role);
   const [viewRepair, setViewRepair] = React.useState(null);
   const [editRepair, setEditRepair] = React.useState(null);
   const [transferModal, setTransferModal] = React.useState(false);
@@ -5216,6 +5731,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
           </div>
           <div className="detail-grid" style={{marginTop:16,gridTemplateColumns:"1fr 1fr"}}>
             <div><div className="k">โครงการ</div><div className="v"><ProjectLabel name={m.project}/></div></div>
+            <div><div className="k">ไซต์งานย่อย</div><div className="v">{m.subSite ? <SubSiteTag value={m.subSite} project={m.project}/> : "—"}</div></div>
             <div><div className="k">ซีเรียล</div><div className="v mono" style={{fontSize:12}}>{m.serial||"—"}</div></div>
             <div><div className="k">ปีที่ผลิต</div><div className="v">{m.year||"—"}</div></div>
             <div><div className="k">สถานที่ติดตั้ง</div><div className="v">{m.location||"—"}</div></div>
@@ -5296,9 +5812,9 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
                         ) : (
                           <>
                             <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                              <span style={{color:"#6D28D9",fontWeight:500}}>{t.from||"ไม่ระบุ"}</span>
+                              <span style={{color:"#6D28D9",fontWeight:500}}>{t.from||"ไม่ระบุ"}{t.fromSubSite?` · ${t.fromSubSite}`:""}</span>
                               <i className="fa-solid fa-arrow-right" style={{fontSize:10,color:"var(--muted)"}}></i>
-                              <span style={{color:"#1E40AF",fontWeight:600}}>{t.to}</span>
+                              <span style={{color:"#1E40AF",fontWeight:600}}>{t.to}{t.toSubSite?` · ${t.toSubSite}`:""}</span>
                             </div>
                             {t.note && <div style={{color:"#4B5563",marginTop:3,fontSize:12}}>{t.note}</div>}
                             <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap"}}>
@@ -5322,7 +5838,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
         <div style={{fontWeight:500,marginBottom:10,fontSize:14}}><i className="fa-solid fa-clock-rotate-left" style={{color:"var(--primary)",marginRight:6}}></i>ประวัติการแจ้งซ่อม ({relatedRows.length})</div>
         {relatedRows.length>0 ? (
           <table className="data" style={{border:"1px solid var(--line)",borderRadius:8}}>
-            <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>สถานะ</th>{canEdit&&<th>จัดการ</th>}</tr></thead>
+            <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>สถานะ</th>{canEditRepairs&&<th>จัดการ</th>}</tr></thead>
             <tbody>
               {relatedRows.map(r=>(
                 <tr key={r.id} style={{cursor:"pointer"}}>
@@ -5330,7 +5846,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
                   <td onClick={()=>setViewRepair(r)} style={{color:"var(--muted)"}}>{window.__DATA.fmtDate(r.createdAt)}</td>
                   <td onClick={()=>setViewRepair(r)} style={{fontSize:13}}><ProblemLines title={r.title} max={4}/></td>
                   <td onClick={()=>setViewRepair(r)}><Badge status={r.status}/></td>
-                  {canEdit&&<td><button className="ia" title="แก้ไขข้อมูล" onClick={e=>{e.stopPropagation();setEditRepair(r);}} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button></td>}
+                  {canEditRepairs&&<td><button className="ia" title="แก้ไขข้อมูล" onClick={e=>{e.stopPropagation();setEditRepair(r);}} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i></button></td>}
                 </tr>
               ))}
             </tbody>
@@ -5338,7 +5854,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
         ) : <div style={{color:"var(--muted)",fontSize:13,padding:"12px 0"}}>ยังไม่มีประวัติการซ่อม</div>}
       </div>
     </Modal>
-    {viewRepair && <window.RepairDetail r={viewRepair} user={user} onClose={()=>setViewRepair(null)} onQuick={null} onEdit={canEdit?(r)=>{setViewRepair(null);setEditRepair(r);}:null} onEditParts={null}/>}
+    {viewRepair && <window.RepairDetail r={viewRepair} user={user} onClose={()=>setViewRepair(null)} onQuick={null} onEdit={canEditRepairs?(r)=>{setViewRepair(null);setEditRepair(r);}:null} onEditParts={null}/>}
     {editRepair && <window.EditRepairModal r={editRepair} onClose={()=>setEditRepair(null)} onSave={saveEdit}/>}
     {transferModal && <TransferMachineModal m={m} user={user} onClose={()=>setTransferModal(false)} onSave={(payload)=>{setTransferModal(false);onTransfer(payload);}}/>}
     </>
@@ -5466,7 +5982,7 @@ function DocPJ2({user}){
   const [editCell,setEditCell] = React.useState(null); // {id,field,value}
   const [uploading,setUploading] = React.useState(null); // machineId:slot
   // จป. (Safety Officer) แก้ไข/อัปโหลดเอกสาร ปจ2 ได้ เพราะเป็นงานตรวจสอบความปลอดภัยโดยตรง
-  const canEdit = ["Admin","Officer","Engineer","Safety Officer"].includes(user.role);
+  const canEdit = ["Admin","Officer","Engineer","Safety Officer"].includes(window.effectiveRole(user));
   const today = React.useMemo(()=>{ const d=new Date(); d.setHours(0,0,0,0); return d; },[]);
   const toDateStr = (d) => { try{ return new Date(d).toISOString().slice(0,10); }catch(e){ return ""; } };
 
@@ -5512,7 +6028,7 @@ function DocPJ2({user}){
   const projects = React.useMemo(()=>[...new Set(rows.map(m=>m.project).filter(Boolean))].sort(),[rows]);
   const filtered = React.useMemo(()=>rows.filter(m=>{
     if(filterProj!=="all" && m.project!==filterProj) return false;
-    if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project,m.serial].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
+    if(q){ const qq=q.toLowerCase(); if(!([m.code,m.name,m.project,m.subSite,m.serial].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
     return true;
   }).sort((a,b)=>{
     const da = a.nextInspectionDate ? new Date(a.nextInspectionDate) : null;
@@ -5610,11 +6126,10 @@ function DocPJ2({user}){
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
-            <th>รหัส</th>
+            <th>รหัส / ชื่อเครื่องจักร</th>
             <th>เอกสาร (1)</th>
             <th>เอกสาร (2)</th>
             <th>PL (ประกัน)</th>
-            <th>ชื่อเครื่องจักร</th>
             <th className="hide-on-mobile">โครงการ</th>
             <th>วันที่ตรวจสอบ</th>
             <th>วันที่ตรวจสอบครั้งถัดไป</th>
@@ -5623,19 +6138,22 @@ function DocPJ2({user}){
             {filtered.map(m=>(
               <tr key={m.id}>
                 <td>
+                  {/* รวมรหัส + ชื่อเครื่องจักรไว้คอลัมน์เดียว — มือถือตรึงคอลัมน์แรกไว้ เลื่อนดูเอกสารแล้วยังรู้ว่าเป็นเครื่องไหน */}
                   <div className="mono" style={{fontSize:12,fontWeight:600}}>{m.code||"—"}</div>
+                  <div style={{fontWeight:500,fontSize:13,marginTop:2}}>{m.name||"—"}</div>
+                  {m.subSite&&<div style={{marginTop:3}}><SubSiteTag value={m.subSite} project={m.project}/></div>}
+                  {m.brand&&<div style={{fontSize:11,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}
                   {m.serial && <div className="mono" style={{fontSize:11,color:"var(--muted)",marginTop:3}}>SN: {m.serial}</div>}
                 </td>
                 <td>{linkBtn(m,1)}</td>
                 <td>{linkBtn(m,2)}</td>
                 <td>{linkBtn(m,"PL")}</td>
-                <td><div style={{fontWeight:500,fontSize:13}}>{m.name}</div>{m.brand&&<div style={{fontSize:11,color:"var(--muted)"}}>{m.brand}{m.model?` ${m.model}`:""}</div>}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}><ProjectLabel name={m.project}/></td>
                 <td>{renderDateCell(m,"inspectionDate")}</td>
                 <td>{renderDateCell(m,"nextInspectionDate")}</td>
               </tr>
             ))}
-            {filtered.length===0&&(<tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
+            {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-file-circle-xmark"></i><div className="t">ไม่พบข้อมูล</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
           </tbody>
         </table>
       </div>
@@ -5804,7 +6322,7 @@ function MachineTransferHistory({user}){
   },[allTransfers]);
   const filtered = React.useMemo(()=>allTransfers.filter(t=>{
     if(filterProj!=="all" && t.from!==filterProj && t.to!==filterProj) return false;
-    if(q){ const qq=q.toLowerCase(); if(!([t.machineCode,t.machineName,t.from,t.to,t.by,t.note].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
+    if(q){ const qq=q.toLowerCase(); if(!([t.machineCode,t.machineName,t.from,t.to,t.fromSubSite,t.toSubSite,t.by,t.note].map(x=>(x||"").toLowerCase()).join(" ").includes(qq))) return false; }
     return true;
   }),[allTransfers,q,filterProj]);
   return (
@@ -5827,9 +6345,15 @@ function MachineTransferHistory({user}){
                 <td style={{color:"var(--muted)",whiteSpace:"nowrap",fontSize:13}}>{window.__DATA.fmtDate(t.when)}</td>
                 <td><span className="mono" style={{fontSize:12}}>{t.machineCode||"—"}</span></td>
                 <td style={{fontWeight:500,fontSize:13}}>{t.machineName||"—"}</td>
-                <td><span style={{background:"#F5F3FF",color:"#6D28D9",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:500}}>{t.from||"ไม่ระบุ"}</span></td>
+                <td>
+                  <span style={{background:"#F5F3FF",color:"#6D28D9",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:500}}>{t.from||"ไม่ระบุ"}</span>
+                  {t.fromSubSite && <div style={{fontSize:11,color:"#6D28D9",marginTop:3}}><i className="fa-solid fa-sitemap" style={{fontSize:9,marginRight:3}}></i>{t.fromSubSite}</div>}
+                </td>
                 <td style={{textAlign:"center"}}><i className="fa-solid fa-arrow-right" style={{color:"var(--muted)",fontSize:11}}></i></td>
-                <td><span style={{background:"#EFF6FF",color:"#1E40AF",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:600}}>{t.to}</span></td>
+                <td>
+                  <span style={{background:"#EFF6FF",color:"#1E40AF",padding:"2px 8px",borderRadius:5,fontSize:12,fontWeight:600}}>{t.to}</span>
+                  {t.toSubSite && <div style={{fontSize:11,color:"#1E40AF",marginTop:3}}><i className="fa-solid fa-sitemap" style={{fontSize:9,marginRight:3}}></i>{t.toSubSite}</div>}
+                </td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{t.by||"—"}</td>
                 <td className="hide-on-mobile" style={{fontSize:12,color:"#4B5563",maxWidth:200}}>{t.note||"—"}</td>
               </tr>
@@ -5893,16 +6417,37 @@ function NewRequest({user,goTo}){
 
   const initProject = window.getActiveProject(user)||"";
   const todayStr = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; })();
-  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,machineCode:"",siteId:"",reportDate:todayStr,placeMode:"onsite",placeOnsite:initProject,placeOther:"",photos:[]});
+  const [f,setF] = React.useState({title:"",categoryId:"",project:initProject,subSite:"",machineCode:"",siteId:"",odometerKm:"",hourMeter:"",driverName:"",reportDate:todayStr,placeMode:"onsite",placeOnsite:initProject,placeOther:"",photos:[]});
   const [loading,setLoading] = React.useState(false);
 
-  const projectMachines = React.useMemo(()=>{ if(!f.project) return []; return (window.__DATA.machines||[]).filter(m=>m.project===f.project); },[f.project]);
+  // เลือกไซต์งานย่อยแล้ว = เห็นเฉพาะเครื่องจักรที่ประจำไซต์นั้น (เครื่องที่ยังไม่ได้ระบุไซต์ยังแสดงอยู่ เพราะเป็นของกลางโครงการ)
+  const projectMachines = React.useMemo(()=>{
+    if(!f.project) return [];
+    return (window.__DATA.machines||[]).filter(m=>{
+      if(m.project!==f.project) return false;
+      if(f.subSite && (m.subSite||"") && m.subSite!==f.subSite) return false;
+      return true;
+    });
+  },[f.project,f.subSite]);
   const filteredMachines = React.useMemo(()=>{ if(!f.categoryId) return projectMachines; return projectMachines.filter(m=>m.categoryId===f.categoryId); },[projectMachines,f.categoryId]);
   const projectCategories = React.useMemo(()=>{ const ids=new Set(projectMachines.map(m=>m.categoryId).filter(Boolean)); return (window.__DATA.categories||[]).filter(c=>ids.has(c.id)); },[projectMachines]);
 
   // เปลี่ยนโครงการ → เติมชื่อโครงการลงช่อง "ส่งช่างซ่อมหน้างาน ที่" ให้ (ถ้าผู้ใช้ยังไม่ได้แก้เอง)
-  const onProjectChange = (p) => setF(prev=>({...prev,project:p,categoryId:"",machineCode:"",placeOnsite:(!prev.placeOnsite||prev.placeOnsite===prev.project)?p:prev.placeOnsite}));
+  const onProjectChange = (p) => setF(prev=>({...prev,project:p,subSite:"",categoryId:"",machineCode:"",placeOnsite:(!prev.placeOnsite||prev.placeOnsite===prev.project)?p:prev.placeOnsite}));
+  const onSubSiteChange = (s) => setF(prev=>({...prev,subSite:s,machineCode:""}));
   const onCategoryChange = (cid) => setF(prev=>({...prev,categoryId:cid,machineCode:""}));
+  // เลือกเครื่องจักร → เติมไซต์ / เลขมิเตอร์ชั่วโมง / พนักงานขับ จากทะเบียนเครื่องจักรให้ (ผู้แจ้งแก้ทับได้)
+  const onMachineChange = (code) => setF(prev=>{
+    const sel = projectMachines.find(m=>m.code===code);
+    return {
+      ...prev,
+      machineCode: code,
+      subSite: prev.subSite || (sel && sel.subSite) || "",
+      hourMeter: (sel && sel.hours!=null && sel.hours!=="") ? String(sel.hours) : "",
+      driverName: (sel && sel.driverName) || "",
+      odometerKm: "",
+    };
+  });
 
   const submit = async () => {
     if(!f.project){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณาเลือกโครงการ/หน่วยงานก่อน"}); return; }
@@ -5918,7 +6463,7 @@ function NewRequest({user,goTo}){
         reportAt: "", note: "",
       };
       const createdAt = f.reportDate ? new Date(f.reportDate+"T00:00:00").toISOString() : undefined;
-      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,repairPlace,photos:(f.photos||[]).filter(Boolean),createdAt};
+      const repair = {siteId:f.siteId,title,desc:"",problems:title.split("\n").filter(Boolean).map(t=>({text:t,status:"new"})),project:f.project,subSite:f.subSite||"",categoryId:f.categoryId,status:"new",reporterId:user.id,reporterName:user.name,assignedId:"",cost:"",machineCode:f.machineCode,odometerKm:f.odometerKm||"",hourMeter:f.hourMeter||"",driverName:f.driverName||"",repairPlace,photos:(f.photos||[]).filter(Boolean),createdAt};
       const saved = await window.api("createRepair",{repair});
       saved.createdAt = new Date(saved.createdAt);
       saved.timeline = [{status:"new",when:new Date(),by:user.name,note:"แจ้งเข้าระบบ"}];
@@ -5952,6 +6497,9 @@ function NewRequest({user,goTo}){
             <select value={f.project} onChange={e=>onProjectChange(e.target.value)}><option value="">— กรุณาเลือกโครงการ —</option>{allProjects.map(p=>(<option key={p} value={p}>{p}</option>))}</select>
             <div className="hint">เลือกโครงการก่อน เพื่อกรองหมวดหมู่และเครื่องจักรในโครงการนั้น</div>
           </div>
+          <SubSiteField project={f.project} value={f.subSite} onChange={onSubSiteChange} className="form-field full"
+            hint="ไม่บังคับ · เลือกไซต์แล้วจะเห็นเฉพาะเครื่องจักรที่ประจำไซต์นั้น (รวมเครื่องที่ยังไม่ระบุไซต์)" />
+
           <div className="form-field full">
             <label><span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:20,height:20,borderRadius:"50%",background:f.project?"var(--primary)":"var(--line)",color:"#fff",fontSize:11,display:"inline-grid",placeItems:"center",fontWeight:600}}>2</span>หมวดหมู่ *</span></label>
             <select value={f.categoryId} onChange={e=>onCategoryChange(e.target.value)} disabled={!f.project}><option value="">{!f.project?"— กรุณาเลือกโครงการก่อน —":projectCategories.length===0?"— ไม่พบหมวดหมู่ในโครงการนี้ —":"— เลือกหมวดหมู่ —"}</option>{projectCategories.map(c=>(<option key={c.id} value={c.id}>{c.name}</option>))}</select>
@@ -5959,7 +6507,7 @@ function NewRequest({user,goTo}){
           </div>
           <div className="form-field full">
             <label><span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:20,height:20,borderRadius:"50%",background:f.categoryId?"var(--primary)":"var(--line)",color:"#fff",fontSize:11,display:"inline-grid",placeItems:"center",fontWeight:600}}>3</span>เครื่องจักร</span></label>
-            <select value={f.machineCode} onChange={e=>setF({...f,machineCode:e.target.value})} disabled={!f.categoryId}><option value="">{!f.project?"— กรุณาเลือกโครงการก่อน —":!f.categoryId?"— กรุณาเลือกหมวดหมู่ก่อน —":filteredMachines.length===0?"— ไม่พบเครื่องจักร —":"— เลือกเครื่องจักร —"}</option>{filteredMachines.map(m=>(<option key={m.id} value={m.code}>{m.code} — {m.name}{m.brand?` (${m.brand}${m.model?` ${m.model}`:""})`:""}{m.serial?` · S/N ${m.serial}`:""}</option>))}</select>
+            <select value={f.machineCode} onChange={e=>onMachineChange(e.target.value)} disabled={!f.categoryId}><option value="">{!f.project?"— กรุณาเลือกโครงการก่อน —":!f.categoryId?"— กรุณาเลือกหมวดหมู่ก่อน —":filteredMachines.length===0?"— ไม่พบเครื่องจักร —":"— เลือกเครื่องจักร —"}</option>{filteredMachines.map(m=>(<option key={m.id} value={m.code}>{m.code} — {m.name}{m.brand?` (${m.brand}${m.model?` ${m.model}`:""})`:""}{m.serial?` · S/N ${m.serial}`:""}</option>))}</select>
             {f.categoryId&&filteredMachines.length>0&&<div className="hint">พบ {filteredMachines.length} เครื่องจักรในหมวดหมู่นี้</div>}
             {(()=>{ const sel=filteredMachines.find(m=>m.code===f.machineCode); return sel ? (
               <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:8,padding:"9px 12px",background:"var(--accent-soft)",border:"1px solid rgba(30,64,175,.15)",borderRadius:8,fontSize:13}}>
@@ -5969,6 +6517,25 @@ function NewRequest({user,goTo}){
                 {sel.brand&&<><span style={{color:"var(--line)"}}>·</span><span><span style={{color:"var(--muted)"}}>ยี่ห้อ:</span> {sel.brand}{sel.model?` ${sel.model}`:""}</span></>}
               </div>
             ) : null; })()}
+          </div>
+          {/* ค่ามิเตอร์ ณ วันที่แจ้ง + คนขับ — เติมจากทะเบียนเครื่องจักรให้ก่อน แก้ทับได้ ค่าที่กรอกจะขึ้นบนใบแจ้งซ่อม */}
+          <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}>
+            <label><i className="fa-solid fa-gauge" style={{color:"var(--primary)",marginRight:6}}></i>ข้อมูลเครื่อง ณ วันที่แจ้ง</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+              <div>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:4}}>เลขมิเตอร์กิโลเมตร</div>
+                <input type="number" min="0" step="any" value={f.odometerKm} onChange={e=>setF({...f,odometerKm:e.target.value})} placeholder="เช่น 125400" />
+              </div>
+              <div>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:4}}>เลขมิเตอร์ชั่วโมง</div>
+                <input type="number" min="0" step="any" value={f.hourMeter} onChange={e=>setF({...f,hourMeter:e.target.value})} placeholder="เช่น 8320" />
+              </div>
+              <div>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:4}}>พนักงานขับ / ผู้ควบคุม</div>
+                <input value={f.driverName} onChange={e=>setF({...f,driverName:e.target.value})} placeholder="เช่น นายสมชาย ใจดี" />
+              </div>
+            </div>
+            <div className="hint">ไม่บังคับ · ระบบเติมเลขชั่วโมงและชื่อคนขับจากทะเบียนเครื่องจักรให้ แก้ให้ตรงกับหน้างานได้</div>
           </div>
           <div className="form-field full" style={{opacity:f.machineCode?1:0.5,pointerEvents:f.machineCode?"auto":"none"}}><label>อาการ/ปัญหา * <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(เพิ่มได้หลายรายการ)</span></label><ProblemsField value={f.title} onChange={v=>setF({...f,title:v})} /></div>
           <div className="form-field full"><label><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพประกอบ <span style={{color:"var(--muted)",fontWeight:400,fontSize:12}}>(ไม่บังคับ · สูงสุด 5 รูป)</span></label><PhotosField value={f.photos} onChange={v=>setF({...f,photos:v})} /></div>
@@ -6008,6 +6575,65 @@ function NewRequest({user,goTo}){
 function MyRepairs({user}){
   const [rows,setRows] = React.useState(()=>{ if(user.role==="Engineer") return window.filterByUserProjects(user,window.__DATA.repairs,"project"); return window.filterByUserProjects(user,window.__DATA.repairs.filter(r=>r.reporterId===user.id),"project"); });
   const [detail,setDetail] = React.useState(null);
+  const [editFor,setEditFor] = React.useState(null);
+  // Reporter แก้เองไม่ได้ทันที ต้องส่งคำขอให้ Admin อนุมัติก่อน
+  const needApproval = user.role === "Reporter";
+  const { mine: myReqs } = window.useDeleteRequests(user);
+  const pendingEditIds = React.useMemo(()=>new Set(
+    (myReqs||[]).filter(x=>x.kind==="edit" && x.status==="pending" && x.action==="updateRepair").map(x=>String(x.targetKey))
+  ),[myReqs]);
+  const pendingDeleteIds = React.useMemo(()=>new Set(
+    (myReqs||[]).filter(x=>x.kind!=="edit" && x.status==="pending" && x.action==="deleteRepair").map(x=>String(x.targetKey))
+  ),[myReqs]);
+
+  // คำขอถูกอนุมัติ → applyEditLocally แก้แคชกลางให้แล้ว ดึงกลับมาลงตารางด้วย ไม่งั้นหน้าจอยังโชว์ค่าเก่า
+  const decidedCount = (myReqs||[]).filter(x=>x.status!=="pending").length;
+  React.useEffect(()=>{
+    const src = user.role==="Engineer" ? window.__DATA.repairs : window.__DATA.repairs.filter(r=>r.reporterId===user.id);
+    setRows(window.filterByUserProjects(user, src, "project"));
+  },[decidedCount]);
+
+  const saveEdit = async (r, patch) => {
+    const changes = window.diffFields(r, patch, window.REPAIR_FIELD_LABELS);
+    if(!changes.length){ Swal.fire({icon:"info",title:"ยังไม่ได้แก้ไขอะไร",text:"ปรับข้อมูลที่ต้องการก่อนบันทึก"}); return; }
+    if(needApproval){
+      const sent = await window.requestEditApproval({
+        user, action:"updateRepair", payload:{ id:r.id, patch },
+        entityLabel:"ใบแจ้งซ่อม", targetName:r.running||r.id, project:r.project||"",
+        targetInfo:[r.machineCode, r.subSite].filter(Boolean).join(" · "),
+        changes,
+      });
+      if(sent) setEditFor(null);
+      return;
+    }
+    try{
+      await window.api("updateRepair",{id:r.id,patch,by:user.name});
+      const updated = {...r,...patch,timeline:[...(r.timeline||[]),{status:patch.status||r.status,when:new Date(),by:user.name,note:"แก้ไขข้อมูล"}]};
+      setRows(prev=>prev.map(x=>x.id===r.id?updated:x));
+      window.__DATA.repairs = window.__DATA.repairs.map(x=>x.id===r.id?updated:x);
+      setEditFor(null);
+      Swal.fire({icon:"success",title:"บันทึกการแก้ไขแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+  };
+
+  // ลบใบแจ้งซ่อม — ผู้แจ้งไม่ใช่ Admin จึงเข้าเส้นทางขออนุมัติเสมอ (deleteWithApproval จัดการให้)
+  const remove = async (r) => {
+    const done = await window.deleteWithApproval({
+      user, action:"deleteRepair", payload:{id:r.id},
+      entityLabel:"ใบแจ้งซ่อม", targetName:r.running||r.id, project:r.project||"",
+      targetInfo:[r.machineCode, (window.getProblems(r)[0]||{}).text].filter(Boolean).join(" · "),
+    });
+    if(done){ setRows(prev=>prev.filter(x=>x.id!==r.id)); setDetail(null); }
+  };
+
+  const openEdit = (r) => {
+    if(pendingEditIds.has(String(r.id))){
+      Swal.fire({icon:"info",title:"มีคำขอแก้ไขรออนุมัติอยู่แล้ว",text:'ใบนี้ส่งคำขอไปแล้ว รอผู้ดูแลระบบอนุมัติก่อนจึงจะขอแก้ใหม่ได้ · ติดตามได้ที่เมนู "การแจ้งเตือน"'});
+      return;
+    }
+    setDetail(null);
+    setEditFor(r);
+  };
 
   const cancel = (r) => {
     Swal.fire({title:"ยกเลิกคำร้อง?",text:`ต้องการยกเลิกคำร้อง "${r.running}" ใช่หรือไม่?`,icon:"warning",showCancelButton:true,confirmButtonText:"ยกเลิกคำร้อง",cancelButtonText:"ไม่",confirmButtonColor:"#EF4444"}).then(async res=>{
@@ -6032,14 +6658,17 @@ function MyRepairs({user}){
             <tbody>
               {rows.map(r=>{
                 const last=r.timeline[r.timeline.length-1];
-                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span></td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title"><ProblemLines title={r.title} max={4}/></div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>{r.status==="new"&&<button className="ia danger" onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}</div></td></tr>);
+                const waiting = pendingEditIds.has(String(r.id));
+                const waitingDel = pendingDeleteIds.has(String(r.id));
+                return (<tr key={r.id}><td><span className="ticket-id">{r.running}</span>{waiting && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#FEF3C7",color:"#B45309",fontSize:10.5,fontWeight:600}} title="ส่งคำขอแก้ไขแล้ว รอผู้ดูแลระบบอนุมัติ"><i className="fa-solid fa-hourglass-half"></i> รออนุมัติแก้ไข</div>}{waitingDel && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#FEE2E2",color:"#B91C1C",fontSize:10.5,fontWeight:600}} title="ส่งคำขอลบแล้ว รอผู้ดูแลระบบอนุมัติ"><i className="fa-solid fa-hourglass-half"></i> รออนุมัติลบ</div>}</td><td className="hide-on-mobile" style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.__DATA.fmtDate(r.createdAt)}</td><td><div className="cell-title"><ProblemLines title={r.title} max={4}/></div></td><td className="hide-on-mobile"><CategoryChip categoryId={r.categoryId}/></td><td><Badge status={r.status}/></td><td className="hide-on-mobile" style={{color:"var(--muted)",fontSize:12,whiteSpace:"nowrap"}}>{window.__DATA.fmtDateTime(last.when)}</td><td><div className="row-actions"><button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button><button className="ia" title={needApproval?"ขอแก้ไข (ต้องรออนุมัติ)":"แก้ไขข้อมูล"} style={{color:waiting?"#B45309":"#1E40AF"}} onClick={()=>openEdit(r)}><i className="fa-solid fa-pen"></i></button>{r.status==="new"&&<button className="ia" style={{color:"#D97706"}} onClick={()=>cancel(r)} title="ยกเลิกคำร้อง"><i className="fa-solid fa-ban"></i></button>}<button className="ia danger" title={needApproval?"ขอลบใบนี้ (ต้องรออนุมัติ)":"ลบใบแจ้งซ่อม"} onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button></div></td></tr>);
               })}
               {rows.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-clipboard"></i><div className="t">ยังไม่มีคำร้อง</div><div>คลิก "แจ้งซ่อมใหม่" ในเมนูด้านซ้ายเพื่อเริ่มต้น</div></div></td></tr>)}
             </tbody>
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} user={user} onClose={()=>setDetail(null)} onQuick={()=>{}}/>}
+      {detail && <RepairDetail r={detail} user={user} onClose={()=>setDetail(null)} onQuick={()=>{}} onEdit={openEdit}/>}
+      {editFor && <EditRepairModal r={editFor} scope={needApproval?"reporter":undefined} onClose={()=>setEditFor(null)} onSave={saveEdit}/>}
     </>
   );
 }
@@ -6049,16 +6678,27 @@ Object.assign(window,{ReporterDashboard,NewRequest,MyRepairs});
 <script type="text/babel">
 // ทะเบียนทรัพย์สิน — ข้อมูลจาก Firebase project "panamanee-3a15a" (/assets)
 function AssetRegistry({user}){
-  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const canEdit = ["Admin","Officer","Engineer"].includes(window.effectiveRole(user));
   const [rows,setRows] = React.useState(()=>window.__DATA.assetRegistry || null);
   const [err,setErr] = React.useState("");
   const [q,setQ] = React.useState("");
   const [site,setSite] = React.useState("");
+  const [subSite,setSubSite] = React.useState("");
   const [owner,setOwner] = React.useState("");
   const [groupBy,setGroupBy] = React.useState("site");   // none | site | ownership | name
   const [collapsed,setCollapsed] = React.useState({});   // เก็บกลุ่มที่ถูกย่อ
   const [edit,setEdit] = React.useState(null);   // {mode:"add"|"edit", data:{...}}
   const [history,setHistory] = React.useState(null);   // ทรัพย์สินที่กำลังดูประวัติการย้าย
+
+  // คำขอแก้ไขทะเบียนทรัพย์สินที่ตัวเองส่งไว้ — ขึ้นป้าย "รออนุมัติ" และโหลดค่าใหม่หลังอนุมัติ
+  const { mine: myReqs } = window.useDeleteRequests(user);
+  const pendingEditKeys = React.useMemo(()=>new Set(
+    (myReqs||[]).filter(x=>x.kind==="edit" && x.status==="pending" && x.action==="saveAssetRegistry").map(x=>String(x.targetKey))
+  ),[myReqs]);
+  const decidedCount = (myReqs||[]).filter(x=>x.status!=="pending").length;
+  React.useEffect(()=>{
+    if(Array.isArray(window.__DATA.assetRegistry)) setRows(window.__DATA.assetRegistry.slice());
+  },[decidedCount]);
 
   React.useEffect(()=>{
     if(rows) return;
@@ -6078,22 +6718,29 @@ function AssetRegistry({user}){
   const scoped = React.useMemo(()=>window.filterByUserProjects(user, rows||[], "site"),[rows,user]);
   const sites = React.useMemo(()=>[...new Set(scoped.map(r=>r.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[scoped]);
   const owners = React.useMemo(()=>[...new Set(scoped.map(r=>r.ownership).filter(Boolean))].sort(),[scoped]);
+  // ไซต์งานย่อยที่เลือกได้ = ไซต์ของโครงการที่กรองอยู่ (ไม่ได้กรองโครงการ = ทุกไซต์ที่มีในข้อมูล)
+  const subSites = React.useMemo(()=>{
+    const pool = site ? scoped.filter(r=>r.site===site) : scoped;
+    return [...new Set(pool.map(r=>r.subSite).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th",{numeric:true}));
+  },[scoped,site]);
 
   const filtered = React.useMemo(()=>{
     const kw = q.trim().toLowerCase();
     return scoped.filter(r=>{
       if(site && r.site!==site) return false;
+      if(subSite && (r.subSite||"")!==subSite) return false;
       if(owner && r.ownership!==owner) return false;
       if(!kw) return true;
-      return [r.assetCode,r.name,r.brand,r.model,r.serial,r.site,r.holder,r.note]
+      return [r.assetCode,r.name,r.brand,r.model,r.serial,r.site,r.subSite,r.holder,r.note]
         .some(v=>String(v||"").toLowerCase().includes(kw));
     });
-  },[scoped,q,site,owner]);
+  },[scoped,q,site,subSite,owner]);
 
   const totalQty = React.useMemo(()=>filtered.reduce((s,r)=>s+(Number(r.quantity)||0),0),[filtered]);
 
   const GROUP_META = {
     site:      { label:"สถานที่ (โครงการ)", empty:"— ไม่ระบุสถานที่ —", field:r=>r.site },
+    subSite:   { label:"ไซต์งานย่อย",       empty:"— ไม่ระบุไซต์งานย่อย —", field:r=>r.subSite },
     ownership: { label:"กรรมสิทธิ์",         empty:"— ไม่ระบุกรรมสิทธิ์ —", field:r=>r.ownership },
     name:      { label:"ชื่อทรัพย์สิน",       empty:"— ไม่ระบุชื่อ —", field:r=>r.name },
   };
@@ -6115,7 +6762,10 @@ function AssetRegistry({user}){
 
   const renderRow = (r)=>(
     <tr key={r.key}>
-      <td><span className="ticket-id">{r.assetCode||r.id||"—"}</span></td>
+      <td>
+        <span className="ticket-id">{r.assetCode||r.id||"—"}</span>
+        {pendingEditKeys.has(String(r.key)) && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#FEF3C7",color:"#B45309",fontSize:10.5,fontWeight:600}} title="ส่งคำขอแก้ไขแล้ว รอผู้ดูแลระบบอนุมัติ"><i className="fa-solid fa-hourglass-half"></i> รออนุมัติแก้ไข</div>}
+      </td>
       <td><div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div></td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
@@ -6124,6 +6774,7 @@ function AssetRegistry({user}){
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.holder||"—"}</td>
       <td style={{fontSize:13}}>
         {r.site ? <ProjectLabel name={r.site}/> : <span style={{color:"var(--muted)"}}>—</span>}
+        {r.subSite && <div style={{marginTop:3}}><SubSiteTag value={r.subSite} project={r.site}/></div>}
         {(r.transferHistory||[]).length>0 && (
           <button className="ia" title="ประวัติการย้าย" onClick={()=>setHistory(r)} style={{color:"#7C3AED",marginLeft:4}}>
             <i className="fa-solid fa-clock-rotate-left"></i>
@@ -6141,6 +6792,19 @@ function AssetRegistry({user}){
   const commit = (list) => { const sorted = sortRows(list); window.__DATA.assetRegistry = sorted; setRows(sorted); };
 
   const save = async (form) => {
+    // แก้ไขทะเบียนทรัพย์สินต้องผ่านการอนุมัติของ Admin (เพิ่มรายการใหม่ไม่ต้อง)
+    if(form.key && user.role !== "Admin"){
+      const before = (rows||[]).find(x=>x.key===form.key) || {};
+      const changes = window.diffFields(before, form, window.ASSET_FIELD_LABELS);
+      const sent = await window.requestEditApproval({
+        user, action:"saveAssetRegistry", payload:{ key: form.key, asset: form },
+        entityLabel:"ทะเบียนทรัพย์สิน", targetName:`${form.assetCode||form.id||""} ${form.name||""}`.trim(), project:form.site||"",
+        targetInfo:[form.brand,form.model,form.serial,form.holder].filter(Boolean).join(" · "),
+        changes,
+      });
+      if(sent) setEdit(null);
+      return;
+    }
     const saved = await window.api("saveAssetRegistry",{ key: form.key || "", asset: form });
     const base = rows || [];
     commit(base.some(x=>x.key===saved.key) ? base.map(x=>x.key===saved.key?saved:x) : base.concat([saved]));
@@ -6157,7 +6821,7 @@ function AssetRegistry({user}){
     if(done) commit((rows||[]).filter(x=>x.key!==r.key));
   };
 
-  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",receivedAt:"",note:""};
+  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",subSite:"",receivedAt:"",note:""};
 
   if(err) return (
     <div className="card"><div className="card-body">
@@ -6178,10 +6842,16 @@ function AssetRegistry({user}){
         <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i>
           <input placeholder="ค้นหารหัส / ชื่อ / ยี่ห้อ / รุ่น / Serial / สถานที่..." value={q} onChange={e=>setQ(e.target.value)} />
         </div>
-        <select value={site} onChange={e=>setSite(e.target.value)}>
+        <select value={site} onChange={e=>{ setSite(e.target.value); setSubSite(""); }}>
           <option value="">ทุกสถานที่</option>
           {sites.map(s=><option key={s} value={s}>{s}</option>)}
         </select>
+        {subSites.length>0 && (
+          <select value={subSite} onChange={e=>setSubSite(e.target.value)} title="ไซต์งานย่อย">
+            <option value="">ทุกไซต์งานย่อย</option>
+            {subSites.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
         <select value={owner} onChange={e=>setOwner(e.target.value)}>
           <option value="">ทุกกรรมสิทธิ์</option>
           {owners.map(o=><option key={o} value={o}>{o}</option>)}
@@ -6189,6 +6859,7 @@ function AssetRegistry({user}){
         <select value={groupBy} onChange={e=>setGroupBy(e.target.value)} title="จัดกลุ่มทรัพย์สิน">
           <option value="none">ไม่จัดกลุ่ม</option>
           <option value="site">จัดกลุ่มตามสถานที่</option>
+          <option value="subSite">จัดกลุ่มตามไซต์งานย่อย</option>
           <option value="ownership">จัดกลุ่มตามกรรมสิทธิ์</option>
           <option value="name">จัดกลุ่มตามชื่อทรัพย์สิน</option>
         </select>
@@ -6259,7 +6930,7 @@ function AssetHistoryModal({asset,onClose}){
         {list.map((t,i)=>(
           <div key={i} style={{border:"1px solid var(--line)",borderRadius:8,padding:"10px 12px"}}>
             <div style={{fontSize:13,fontWeight:500}}>
-              {t.from||"— ไม่ระบุ —"} <i className="fa-solid fa-arrow-right" style={{color:"#7C3AED",margin:"0 6px"}}></i> {t.to}
+              {t.from||"— ไม่ระบุ —"}{t.fromSubSite?` · ${t.fromSubSite}`:""} <i className="fa-solid fa-arrow-right" style={{color:"#7C3AED",margin:"0 6px"}}></i> {t.to}{t.toSubSite?` · ${t.toSubSite}`:""}
             </div>
             <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>
               {window.__DATA.fmtDateTime(t.when)} · โดย {t.by||"—"}
@@ -6288,7 +6959,9 @@ function TransferAssetsModal({user,onClose,onSaved}){
   const [note,setNote] = React.useState("");
   const [busy,setBusy] = React.useState(false);
   const [q,setQ] = React.useState("");
-  const [fromFilter,setFromFilter] = React.useState("");
+  const [fromProject,setFromProject] = React.useState("");   // โครงการต้นทาง — เลือกก่อน แล้วค่อยเลือกทรัพย์สินในโครงการนั้น
+  const [fromSubSite,setFromSubSite] = React.useState("");   // ไซต์งานย่อยต้นทาง (ไม่เลือก = ทั้งโครงการ)
+  const [toSubSite,setToSubSite] = React.useState("");       // ไซต์งานย่อยปลายทาง
   const [qty,setQty] = React.useState({});   // {assetKey: จำนวนที่จะย้าย} — มีคีย์ = ถูกเลือก
 
   React.useEffect(()=>{
@@ -6321,16 +6994,30 @@ function TransferAssetsModal({user,onClose,onSaved}){
 
   const sites = React.useMemo(()=>[...new Set((assets||[]).map(a=>a.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[assets]);
 
-  // ซ่อนรายการที่อยู่โครงการปลายทางอยู่แล้ว
+  // ตัวเลือกโครงการต้นทาง = โครงการที่มีสิทธิ์ + ชื่อสถานที่เดิมในทะเบียนที่ยังไม่ตรงกับชื่อโครงการ
+  const fromOptions = React.useMemo(()=>{
+    const counts = {};
+    (assets||[]).forEach(a=>{ if(a.site) counts[a.site] = (counts[a.site]||0)+1; });
+    const named = projects.map(p=>({value:p.name, label:(p.code?`[${p.code}] `:"")+p.name, n:counts[p.name]||0}));
+    const legacy = sites.filter(s=>!projects.some(p=>p.name===s)).map(s=>({value:s, label:s+" (ข้อมูลเดิม)", n:counts[s]||0}));
+    return named.concat(legacy);
+  },[projects,sites,assets]);
+
+  // เปลี่ยนต้นทาง = ล้างรายการที่เลือกไว้ ไม่ให้ทรัพย์สินข้ามโครงการติดมาด้วย
+  const changeFrom = (v) => { setFromProject(v); setFromSubSite(""); setQty({}); };
+  const changeFromSubSite = (v) => { setFromSubSite(v); setQty({}); };
+
+  // แสดงเฉพาะทรัพย์สินที่อยู่โครงการต้นทางที่เลือก (เลือกไซต์ย่อยด้วย = กรองซ้ำอีกชั้น)
   const candidates = React.useMemo(()=>{
+    if(!fromProject) return [];
     const kw = q.trim().toLowerCase();
     return (assets||[]).filter(a=>{
-      if(toProject && a.site===toProject) return false;
-      if(fromFilter && a.site!==fromFilter) return false;
+      if(a.site!==fromProject) return false;
+      if(fromSubSite && (a.subSite||"")!==fromSubSite) return false;
       if(!kw) return true;
-      return [a.assetCode,a.name,a.brand,a.model,a.serial,a.site].some(v=>String(v||"").toLowerCase().includes(kw));
+      return [a.assetCode,a.name,a.brand,a.model,a.serial,a.site,a.subSite].some(v=>String(v||"").toLowerCase().includes(kw));
     });
-  },[assets,q,fromFilter,toProject]);
+  },[assets,q,fromProject,fromSubSite]);
 
   const picked = React.useMemo(()=>(assets||[]).filter(a=>qty[a.key]!==undefined),[assets,qty]);
   const totalMoving = picked.reduce((s,a)=>s+(Number(qty[a.key])||0),0);
@@ -6353,16 +7040,18 @@ function TransferAssetsModal({user,onClose,onSaved}){
   });
 
   const submit = async () => {
+    if(!fromProject){ Swal.fire({icon:"warning",title:"กรุณาเลือกโครงการต้นทาง"}); return; }
     if(!toProject){ Swal.fire({icon:"warning",title:"กรุณาเลือกโครงการปลายทาง"}); return; }
+    if(fromProject===toProject){ Swal.fire({icon:"warning",title:"ต้นทางกับปลายทางซ้ำกัน",text:"กรุณาเลือกโครงการปลายทางที่ต่างจากต้นทาง"}); return; }
     if(!docNo){ Swal.fire({icon:"warning",title:"ยังออกเลขที่ใบส่งของไม่สำเร็จ",text:"กรุณารอสักครู่แล้วลองใหม่"}); return; }
     const moves = picked.map(a=>({key:a.key, qty:Number(qty[a.key])||0})).filter(x=>x.qty>0);
     if(!moves.length){ Swal.fire({icon:"warning",title:"ยังไม่ได้เลือกทรัพย์สิน",text:"เลือกรายการและระบุจำนวนที่จะย้ายอย่างน้อย 1 รายการ"}); return; }
-    const froms = [...new Set(picked.map(a=>a.site||"ไม่ระบุ"))].join(", ");
     setBusy(true);
     try{
       const res = await window.api("transferAssets",{
-        moves, toProject, note, by:user.name,
-        doc:{ docNo, docDate, sender, receiver, fromProjectLabel:froms },
+        moves, toProject, toSubSite, note, by:user.name,
+        doc:{ docNo, docDate, sender, receiver, fromProject, fromSubSite, toSubSite,
+              fromProjectLabel: fromProject + (fromSubSite?` · ${fromSubSite}`:"") },
       });
       // ย้ายบางส่วนจะแตกรายการใหม่ที่ปลายทาง — ล้าง cache ให้ทั้งสองหน้าโหลดใหม่
       window.__DATA.assetRegistry = null;
@@ -6371,7 +7060,7 @@ function TransferAssetsModal({user,onClose,onSaved}){
       const { isConfirmed } = await Swal.fire({
         icon:"success",
         title:"ย้ายโครงการสำเร็จ",
-        html:"ย้าย <b>"+res.items.length+"</b> รายการ ไปยัง <b>"+toProject+"</b><br/>ออกใบส่งของเลขที่ <b class='mono'>"+docNo+"</b>",
+        html:"ย้าย <b>"+res.items.length+"</b> รายการ จาก <b>"+fromProject+(fromSubSite?" · "+fromSubSite:"")+"</b> ไปยัง <b>"+toProject+(toSubSite?" · "+toSubSite:"")+"</b><br/>ออกใบส่งของเลขที่ <b class='mono'>"+docNo+"</b>",
         showCancelButton:true,
         confirmButtonText:"<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลดใบส่งของ",
         cancelButtonText:"ปิด", confirmButtonColor:"#1E40AF"
@@ -6395,11 +7084,32 @@ function TransferAssetsModal({user,onClose,onSaved}){
       <div style={{display:"grid",gap:14}}>
         <div className="form-grid">
           <div className="form-field full">
-            <label>ย้ายไปยังโครงการ *</label>
-            <select style={inSt} value={toProject} onChange={e=>setToProject(e.target.value)}>
-              <option value="">— เลือกโครงการปลายทาง —</option>
-              {projects.map(p=>(<option key={p.id} value={p.name}>{p.code?`[${p.code}] `:""}{p.name}</option>))}
-            </select>
+            <label>เส้นทางการส่ง — จากต้นทาง ไปยังปลายทาง *</label>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <select style={{...inSt,flex:"1 1 200px",minWidth:0}} value={fromProject} onChange={e=>changeFrom(e.target.value)}>
+                <option value="">— เลือกโครงการต้นทาง —</option>
+                {fromOptions.map(o=>(<option key={o.value} value={o.value}>{o.label}{o.n?` · ${o.n} รายการ`:" · ไม่มีทรัพย์สิน"}</option>))}
+              </select>
+              <i className="fa-solid fa-arrow-right" style={{color:"#7C3AED",flex:"0 0 auto"}}></i>
+              <select style={{...inSt,flex:"1 1 200px",minWidth:0}} value={toProject} onChange={e=>{ setToProject(e.target.value); setToSubSite(""); }}>
+                <option value="">— เลือกโครงการปลายทาง —</option>
+                {projects.filter(p=>p.name!==fromProject).map(p=>(<option key={p.id} value={p.name}>{p.code?`[${p.code}] `:""}{p.name}</option>))}
+              </select>
+            </div>
+            {(window.projectSites(fromProject).length>0 || window.projectSites(toProject).length>0) && (
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:8}}>
+                <select style={{...inSt,flex:"1 1 200px",minWidth:0}} value={fromSubSite} onChange={e=>changeFromSubSite(e.target.value)} disabled={!window.projectSites(fromProject).length}>
+                  <option value="">{window.projectSites(fromProject).length ? "— ทุกไซต์งานย่อยของต้นทาง —" : "— ต้นทางไม่มีไซต์งานย่อย —"}</option>
+                  {window.projectSites(fromProject).map(s=><option key={s} value={s}>{s}</option>)}
+                </select>
+                <i className="fa-solid fa-sitemap" style={{color:"#7C3AED",flex:"0 0 auto",fontSize:12}}></i>
+                <select style={{...inSt,flex:"1 1 200px",minWidth:0}} value={toSubSite} onChange={e=>setToSubSite(e.target.value)} disabled={!window.projectSites(toProject).length}>
+                  <option value="">{window.projectSites(toProject).length ? "— ทั้งโครงการ (ไม่ระบุไซต์) —" : "— ปลายทางไม่มีไซต์งานย่อย —"}</option>
+                  {window.projectSites(toProject).map(s=><option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="hint">ต้นทางใช้เป็น "จากโครงการ" บนใบส่งของ · เลือกต้นทางก่อน แล้วรายการทรัพย์สินด้านล่างจะแสดงเฉพาะของในโครงการ/ไซต์นั้น · ไซต์ปลายทางจะถูกบันทึกให้ทรัพย์สินทุกชิ้นที่ย้าย</div>
           </div>
           <div className="form-field">
             <label>เลขที่ใบส่งของ</label>
@@ -6420,10 +7130,9 @@ function TransferAssetsModal({user,onClose,onSaved}){
               <i className="fa-solid fa-magnifying-glass"></i>
               <input placeholder="ค้นหารหัส / ชื่อ / ยี่ห้อ / Serial..." value={q} onChange={e=>setQ(e.target.value)} />
             </div>
-            <select style={{...inSt,width:"auto"}} value={fromFilter} onChange={e=>setFromFilter(e.target.value)}>
-              <option value="">ทุกโครงการต้นทาง</option>
-              {sites.map(s=><option key={s} value={s}>{s}</option>)}
-            </select>
+            <div style={{fontSize:12.5,color:"var(--muted)",whiteSpace:"nowrap"}}>
+              ต้นทาง: <b style={{color:fromProject?"var(--text)":"#B45309"}}>{fromProject||"ยังไม่ได้เลือก"}{fromSubSite?` · ${fromSubSite}`:""}</b>
+            </div>
           </div>
           <div style={{fontSize:12,color:"var(--muted)",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
             <span>เลือกทรัพย์สินที่จะย้าย · ระบุจำนวนได้ ย้ายไม่ครบจำนวนก็ได้</span>
@@ -6456,13 +7165,13 @@ function TransferAssetsModal({user,onClose,onSaved}){
                             {partial && <div style={{fontSize:11,color:"#B45309",marginTop:2}}>แบ่งย้าย · เหลือต้นทาง {(max-Number(v)).toLocaleString("th-TH")}</div>}
                           </>) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
                         </td>
-                        <td style={{color:"var(--muted)"}}>{a.site||"—"}</td>
+                        <td style={{color:"var(--muted)"}}>{a.site||"—"}{a.subSite?` · ${a.subSite}`:""}</td>
                       </tr>
                     );
                   })}
                   {candidates.length===0 && (<tr><td colSpan="6"><div className="empty" style={{padding:"18px 10px"}}>
-                    <div className="t">ไม่พบทรัพย์สิน</div>
-                    <div>{toProject ? "ลองเปลี่ยนคำค้นหรือโครงการต้นทาง (รายการที่อยู่โครงการปลายทางแล้วจะถูกซ่อน)" : "ลองเปลี่ยนคำค้น"}</div>
+                    <div className="t">{fromProject ? (fromSubSite?`ไม่พบทรัพย์สินในไซต์ ${fromSubSite}`:"ไม่พบทรัพย์สินในโครงการต้นทาง") : "ยังไม่ได้เลือกโครงการต้นทาง"}</div>
+                    <div>{fromProject ? "ลองเปลี่ยนคำค้น เลือกไซต์งานย่อยอื่น หรือเลือกโครงการต้นทางอื่น" : "เลือกโครงการต้นทางด้านบนก่อน แล้วรายการทรัพย์สินจะแสดงที่นี่"}</div>
                   </div></td></tr>)}
                 </tbody>
               </table>
@@ -6529,13 +7238,15 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
           {txt("holder","ผู้ถือครอง")}
           <div className="form-field">
             <label>สถานที่ (โครงการ)</label>
-            <select value={f.site||""} onChange={e=>up("site",e.target.value)}>
+            <select value={f.site||""} onChange={e=>setF(p=>({...p,site:e.target.value,subSite:""}))}>
               <option value="">— เลือกโครงการ —</option>
               {projects.map(p=>(<option key={p.id} value={p.name}>{p.code?`[${p.code}] `:""}{p.name}</option>))}
               {/* ข้อมูลเก่าที่ยังไม่ตรงกับชื่อโครงการ — คงค่าเดิมไว้ไม่ให้หายตอนแก้ไข */}
               {f.site && !projects.some(p=>p.name===f.site) && <option value={f.site}>{f.site} (ข้อมูลเดิม)</option>}
             </select>
           </div>
+          <SubSiteField project={f.site} value={f.subSite} onChange={v=>up("subSite",v)} showWhenEmpty
+            hint="ไซต์งานย่อยที่ทรัพย์สินนี้อยู่ · เปลี่ยนโครงการแล้วต้องเลือกใหม่" />
           <div className="form-field">
             <label>วันที่รับเข้า</label>
             <input type="date" value={String(f.receivedAt||"").slice(0,10)} onChange={e=>up("receivedAt",e.target.value)} />
@@ -6566,7 +7277,7 @@ window.buildDeliveryOrderHtml = function(doc){
     <td style="text-align:left;padding-left:6px">${esc(it.serial||"")}</td>
     <td>${it.quantity!=null?esc(it.quantity):""}</td>
     <td>${esc(it.unit||"")}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.from||"")}</td>
+    <td style="text-align:left;padding-left:6px">${esc((it.from||"") + (it.fromSubSite?" · "+it.fromSubSite:""))}</td>
   </tr>`).join("");
   const totalQty = items.reduce((s,x)=>s+(Number(x.quantity)||0),0);
   const cancelStamp = doc.cancelled ? `
@@ -6590,7 +7301,7 @@ window.buildDeliveryOrderHtml = function(doc){
       <div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:40mm;text-align:center">${fmt(doc.docDate||doc.when)}</span></div>
     </div>
     <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>จากโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.fromProjectLabel||"")}</span></div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.toProject||"")}</span></div>
+    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc((doc.toProject||"") + (doc.toSubSite?" · "+doc.toSubSite:""))}</span></div>
     <table class="do">
       <thead><tr>
         <th style="width:10mm">ลำดับ</th><th style="width:26mm">รหัสทรัพย์สิน</th><th>รายการ</th>
@@ -6626,7 +7337,7 @@ window.downloadDeliveryOrderPdf = async function(doc){
 
 // หน้ารายการใบส่งของทั้งหมด
 function DeliveryOrders({user}){
-  const canEdit = ["Admin","Officer","Engineer"].includes(user.role);
+  const canEdit = ["Admin","Officer","Engineer"].includes(window.effectiveRole(user));
   const [rows,setRows] = React.useState(()=>window.__DATA.deliveryOrders || null);
   const [err,setErr] = React.useState("");
   const [q,setQ] = React.useState("");
@@ -6773,7 +7484,7 @@ function DeliveryOrders({user}){
                 </td>
                 <td style={{whiteSpace:"nowrap",color:"var(--muted)"}}>{d.docDate || window.__DATA.fmtDate(d.when)}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.fromProjectLabel||"—"}</td>
-                <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/></td>
+                <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/>{d.toSubSite && <div style={{marginTop:3}}><SubSiteTag value={d.toSubSite} project={d.toProject}/></div>}</td>
                 <td style={{whiteSpace:"nowrap"}}>{(d.items||[]).length} รายการ · {(d.items||[]).reduce((s,x)=>s+(Number(x.quantity)||0),0).toLocaleString("th-TH")} หน่วย</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
                 <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
@@ -6824,7 +7535,7 @@ function DeliveryOrderView({doc,onClose,onEdit}){
       <div className="detail-grid" style={{marginBottom:14}}>
         <div><div className="k">วันที่</div><div className="v">{doc.docDate || window.__DATA.fmtDate(doc.when)}</div></div>
         <div><div className="k">จากโครงการ</div><div className="v">{doc.fromProjectLabel||"—"}</div></div>
-        <div><div className="k">ไปยังโครงการ</div><div className="v"><ProjectLabel name={doc.toProject}/></div></div>
+        <div><div className="k">ไปยังโครงการ</div><div className="v"><ProjectLabel name={doc.toProject}/>{doc.toSubSite && <SubSiteTag value={doc.toSubSite} project={doc.toProject} style={{marginLeft:6}}/>}</div></div>
         <div><div className="k">ผู้ส่งมอบ</div><div className="v">{doc.sender||"—"}</div></div>
         <div><div className="k">ผู้รับมอบ</div><div className="v">{doc.receiver||"—"}</div></div>
         <div><div className="k">บันทึกโดย</div><div className="v">{doc.by||"—"}</div></div>
@@ -6839,7 +7550,7 @@ function DeliveryOrderView({doc,onClose,onEdit}){
                 <td>{it.assetCode ? <span className="ticket-id">{it.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
                 <td>{it.name}{it.partial && <span style={{color:"#B45309",fontSize:11,marginLeft:6}}>(แบ่งย้ายจาก {it.totalBefore})</span>}</td>
                 <td style={{whiteSpace:"nowrap"}}>{(Number(it.quantity)||0).toLocaleString("th-TH")} {it.unit||""}</td>
-                <td style={{color:"var(--muted)"}}>{it.from||"—"}</td>
+                <td style={{color:"var(--muted)"}}>{it.from||"—"}{it.fromSubSite?` · ${it.fromSubSite}`:""}</td>
               </tr>
             ))}
           </tbody>
@@ -6856,6 +7567,7 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
     docDate: toDateStr(doc.docDate || doc.when),
     fromProjectLabel: doc.fromProjectLabel||"",
     toProject: doc.toProject||"",
+    toSubSite: doc.toSubSite||"",
     sender: doc.sender||"",
     receiver: doc.receiver||"",
     note: doc.note||"",
@@ -6872,6 +7584,7 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
       docDate: f.docDate,
       fromProjectLabel: f.fromProjectLabel,
       toProject: f.toProject,
+      toSubSite: f.toSubSite,
       sender: f.sender,
       receiver: f.receiver,
       note: f.note,
@@ -6907,6 +7620,17 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
         <div className="form-field"><label>วันที่</label><input type="date" value={f.docDate} onChange={e=>set("docDate",e.target.value)} /></div>
         <div className="form-field"><label>จากโครงการ</label><input value={f.fromProjectLabel} onChange={e=>set("fromProjectLabel",e.target.value)} placeholder="เช่น [PRJ-A1] โรงงาน A" /></div>
         <div className="form-field"><label>ไปยังโครงการ</label><input value={f.toProject} onChange={e=>set("toProject",e.target.value)} /></div>
+        {(()=>{ const sites=window.projectSites(f.toProject); const legacy=f.toSubSite&&!sites.includes(f.toSubSite);
+          return (sites.length||legacy) ? (
+            <div className="form-field"><label>ไซต์งานย่อยปลายทาง</label>
+              <select value={f.toSubSite} onChange={e=>set("toSubSite",e.target.value)}>
+                <option value="">— ทั้งโครงการ (ไม่ระบุไซต์) —</option>
+                {sites.map(s=><option key={s} value={s}>{s}</option>)}
+                {legacy && <option value={f.toSubSite}>{f.toSubSite} (ไม่มีในโครงการแล้ว)</option>}
+              </select>
+              <div className="hint">แก้เฉพาะข้อความบนเอกสาร ไม่ย้ายสต๊อกทรัพย์สิน</div>
+            </div>
+          ) : null; })()}
         <div className="form-field"><label>ผู้ส่งมอบ</label><input value={f.sender} onChange={e=>set("sender",e.target.value)} /></div>
         <div className="form-field"><label>ผู้รับมอบ</label><input value={f.receiver} onChange={e=>set("receiver",e.target.value)} /></div>
         <div className="form-field full"><label>หมายเหตุ</label><textarea className="inp" rows={2} value={f.note} onChange={e=>set("note",e.target.value)} /></div>
@@ -7178,6 +7902,26 @@ function SpareParts({user}){
 }
 window.SpareParts = SpareParts;
 
+// ===== หมดเวลาใช้งาน =====
+// ล็อกอินทิ้งไว้แล้วไม่ได้แตะเลยเกิน 15 นาที ให้เด้งออกไปล็อกอินใหม่
+const IDLE_LIMIT_MS = 15 * 60 * 1000;
+const IDLE_KEY = "rms_last_active";
+function touchActivity(){
+  try{ localStorage.setItem(IDLE_KEY, String(Date.now())); }catch(e){}
+}
+function isSessionExpired(){
+  const t = Number(localStorage.getItem(IDLE_KEY) || 0);
+  return !t || (Date.now() - t) > IDLE_LIMIT_MS;
+}
+function clearSession(){
+  localStorage.removeItem("rms_user");
+  localStorage.removeItem("rms_workspace");
+  localStorage.removeItem(IDLE_KEY);
+}
+window.touchActivity = touchActivity;
+window.isSessionExpired = isSessionExpired;
+window.clearSession = clearSession;
+
 function App(){
   const [user,setUser] = React.useState(null);
   const [workspace,setWorkspace] = React.useState(null);
@@ -7200,6 +7944,11 @@ function App(){
 
   React.useEffect(()=>{
     if(booting) return;
+    // ปิดแท็บทิ้งไว้นานเกิน 15 นาที ก็ถือว่าหมดเวลา ไม่ต้องกู้เซสชันคืน
+    if(localStorage.getItem("rms_user") && isSessionExpired()){
+      clearSession();
+      return;
+    }
     const s = localStorage.getItem("rms_user");
     if(s){
       try{
@@ -7233,9 +7982,42 @@ function App(){
     window.askNotifyPermission(user);
   },[user && user.id, user && user.role]);
 
+  // ไม่มีการใช้งานเกิน 15 นาที → ออกจากระบบอัตโนมัติ
+  React.useEffect(()=>{
+    if(!user) return;
+    touchActivity();
+    const checkIdle = () => {
+      if(!isSessionExpired()) return;
+      clearSession();
+      setUser(null);
+      setWorkspace(null);
+      window.__DATA.activeErp = null;
+      window.__DATA.activeProject = "";
+      Swal.fire({icon:"info",title:"หมดเวลาใช้งาน",text:"ไม่ได้ใช้งานเกิน 15 นาที กรุณาเข้าสู่ระบบใหม่",confirmButtonText:"ตกลง"});
+    };
+    let lastWrite = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if(now - lastWrite < 5000) return;   // ไม่ต้องเขียน localStorage ทุกครั้งที่ขยับเมาส์
+      lastWrite = now;
+      touchActivity();
+    };
+    const onVisible = () => { if(document.visibilityState === "visible") checkIdle(); };
+    const events = ["mousedown","keydown","touchstart","click","scroll","wheel"];
+    events.forEach(ev=>window.addEventListener(ev,onActivity,{passive:true,capture:true}));
+    document.addEventListener("visibilitychange",onVisible);
+    const timer = setInterval(checkIdle, 30000);
+    return ()=>{
+      events.forEach(ev=>window.removeEventListener(ev,onActivity,{capture:true}));
+      document.removeEventListener("visibilitychange",onVisible);
+      clearInterval(timer);
+    };
+  },[user && user.id]);
+
   const login = (u) => {
     setUser(u); localStorage.setItem("rms_user",JSON.stringify(u));
     setWorkspace(null); localStorage.removeItem("rms_workspace");
+    touchActivity();
     setPage(window.defaultPageFor(u));
   };
   const enterWorkspace = (ws) => {
@@ -7260,8 +8042,7 @@ function App(){
       if(r.isConfirmed){
         setUser(null);
         setWorkspace(null);
-        localStorage.removeItem("rms_user");
-        localStorage.removeItem("rms_workspace");
+        clearSession();
         window.__DATA.activeErp = null;
         window.__DATA.activeProject = "";
       }
@@ -7289,7 +8070,7 @@ function App(){
   </div>;
 
   if(!user) return <Login onLogin={login}/>;
-  if(!workspace) return <WorkspacePicker user={user} onContinue={enterWorkspace} onLogout={()=>{setUser(null);setWorkspace(null);localStorage.removeItem("rms_user");localStorage.removeItem("rms_workspace");window.__DATA.activeErp=null;window.__DATA.activeProject="";}}/>;
+  if(!workspace) return <WorkspacePicker user={user} onContinue={enterWorkspace} onLogout={()=>{setUser(null);setWorkspace(null);clearSession();window.__DATA.activeErp=null;window.__DATA.activeProject="";}}/>;
 
   const activeUser = {...user, activeErp:workspace.erp, activeProject:workspace.project};
   const systemId = workspace.erp?.id || "repairs";
@@ -7323,7 +8104,7 @@ function App(){
     "r-dashboard":{t:"สรุปงานของฉัน",c:"ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},
-    "notifications":{t:"การแจ้งเตือน",c:"คำขออนุมัติลบข้อมูล · การลบทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin)"},
+    "notifications":{t:"การแจ้งเตือน",c:"คำขออนุมัติลบ / แก้ไขข้อมูล · ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ"},
   };
   const pt = pageTitles[safePage] || pageTitles.dashboard;
 

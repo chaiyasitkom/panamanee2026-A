@@ -299,6 +299,20 @@ const _DELETE_OPS = {
     }
   }
 };
+const _CHANGE_OPS = {
+  updateRepair: {
+    label: 'ใบแจ้งซ่อม',
+    key: 'id'
+  },
+  updateMachine: {
+    label: 'เครื่องจักร',
+    key: 'id'
+  },
+  saveAssetRegistry: {
+    label: 'ทะเบียนทรัพย์สิน',
+    key: 'key'
+  }
+};
 function _delTargetKey(action, payload = {}) {
   const op = _DELETE_OPS[action];
   const base = String(op && payload[op.key] || payload.id || payload.key || '');
@@ -398,6 +412,7 @@ async function api(action, payload = {}) {
         const ref = _db.ref('/deleteRequests').push();
         const rec = {
           id: ref.key,
+          kind: 'delete',
           action: req.action,
           entityLabel: req.entityLabel || op.label,
           targetKey,
@@ -405,6 +420,40 @@ async function api(action, payload = {}) {
           targetInfo: String(req.targetInfo || ''),
           project: String(req.project || ''),
           payload: JSON.parse(JSON.stringify(req.payload || {})),
+          reason: String(req.reason).trim(),
+          requesterId: String(req.requesterId || ''),
+          requesterName: String(req.requesterName || ''),
+          requesterRole: String(req.requesterRole || ''),
+          requestedAt: new Date().toISOString(),
+          status: 'pending'
+        };
+        await ref.set(rec);
+        return rec;
+      }
+    case 'requestChange':
+      {
+        const req = payload.req || {};
+        if (!_CHANGE_OPS[req.action]) throw new Error('ไม่รองรับการขอแก้ไขข้อมูลประเภทนี้');
+        if (!String(req.reason || '').trim()) throw new Error('กรุณาระบุเหตุผลที่ต้องการแก้ไข');
+        const idKey = _CHANGE_OPS[req.action].key || 'id';
+        const targetKey = String(req.payload && req.payload[idKey] || '');
+        if (!targetKey) throw new Error('ไม่พบรายการที่ต้องการแก้ไข');
+        const all = Object.values((await _db.ref('/deleteRequests').get()).val() || {});
+        if (all.some(x => x && x.status === 'pending' && x.kind === 'edit' && x.action === req.action && String(x.targetKey) === targetKey)) {
+          throw new Error('รายการนี้มีคำขอแก้ไขรออนุมัติอยู่แล้ว กรุณารอผลอนุมัติก่อน');
+        }
+        const ref = _db.ref('/deleteRequests').push();
+        const rec = {
+          id: ref.key,
+          kind: 'edit',
+          action: req.action,
+          entityLabel: req.entityLabel || _CHANGE_OPS[req.action].label,
+          targetKey,
+          targetName: String(req.targetName || ''),
+          targetInfo: String(req.targetInfo || ''),
+          project: String(req.project || ''),
+          payload: JSON.parse(JSON.stringify(req.payload || {})),
+          changes: JSON.parse(JSON.stringify(req.changes || [])),
           reason: String(req.reason).trim(),
           requesterId: String(req.requesterId || ''),
           requesterName: String(req.requesterName || ''),
@@ -432,11 +481,16 @@ async function api(action, payload = {}) {
         const rec = (await ref.get()).val();
         if (!rec) throw new Error('ไม่พบคำขอนี้');
         if (rec.status !== 'pending') throw new Error('คำขอนี้ถูกดำเนินการไปแล้ว');
-        const op = _DELETE_OPS[rec.action];
-        if (!op) throw new Error('ไม่รองรับการลบข้อมูลประเภทนี้');
+        const isEdit = rec.kind === 'edit';
+        const op = isEdit ? _CHANGE_OPS[rec.action] : _DELETE_OPS[rec.action];
+        if (!op) throw new Error(isEdit ? 'ไม่รองรับการแก้ไขข้อมูลประเภทนี้' : 'ไม่รองรับการลบข้อมูลประเภทนี้');
         let result = null;
         try {
-          result = await op.exec(rec.payload || {});
+          result = isEdit ? await api(rec.action, {
+            ...(rec.payload || {}),
+            by: by.name || 'ผู้ดูแลระบบ',
+            note: 'อนุมัติคำขอแก้ไขของ ' + (rec.requesterName || 'ผู้แจ้ง')
+          }) : await op.exec(rec.payload || {});
         } catch (e) {
           await ref.update({
             lastError: String(e && e.message || e)
@@ -452,7 +506,7 @@ async function api(action, payload = {}) {
           lastError: null
         };
         await ref.update(patch);
-        await _logDelete({
+        if (!isEdit) await _logDelete({
           action: rec.action,
           via: 'approved',
           requestId: rec.id,
@@ -523,6 +577,20 @@ async function api(action, payload = {}) {
         };
         delete safe.password;
         return safe;
+      }
+    case 'verifyPassword':
+      {
+        const {
+          userId,
+          password
+        } = payload;
+        const snap = await _db.ref('/users/' + userId).get();
+        const user = snap.val();
+        if (!user) throw new Error('ไม่พบบัญชีผู้ใช้นี้');
+        if (String(user.password) !== String(password)) throw new Error('รหัสผ่านไม่ถูกต้อง');
+        return {
+          ok: true
+        };
       }
     case 'bootstrap':
       {
@@ -750,10 +818,12 @@ async function api(action, payload = {}) {
         const {
           moves,
           toProject,
+          toSubSite,
           note,
           by,
           doc
         } = payload;
+        const dstSubSite = toSubSite || '';
         const when = new Date().toISOString();
         const snap = await _assetDb.ref('/assets').get();
         const all = snap.val() || {};
@@ -767,10 +837,13 @@ async function api(action, payload = {}) {
           const qty = Math.min(Math.max(Number(mv.qty) || 0, 0), total || Number(mv.qty) || 0);
           if (qty <= 0) return;
           const from = a.site || '';
+          const fromSub = a.subSite || '';
           const partial = total > 0 && qty < total;
           const entry = {
             from,
             to: toProject,
+            fromSubSite: fromSub,
+            toSubSite: dstSubSite,
             when,
             by: by || '',
             note: note || '',
@@ -781,6 +854,7 @@ async function api(action, payload = {}) {
           const hist = Array.isArray(a.transferHistory) ? a.transferHistory.slice() : [];
           if (!partial) {
             updates['/assets/' + k + '/site'] = toProject;
+            updates['/assets/' + k + '/subSite'] = dstSubSite;
             updates['/assets/' + k + '/transferHistory'] = hist.concat([entry]);
             updates['/assets/' + k + '/updatedAt'] = when;
           } else {
@@ -795,6 +869,7 @@ async function api(action, payload = {}) {
               ...a,
               quantity: qty,
               site: toProject,
+              subSite: dstSubSite,
               updatedAt: when,
               splitFrom: k,
               transferHistory: hist.concat([entry])
@@ -811,7 +886,8 @@ async function api(action, payload = {}) {
             totalBefore: total,
             partial,
             unit: a.unit || '',
-            from
+            from,
+            fromSubSite: fromSub
           });
         });
         if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
@@ -820,6 +896,7 @@ async function api(action, payload = {}) {
           ...(doc || {}),
           key: docKey,
           toProject,
+          toSubSite: dstSubSite,
           note: note || '',
           by: by || '',
           when,
@@ -872,6 +949,7 @@ async function api(action, payload = {}) {
           };
           const newAssets = {};
           const siteBack = {};
+          const subSiteBack = {};
           const dropKeys = {};
           const findAsset = (code, site) => Object.keys(assets).find(k => {
             const a = assets[k] || {};
@@ -916,6 +994,7 @@ async function api(action, payload = {}) {
                 return;
               }
               siteBack[k] = srcSite;
+              subSiteBack[k] = it.fromSubSite || '';
               pushHist(k, hist);
               restored.push({
                 key: k,
@@ -974,6 +1053,7 @@ async function api(action, payload = {}) {
                   ...cleanBase,
                   quantity: need,
                   site: srcSite,
+                  subSite: it.fromSubSite || '',
                   updatedAt: when,
                   transferHistory: [{
                     ...hist,
@@ -998,6 +1078,7 @@ async function api(action, payload = {}) {
           });
           Object.keys(siteBack).forEach(k => {
             updates['/assets/' + k + '/site'] = siteBack[k];
+            updates['/assets/' + k + '/subSite'] = subSiteBack[k] || '';
             updates['/assets/' + k + '/updatedAt'] = when;
           });
           Object.keys(histAdd).forEach(k => {
@@ -1256,7 +1337,8 @@ async function api(action, payload = {}) {
         const {
           id,
           patch,
-          by
+          by,
+          note
         } = payload;
         const clean = {
           ...patch
@@ -1271,7 +1353,7 @@ async function api(action, payload = {}) {
           status: clean.status || '',
           when: new Date().toISOString(),
           by: by || '',
-          note: 'แก้ไขข้อมูลโดย Admin'
+          note: note || 'แก้ไขข้อมูลโดย Admin'
         };
         await _db.ref('/repairs/' + id).update(clean);
         return {
@@ -1288,7 +1370,7 @@ async function api(action, payload = {}) {
           cost,
           patch: extraPatch
         } = payload;
-        const ALLOW = ['title', 'desc', 'repairNote', 'siteId', 'machineCode', 'project', 'categoryId', 'reporterName', 'assignedId', 'parts', 'laborCost'];
+        const ALLOW = ['title', 'desc', 'repairNote', 'siteId', 'subSite', 'machineCode', 'project', 'categoryId', 'reporterName', 'assignedId', 'parts', 'laborCost', 'odometerKm', 'hourMeter', 'driverName'];
         const clean = {};
         ALLOW.forEach(k => {
           if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k];
@@ -1327,7 +1409,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1469) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1538) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1469,6 +1551,12 @@ window.canUseErp = (user, sys) => {
   if (Array.isArray(sys.roles) && sys.roles.length) return sys.roles.includes(user?.role);
   return true;
 };
+window.effectiveRole = user => {
+  if (!user) return "";
+  const sysId = (window.getActiveErp(user) || {}).id || "";
+  if (user.role === "Reporter" && sysId === "assets") return "Engineer";
+  return user.role;
+};
 window.PROJECT_LOCKED_ROLES = ["Engineer", "Safety Officer"];
 window.userCanSeeAllProjects = user => {
   if (!user) return false;
@@ -1516,6 +1604,14 @@ window.visibleProjects = (user, {
 } = {}) => {
   const allowed = new Set(window.allowedProjectNames(user));
   return (window.__DATA.projects || []).filter(p => includeInactive || p.status !== "inactive").filter(p => allowed.has(p.name));
+};
+window.projectSites = projectOrName => {
+  const p = projectOrName && typeof projectOrName === "object" ? projectOrName : (window.__DATA.projects || []).find(x => x.name === projectOrName);
+  const raw = p && p.sites;
+  if (Array.isArray(raw)) return raw.map(s => String(s || "").trim()).filter(Boolean);
+  if (typeof raw === "string") return raw.split(",").map(s => s.trim()).filter(Boolean);
+  if (raw && typeof raw === "object") return Object.values(raw).map(s => String(s || "").trim()).filter(Boolean);
+  return [];
 };
 window.avatarColor = name => {
   const colors = ["#3B82F6", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#06B6D4", "#EC4899", "#6366F1"];
@@ -1901,7 +1997,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 1789) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 1880) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -1939,7 +2035,7 @@ window.__DELREQ = {
           if (before === undefined && r.status === "pending") this._announceNew(r);else if (before === "pending" && r.status !== "pending") {
             if (r.status === "approved") {
               try {
-                window.applyDeleteLocally(r.action, r.payload || {});
+                if (r.kind === "edit") window.applyEditLocally(r.action, r.payload || {});else window.applyDeleteLocally(r.action, r.payload || {});
               } catch (e) {}
             }
             this._announceDecision(r);
@@ -1988,8 +2084,9 @@ window.__DELREQ = {
   },
   _announceNew(r) {
     if (!this.user || this.user.role !== "Admin") return;
-    const title = "มีคำขอลบข้อมูลรออนุมัติ";
-    const text = `${r.requesterName || "ผู้ใช้งาน"} ขอลบ${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}"`;
+    const isEdit = r.kind === "edit";
+    const title = isEdit ? "มีคำขอแก้ไขข้อมูลรออนุมัติ" : "มีคำขอลบข้อมูลรออนุมัติ";
+    const text = `${r.requesterName || "ผู้ใช้งาน"} ขอ${isEdit ? "แก้ไข" : "ลบ"}${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}"`;
     if (window.Swal) Swal.fire({
       toast: true,
       position: "top-end",
@@ -2006,7 +2103,8 @@ window.__DELREQ = {
   _announceDecision(r) {
     if (!this.user || r.requesterId !== this.user.id) return;
     const ok = r.status === "approved";
-    const title = ok ? "คำขอลบได้รับการอนุมัติแล้ว" : "คำขอลบไม่ได้รับอนุมัติ";
+    const kindTxt = r.kind === "edit" ? "คำขอแก้ไข" : "คำขอลบ";
+    const title = ok ? `${kindTxt}ได้รับการอนุมัติแล้ว` : `${kindTxt}ไม่ได้รับอนุมัติ`;
     const text = `${r.entityLabel || "ข้อมูล"} "${r.targetName || "-"}" · โดย ${r.decidedByName || "ผู้ดูแลระบบ"}`;
     if (window.Swal) Swal.fire({
       toast: true,
@@ -2087,6 +2185,349 @@ window.applyDeleteLocally = function (action, payload = {}) {
     if (m) m.transferHistory = (m.transferHistory || []).filter(t => !(String(t.when || "") === String(payload.when || "") && String(t.to || "") === String(payload.to || "")));
   }
 };
+window.applyEditLocally = function (action, payload = {}) {
+  const D = window.__DATA;
+  if (action === "updateRepair") {
+    const patch = payload.patch || {};
+    D.repairs = (D.repairs || []).map(x => x.id === payload.id ? {
+      ...x,
+      ...patch
+    } : x);
+  } else if (action === "updateMachine") {
+    const patch = payload.patch || {};
+    D.machines = (D.machines || []).map(x => x.id === payload.id ? {
+      ...x,
+      ...patch
+    } : x);
+  } else if (action === "saveAssetRegistry") {
+    if (Array.isArray(D.assetRegistry)) {
+      const asset = payload.asset || {};
+      D.assetRegistry = D.assetRegistry.map(x => x.key === payload.key ? {
+        ...x,
+        ...asset,
+        key: x.key
+      } : x);
+    }
+  }
+};
+window.REPAIR_FIELD_LABELS = {
+  title: {
+    label: "อาการ/ปัญหา",
+    fmt: v => String(v || "").split("\n").filter(Boolean).join(" · ")
+  },
+  desc: {
+    label: "รายละเอียดปัญหา"
+  },
+  siteId: {
+    label: "เลขที่ไซต์งาน"
+  },
+  subSite: {
+    label: "ไซต์งานย่อย"
+  },
+  machineCode: {
+    label: "รหัสเครื่องจักร"
+  },
+  odometerKm: {
+    label: "เลขมิเตอร์กิโลเมตร"
+  },
+  hourMeter: {
+    label: "เลขมิเตอร์ชั่วโมง"
+  },
+  driverName: {
+    label: "พนักงานขับ / ผู้ควบคุม"
+  },
+  categoryId: {
+    label: "หมวดหมู่",
+    fmt: v => (window.getCategory(v) || {}).name || "—"
+  },
+  createdAt: {
+    label: "วันที่แจ้ง",
+    fmt: v => window.__DATA.fmtDate(v)
+  },
+  photos: {
+    label: "รูปภาพประกอบ",
+    fmt: v => `${(v || []).filter(Boolean).length} รูป`
+  }
+};
+window.MACHINE_FIELD_LABELS = {
+  code: {
+    label: "รหัสเครื่องจักร"
+  },
+  name: {
+    label: "ชื่อเครื่องจักร"
+  },
+  brand: {
+    label: "ยี่ห้อ"
+  },
+  model: {
+    label: "รุ่น"
+  },
+  year: {
+    label: "ปีที่ผลิต"
+  },
+  size: {
+    label: "ขนาด / ความยาว"
+  },
+  serial: {
+    label: "ซีเรียล"
+  },
+  ownership: {
+    label: "กรรมสิทธิ์/เช่า"
+  },
+  categoryId: {
+    label: "หมวดหมู่",
+    fmt: v => (window.getCategory(v) || {}).name || "—"
+  },
+  status: {
+    label: "สถานะ"
+  },
+  project: {
+    label: "โครงการ"
+  },
+  subSite: {
+    label: "ไซต์งานย่อย"
+  },
+  location: {
+    label: "สถานที่ติดตั้ง"
+  },
+  hours: {
+    label: "ชั่วโมงทำงานสะสม"
+  },
+  lastService: {
+    label: "ซ่อมบำรุงล่าสุด"
+  },
+  inspectionDate: {
+    label: "วันที่ตรวจสอบ (ปจ2)"
+  },
+  nextInspectionDate: {
+    label: "วันที่ตรวจสอบครั้งถัดไป"
+  },
+  driverName: {
+    label: "พนักงานขับ / ผู้ควบคุม"
+  },
+  drivePhoto: {
+    label: "ลิงก์รูปภาพ"
+  },
+  driveLink1: {
+    label: "ลิงก์เอกสาร (1)"
+  },
+  driveLink2: {
+    label: "ลิงก์เอกสาร (2)"
+  },
+  driveLinkPL: {
+    label: "ลิงก์ PL (ประกัน)"
+  },
+  note: {
+    label: "หมายเหตุ"
+  },
+  icon: {
+    label: "ไอคอน"
+  }
+};
+window.ASSET_FIELD_LABELS = {
+  assetCode: {
+    label: "รหัสทรัพย์สิน"
+  },
+  name: {
+    label: "ชื่อทรัพย์สิน"
+  },
+  brand: {
+    label: "ยี่ห้อ"
+  },
+  model: {
+    label: "รุ่น"
+  },
+  serial: {
+    label: "Serial No."
+  },
+  size: {
+    label: "ขนาด"
+  },
+  quantity: {
+    label: "จำนวน"
+  },
+  unit: {
+    label: "หน่วย"
+  },
+  ownership: {
+    label: "กรรมสิทธิ์"
+  },
+  holder: {
+    label: "ผู้ถือครอง"
+  },
+  site: {
+    label: "สถานที่ (โครงการ)"
+  },
+  subSite: {
+    label: "ไซต์งานย่อย"
+  },
+  receivedAt: {
+    label: "วันที่รับเข้า"
+  },
+  note: {
+    label: "หมายเหตุ"
+  }
+};
+window.diffFields = function (before, patch, labels) {
+  const out = [];
+  Object.keys(labels || {}).forEach(k => {
+    if (!(k in (patch || {}))) return;
+    const meta = labels[k];
+    const fmt = meta.fmt || (v => v === 0 || v ? String(v) : "");
+    const a = fmt(before ? before[k] : "");
+    const b = fmt(patch[k]);
+    if (String(a) !== String(b)) out.push({
+      field: k,
+      label: meta.label,
+      from: a || "— ว่าง —",
+      to: b || "— ว่าง —"
+    });
+  });
+  return out;
+};
+window.requestEditApproval = async function (opts) {
+  const {
+    user,
+    action,
+    payload = {},
+    entityLabel = "ข้อมูล",
+    targetName = "",
+    targetInfo = "",
+    project = "",
+    changes = []
+  } = opts || {};
+  if (!user) {
+    Swal.fire({
+      icon: "error",
+      title: "ไม่พบข้อมูลผู้ใช้งาน"
+    });
+    return false;
+  }
+  if (!changes.length) {
+    Swal.fire({
+      icon: "info",
+      title: "ยังไม่ได้แก้ไขอะไร",
+      text: "ปรับข้อมูลที่ต้องการก่อนส่งคำขอ"
+    });
+    return false;
+  }
+  const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rowsHtml = changes.map(c => `
+    <div style="padding:6px 0;border-bottom:1px dashed #E2E8F0">
+      <div style="font-size:12px;color:#64748B">${esc(c.label)}</div>
+      <div style="font-size:13px"><span style="color:#B91C1C;text-decoration:line-through">${esc(c.from)}</span>
+        <i class="fa-solid fa-arrow-right" style="margin:0 6px;color:#94A3B8;font-size:10px"></i>
+        <span style="color:#047857;font-weight:500">${esc(c.to)}</span></div>
+    </div>`).join("");
+  const r = await Swal.fire({
+    title: "ขออนุมัติแก้ไขข้อมูล",
+    html: `<div style="text-align:left;font-size:14px">
+             <div style="background:#FEF3C7;border:1px solid #FDE68A;color:#92400E;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+               <i class="fa-solid fa-shield-halved" style="margin-right:6px"></i>
+               การแก้ไขต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน ข้อมูลเดิมจะยังไม่เปลี่ยนจนกว่าจะอนุมัติ
+             </div>
+             <div style="color:#64748B;font-size:12px">รายการที่ขอแก้</div>
+             <div style="margin-top:2px">${esc(entityLabel)}${targetName ? " · <b>" + esc(targetName) + "</b>" : ""}</div>
+             <div style="margin-top:10px;color:#64748B;font-size:12px">สิ่งที่เปลี่ยน (${changes.length} รายการ)</div>
+             <div style="max-height:190px;overflow:auto;margin-top:4px">${rowsHtml}</div>
+           </div>`,
+    input: "textarea",
+    inputLabel: "เหตุผลที่ต้องการแก้ไข",
+    inputPlaceholder: "ระบุเหตุผล เช่น กรอกอาการผิด / ใส่เลขมิเตอร์ผิด",
+    inputValidator: v => !String(v || "").trim() ? "กรุณาระบุเหตุผลที่ต้องการแก้ไข" : null,
+    showCancelButton: true,
+    confirmButtonText: "ส่งคำขออนุมัติ",
+    cancelButtonText: "ยกเลิก",
+    confirmButtonColor: "#2563EB"
+  });
+  if (!r.isConfirmed) return false;
+  try {
+    await window.api("requestChange", {
+      req: {
+        action,
+        payload,
+        entityLabel,
+        targetName,
+        targetInfo,
+        changes,
+        project: project || window.getActiveProject(user) || "",
+        reason: r.value,
+        requesterId: user.id,
+        requesterName: user.name,
+        requesterRole: user.role
+      }
+    });
+    Swal.fire({
+      icon: "success",
+      title: "ส่งคำขอแก้ไขแล้ว",
+      html: `ระบบแจ้งผู้ดูแลระบบ (Admin) แล้ว<br/><span style="color:#64748B;font-size:13px">ข้อมูลจะเปลี่ยนเมื่อได้รับอนุมัติ · ติดตามได้ที่เมนู "การแจ้งเตือน"</span>`,
+      confirmButtonText: "รับทราบ"
+    });
+    return true;
+  } catch (err) {
+    Swal.fire({
+      icon: "error",
+      title: "ส่งคำขอไม่สำเร็จ",
+      text: err.message
+    });
+    return false;
+  }
+};
+window.confirmWithPassword = async function (user, {
+  title,
+  html,
+  confirmText
+} = {}) {
+  if (!user || !user.id) {
+    Swal.fire({
+      icon: "error",
+      title: "ไม่พบข้อมูลผู้ใช้งาน"
+    });
+    return false;
+  }
+  const r = await Swal.fire({
+    title: title || "ยืนยันตัวตนก่อนลบ",
+    html: `<div style="text-align:left;font-size:13.5px">
+             <div style="background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+               <i class="fa-solid fa-shield-halved" style="margin-right:6px"></i>
+               ${html || "การลบข้อมูลต้องกรอกรหัสผ่านของบัญชีคุณเพื่อยืนยันทุกครั้ง"}
+             </div>
+             <div style="color:#64748B;font-size:12px">บัญชี</div>
+             <div style="margin-top:2px;font-weight:500">${user.name || ""} <span style="color:#64748B;font-weight:400">(${user.username || ""})</span></div>
+           </div>`,
+    icon: "warning",
+    input: "password",
+    inputLabel: "รหัสผ่านของคุณ",
+    inputPlaceholder: "กรอกรหัสผ่านเพื่อยืนยัน",
+    inputAttributes: {
+      autocomplete: "current-password",
+      "aria-label": "รหัสผ่านยืนยันการลบ"
+    },
+    showCancelButton: true,
+    confirmButtonText: confirmText || "ยืนยันการลบ",
+    cancelButtonText: "ยกเลิก",
+    confirmButtonColor: "#EF4444",
+    allowOutsideClick: () => !Swal.isLoading(),
+    showLoaderOnConfirm: true,
+    preConfirm: async pw => {
+      if (!String(pw || "")) {
+        Swal.showValidationMessage("กรุณากรอกรหัสผ่าน");
+        return false;
+      }
+      try {
+        await window.api("verifyPassword", {
+          userId: user.id,
+          password: pw
+        });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || "ยืนยันรหัสผ่านไม่สำเร็จ");
+        return false;
+      }
+    }
+  });
+  return !!(r.isConfirmed && r.value);
+};
 window.deleteWithApproval = async function (opts) {
   const {
     user,
@@ -2120,6 +2561,10 @@ window.deleteWithApproval = async function (opts) {
       confirmButtonColor: "#EF4444"
     });
     if (!r.isConfirmed) return false;
+    const ok = await window.confirmWithPassword(user, {
+      html: `ยืนยันการลบ<b> ${label}${targetName ? " · " + targetName : ""}</b><div style="margin-top:4px">การลบไม่สามารถกู้คืนได้</div>`
+    });
+    if (!ok) return false;
     try {
       const res = await window.api(action, {
         ...payload,
@@ -2205,7 +2650,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2032) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2299) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -2226,6 +2671,7 @@ const DELREQ_STATUS = {
     icon: "fa-circle-xmark"
   }
 };
+const escReq = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function DeleteApprovals({
   user
 }) {
@@ -2247,24 +2693,41 @@ function DeleteApprovals({
   const kw = q.trim().toLowerCase();
   const rows = mine.filter(r => tab === "all" || r.status === tab).filter(r => !kw || [r.entityLabel, r.targetName, r.targetInfo, r.requesterName, r.reason, r.project].some(v => String(v || "").toLowerCase().includes(kw)));
   const approve = async r => {
+    const isEdit = r.kind === "edit";
+    const changeHtml = isEdit && (r.changes || []).length ? `<div style="margin-top:8px;color:#64748B;font-size:12px">สิ่งที่จะเปลี่ยน</div>
+         <div style="max-height:170px;overflow:auto;margin-top:2px">${(r.changes || []).map(c => `
+           <div style="padding:5px 0;border-bottom:1px dashed #E2E8F0">
+             <div style="font-size:12px;color:#64748B">${escReq(c.label)}</div>
+             <div style="font-size:13px"><span style="color:#B91C1C;text-decoration:line-through">${escReq(c.from)}</span>
+               <i class="fa-solid fa-arrow-right" style="margin:0 6px;color:#94A3B8;font-size:10px"></i>
+               <span style="color:#047857;font-weight:500">${escReq(c.to)}</span></div>
+           </div>`).join("")}</div>` : "";
     const res = await Swal.fire({
-      title: "อนุมัติให้ลบข้อมูล?",
+      title: isEdit ? "อนุมัติให้แก้ไขข้อมูล?" : "อนุมัติให้ลบข้อมูล?",
       html: `<div style="text-align:left;font-size:14px">
-              <div><b>${r.entityLabel || "ข้อมูล"}</b> · ${r.targetName || "-"}</div>
-              <div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${r.requesterName || "-"} (${r.requesterRole || "-"})</div>
-              <div style="color:#64748B;font-size:13px">เหตุผล: ${r.reason || "-"}</div>
-              <div style="color:#B91C1C;font-size:13px;margin-top:8px">เมื่ออนุมัติ ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้</div>
+              <div><b>${escReq(r.entityLabel || "ข้อมูล")}</b> · ${escReq(r.targetName || "-")}</div>
+              <div style="color:#64748B;font-size:13px;margin-top:4px">ผู้ขอ: ${escReq(r.requesterName || "-")} (${escReq(r.requesterRole || "-")})</div>
+              <div style="color:#64748B;font-size:13px">เหตุผล: ${escReq(r.reason || "-")}</div>
+              ${changeHtml}
+              <div style="color:${isEdit ? "#1D4ED8" : "#B91C1C"};font-size:13px;margin-top:8px">${isEdit ? "เมื่ออนุมัติ ข้อมูลจะถูกแก้ตามรายการด้านบนทันที" : "เมื่ออนุมัติ ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้"}</div>
             </div>`,
       icon: "warning",
       showCancelButton: true,
       input: "text",
       inputLabel: "หมายเหตุ (ถ้ามี)",
-      inputPlaceholder: "เช่น ตรวจสอบแล้วเป็นข้อมูลซ้ำ",
-      confirmButtonText: "อนุมัติและลบ",
+      inputPlaceholder: "เช่น ตรวจสอบแล้วถูกต้อง",
+      confirmButtonText: isEdit ? "อนุมัติและแก้ไข" : "อนุมัติและลบ",
       cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#EF4444"
+      confirmButtonColor: isEdit ? "#2563EB" : "#EF4444"
     });
     if (!res.isConfirmed) return;
+    if (!isEdit) {
+      const ok = await window.confirmWithPassword(user, {
+        html: `ยืนยันการอนุมัติลบ<b> ${escReq(r.entityLabel || "ข้อมูล")} · ${escReq(r.targetName || "-")}</b><div style="margin-top:4px">ข้อมูลจะถูกลบทันทีและกู้คืนไม่ได้</div>`,
+        confirmText: "ยืนยันอนุมัติและลบ"
+      });
+      if (!ok) return;
+    }
     setBusy(r.id);
     try {
       await window.api("approveDelete", {
@@ -2276,10 +2739,10 @@ function DeleteApprovals({
           role: user.role
         }
       });
-      window.applyDeleteLocally(r.action, r.payload || {});
+      if (isEdit) window.applyEditLocally(r.action, r.payload || {});else window.applyDeleteLocally(r.action, r.payload || {});
       Swal.fire({
         icon: "success",
-        title: "อนุมัติและลบข้อมูลแล้ว",
+        title: isEdit ? "อนุมัติและแก้ไขข้อมูลแล้ว" : "อนุมัติและลบข้อมูลแล้ว",
         timer: 1600,
         showConfirmButton: false,
         toast: true,
@@ -2399,13 +2862,13 @@ function DeleteApprovals({
     style: {
       fontWeight: 600
     }
-  }, isAdmin ? "คำขออนุมัติลบข้อมูล" : "คำขอลบข้อมูลของฉัน"), React.createElement("div", {
+  }, isAdmin ? "คำขออนุมัติลบ / แก้ไขข้อมูล" : "คำขอของฉัน"), React.createElement("div", {
     style: {
       color: "var(--muted)",
       fontSize: 13,
       marginTop: 2
     }
-  }, isAdmin ? "ทุกการลบข้อมูลของผู้ใช้งานอื่นต้องผ่านการอนุมัติที่นี่ · ข้อมูลจะถูกลบเมื่อกดอนุมัติเท่านั้น" : "การลบข้อมูลทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน")), isAdmin && canPush && pushState === "default" && React.createElement("button", {
+  }, isAdmin ? "การลบข้อมูลของผู้ใช้งานอื่น และการแก้ไขใบแจ้งซ่อมของผู้แจ้ง ต้องผ่านการอนุมัติที่นี่ · ข้อมูลจะเปลี่ยนเมื่อกดอนุมัติเท่านั้น" : "การลบข้อมูล และการแก้ไขใบแจ้งซ่อม ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อน")), isAdmin && canPush && pushState === "default" && React.createElement("button", {
     className: "btn btn-ghost",
     onClick: enablePush,
     title: "\u0E40\u0E1B\u0E34\u0E14\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E02\u0E2D\u0E07\u0E40\u0E1A\u0E23\u0E32\u0E27\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C"
@@ -2463,8 +2926,9 @@ function DeleteApprovals({
     className: "fa-solid fa-inbox"
   }), React.createElement("div", {
     className: "t"
-  }, tab === "pending" ? "ไม่มีคำขอรออนุมัติ" : "ไม่มีรายการ"), React.createElement("div", null, isAdmin ? "เมื่อมีผู้ใช้งานขอลบข้อมูล จะแสดงที่นี่ทันที" : "คำขอลบข้อมูลของคุณจะแสดงที่นี่")), rows.map(r => {
+  }, tab === "pending" ? "ไม่มีคำขอรออนุมัติ" : "ไม่มีรายการ"), React.createElement("div", null, isAdmin ? "เมื่อมีผู้ใช้งานขอลบหรือขอแก้ไขข้อมูล จะแสดงที่นี่ทันที" : "คำขอลบ/แก้ไขข้อมูลของคุณจะแสดงที่นี่")), rows.map(r => {
     const st = DELREQ_STATUS[r.status] || DELREQ_STATUS.pending;
+    const isEdit = r.kind === "edit";
     return React.createElement("div", {
       key: r.id,
       style: {
@@ -2505,6 +2969,20 @@ function DeleteApprovals({
         marginRight: 5
       }
     }), st.label), React.createElement("span", {
+      className: "badge",
+      style: isEdit ? {
+        background: "#DBEAFE",
+        color: "#1D4ED8"
+      } : {
+        background: "#FEE2E2",
+        color: "#B91C1C"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${isEdit ? "fa-pen" : "fa-trash"}`,
+      style: {
+        marginRight: 5
+      }
+    }), isEdit ? "ขอแก้ไข" : "ขอลบ"), React.createElement("span", {
       style: {
         fontWeight: 600
       }
@@ -2563,7 +3041,49 @@ function DeleteApprovals({
       style: {
         color: "var(--muted)"
       }
-    }, "\u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25:"), " ", r.reason || "-"), r.status !== "pending" && React.createElement("div", {
+    }, "\u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25:"), " ", r.reason || "-"), isEdit && (r.changes || []).length > 0 && React.createElement("div", {
+      style: {
+        marginTop: 6,
+        border: "1px solid var(--line-soft)",
+        borderRadius: 8,
+        padding: "7px 10px",
+        background: "#FAFBFC"
+      }
+    }, React.createElement("div", {
+      style: {
+        color: "var(--muted)",
+        fontSize: 12,
+        marginBottom: 3
+      }
+    }, "\u0E2A\u0E34\u0E48\u0E07\u0E17\u0E35\u0E48\u0E02\u0E2D\u0E41\u0E01\u0E49 (", r.changes.length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)"), r.changes.map((c, i) => React.createElement("div", {
+      key: i,
+      style: {
+        fontSize: 12.5,
+        padding: "3px 0",
+        borderBottom: i < r.changes.length - 1 ? "1px dashed var(--line)" : "none"
+      }
+    }, React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, c.label, ": "), React.createElement("span", {
+      style: {
+        color: "#B91C1C",
+        textDecoration: "line-through"
+      }
+    }, c.from), React.createElement("i", {
+      className: "fa-solid fa-arrow-right",
+      style: {
+        margin: "0 6px",
+        color: "var(--muted)",
+        fontSize: 10
+      }
+    }), React.createElement("span", {
+      style: {
+        color: "#047857",
+        fontWeight: 500
+      }
+    }, c.to)))), r.status !== "pending" && React.createElement("div", {
       style: {
         fontSize: 12.5,
         color: "var(--muted)",
@@ -2601,7 +3121,7 @@ function DeleteApprovals({
     }), " \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"), React.createElement("button", {
       className: "btn btn-sm btn-primary",
       disabled: busy === r.id,
-      style: {
+      style: isEdit ? undefined : {
         background: "#EF4444",
         borderColor: "#EF4444"
       },
@@ -2613,14 +3133,14 @@ function DeleteApprovals({
         height: 13,
         borderWidth: 2
       }
-    }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E25\u0E1A...") : React.createElement(React.Fragment, null, React.createElement("i", {
+    }), " ", isEdit ? "กำลังแก้ไข..." : "กำลังลบ...") : React.createElement(React.Fragment, null, React.createElement("i", {
       className: "fa-solid fa-check"
-    }), " \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E41\u0E25\u0E30\u0E25\u0E1A")))));
+    }), " ", isEdit ? "อนุมัติและแก้ไข" : "อนุมัติและลบ")))));
   }))));
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2225) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2535) ---- */
 const {
   useState,
   useEffect,
@@ -2727,6 +3247,86 @@ function ProjectLabel({
     } : undefined
   }, short);
 }
+function SubSiteField({
+  project,
+  value,
+  onChange,
+  className = "form-field",
+  style,
+  label,
+  hint,
+  disabled,
+  placeholder,
+  showWhenEmpty
+}) {
+  const sites = window.projectSites(project);
+  const legacy = value && !sites.includes(value);
+  if (!sites.length && !legacy && !showWhenEmpty) return null;
+  const empty = !sites.length && !legacy;
+  return React.createElement("div", {
+    className: className,
+    style: style
+  }, React.createElement("label", null, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), label || "ไซต์งานย่อย"), React.createElement("select", {
+    value: value || "",
+    onChange: e => onChange(e.target.value),
+    disabled: disabled || empty
+  }, React.createElement("option", {
+    value: ""
+  }, empty ? project ? "— โครงการนี้ยังไม่มีไซต์งานย่อย —" : "— เลือกโครงการก่อน —" : placeholder || "— ทั้งโครงการ (ไม่ระบุไซต์) —"), sites.map(s => React.createElement("option", {
+    key: s,
+    value: s
+  }, s)), legacy && React.createElement("option", {
+    value: value
+  }, value, " (\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27)")), empty && project ? React.createElement("div", {
+    className: "hint",
+    style: {
+      color: "#B45309"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-info",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22 (\u0E40\u0E0A\u0E48\u0E19 Rig1, Rig2) \u0E44\u0E14\u0E49\u0E17\u0E35\u0E48\u0E40\u0E21\u0E19\u0E39 ", React.createElement("b", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), " \u2192 \u0E41\u0E01\u0E49\u0E44\u0E02\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49 \u2192 \u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22") : hint && React.createElement("div", {
+    className: "hint"
+  }, hint));
+}
+function SubSiteTag({
+  value,
+  project,
+  style
+}) {
+  if (!value) return null;
+  const p = (window.__DATA.projects || []).find(x => x.name === project);
+  const c = p && p.color || "#7C3AED";
+  return React.createElement("span", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "1px 8px",
+      borderRadius: 6,
+      background: c + "18",
+      color: c,
+      fontSize: 11.5,
+      fontWeight: 500,
+      whiteSpace: "nowrap",
+      ...(style || {})
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      fontSize: 9,
+      opacity: .8
+    }
+  }), value);
+}
 function Modal({
   open,
   onClose,
@@ -2789,7 +3389,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2292) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2638) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -3017,7 +3617,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2475) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2821) ---- */
 function ChangePasswordModal({
   user,
   onClose
@@ -3338,6 +3938,14 @@ function Sidebar({
     key: "r-mine",
     icon: "fa-clipboard-check",
     label: "ติดตามสถานะ"
+  }, {
+    key: "machines",
+    icon: "fa-industry",
+    label: "ทะเบียนเครื่องจักร"
+  }, {
+    key: "spare-parts",
+    icon: "fa-box-open",
+    label: "อะไหล่ที่ใช้ซ่อม"
   }];
   const safetyNav = [{
     key: "dashboard",
@@ -3440,7 +4048,7 @@ function Sidebar({
       onNav("notifications");
       onClose && onClose();
     },
-    title: user.role === "Admin" ? "คำขออนุมัติลบข้อมูล" : "สถานะคำขอลบข้อมูลของฉัน"
+    title: user.role === "Admin" ? "คำขออนุมัติลบ / แก้ไขข้อมูล" : "สถานะคำขอลบ / แก้ไขข้อมูลของฉัน"
   }, React.createElement("i", {
     className: "fa-solid fa-bell"
   }), React.createElement("span", null, "\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19"), delReq.badge > 0 && React.createElement("span", {
@@ -3477,7 +4085,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2634) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2983) ---- */
 function Projects({
   user
 }) {
@@ -3489,7 +4097,7 @@ function Projects({
   const filtered = rows.filter(p => {
     if (!q) return true;
     const kw = q.toLowerCase();
-    return [p.name, p.shortName, p.code, p.desc].some(v => String(v || "").toLowerCase().includes(kw));
+    return [p.name, p.shortName, p.code, p.desc, ...window.projectSites(p)].some(v => String(v || "").toLowerCase().includes(kw));
   });
   const syncCache = fn => {
     window.__DATA.projects = fn(window.__DATA.projects || []);
@@ -3589,6 +4197,10 @@ function Projects({
       width: 150
     }
   }, "\u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E48\u0E2D\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E15\u0E47\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", {
+    style: {
+      width: 190
+    }
+  }, "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14"), React.createElement("th", {
     style: {
@@ -3612,6 +4224,7 @@ function Projects({
     const mCnt = (window.__DATA.machines || []).filter(m => m.project === p.name).length;
     const rCnt = (window.__DATA.repairs || []).filter(r => r.project === p.name).length;
     const sc = STATUS_COLOR[p.status] || "#94A3B8";
+    const sites = window.projectSites(p);
     return React.createElement("tr", {
       key: p.id
     }, React.createElement("td", null, React.createElement("span", {
@@ -3668,7 +4281,29 @@ function Projects({
         color: "#CBD5E1",
         fontSize: 12
       }
-    }))), React.createElement("td", {
+    }))), React.createElement("td", null, sites.length ? React.createElement("div", {
+      style: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 4
+      }
+    }, sites.map(s => React.createElement("span", {
+      key: s,
+      style: {
+        fontSize: 11.5,
+        padding: "2px 8px",
+        borderRadius: 6,
+        background: (p.color || "#3B82F6") + "18",
+        color: p.color || "#3B82F6",
+        fontWeight: 500,
+        whiteSpace: "nowrap"
+      }
+    }, s))) : React.createElement("span", {
+      style: {
+        color: "var(--muted)",
+        fontSize: 12
+      }
+    }, "\u2014")), React.createElement("td", {
       className: "hide-on-mobile",
       style: {
         color: "var(--muted)",
@@ -3736,7 +4371,7 @@ function Projects({
       className: "fa-solid fa-trash"
     }))))));
   }), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
-    colSpan: "8"
+    colSpan: "9"
   }, React.createElement("div", {
     className: "empty"
   }, React.createElement("i", {
@@ -3756,6 +4391,45 @@ function ProjectForm({
 }) {
   const [f, setF] = React.useState(init);
   const palette = ["#3B82F6", "#8B5CF6", "#EF4444", "#10B981", "#F59E0B", "#06B6D4", "#EC4899", "#6366F1", "#F97316", "#14B8A6", "#A855F7", "#0EA5E9", "#DC2626", "#16A34A", "#D97706", "#64748B"];
+  const [siteInput, setSiteInput] = React.useState("");
+  const sites = window.projectSites(f);
+  const addSites = raw => {
+    const parts = String(raw || "").split(",").map(s => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const next = sites.slice();
+    parts.forEach(s => {
+      if (!next.some(x => x.toLowerCase() === s.toLowerCase())) next.push(s);
+    });
+    setF(prev => ({
+      ...prev,
+      sites: next
+    }));
+    setSiteInput("");
+  };
+  const removeSite = s => setF(prev => ({
+    ...prev,
+    sites: sites.filter(x => x !== s)
+  }));
+  const moveSite = (i, dir) => {
+    const next = sites.slice();
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setF(prev => ({
+      ...prev,
+      sites: next
+    }));
+  };
+  const submit = () => {
+    const merged = sites.slice();
+    String(siteInput || "").split(",").map(s => s.trim()).filter(Boolean).forEach(s => {
+      if (!merged.some(x => x.toLowerCase() === s.toLowerCase())) merged.push(s);
+    });
+    onSave({
+      ...f,
+      sites: merged.length ? merged : null
+    });
+  };
   return React.createElement(Modal, {
     open: true,
     onClose: onClose,
@@ -3765,7 +4439,7 @@ function ProjectForm({
       onClick: onClose
     }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
       className: "btn btn-primary",
-      onClick: () => onSave(f)
+      onClick: submit
     }, React.createElement("i", {
       className: "fa-solid fa-floppy-disk"
     }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"))
@@ -3824,6 +4498,125 @@ function ProjectForm({
   }, "\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23"), React.createElement("option", {
     value: "inactive"
   }, "\u0E1B\u0E34\u0E14\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("input", {
+    style: {
+      flex: "1 1 200px",
+      minWidth: 0
+    },
+    value: siteInput,
+    onChange: e => {
+      const v = e.target.value;
+      if (v.includes(",")) addSites(v);else setSiteInput(v);
+    },
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addSites(siteInput);
+      }
+    },
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 Rig1 \u0E41\u0E25\u0E49\u0E27\u0E01\u0E14 Enter"
+  }), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost",
+    onClick: () => addSites(siteInput),
+    disabled: !siteInput.trim()
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E0B\u0E15\u0E4C")), sites.length > 0 && React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 6,
+      marginTop: 10
+    }
+  }, sites.map((s, i) => React.createElement("span", {
+    key: s,
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "4px 6px 4px 11px",
+      borderRadius: 999,
+      background: (f.color || "#3B82F6") + "1A",
+      color: f.color || "#3B82F6",
+      fontSize: 12.5,
+      fontWeight: 500
+    }
+  }, React.createElement("span", {
+    style: {
+      cursor: "default"
+    }
+  }, s), React.createElement("span", {
+    style: {
+      display: "inline-flex",
+      gap: 2
+    }
+  }, React.createElement("button", {
+    type: "button",
+    title: "\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E02\u0E36\u0E49\u0E19",
+    onClick: () => moveSite(i, -1),
+    disabled: i === 0,
+    style: {
+      border: "none",
+      background: "none",
+      cursor: i === 0 ? "default" : "pointer",
+      color: "inherit",
+      opacity: i === 0 ? .25 : .65,
+      padding: "0 1px",
+      fontSize: 10
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-chevron-left"
+  })), React.createElement("button", {
+    type: "button",
+    title: "\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E25\u0E07",
+    onClick: () => moveSite(i, 1),
+    disabled: i === sites.length - 1,
+    style: {
+      border: "none",
+      background: "none",
+      cursor: i === sites.length - 1 ? "default" : "pointer",
+      color: "inherit",
+      opacity: i === sites.length - 1 ? .25 : .65,
+      padding: "0 1px",
+      fontSize: 10
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-chevron-right"
+  })), React.createElement("button", {
+    type: "button",
+    title: "\u0E25\u0E1A\u0E44\u0E0B\u0E15\u0E4C\u0E19\u0E35\u0E49",
+    onClick: () => removeSite(s),
+    style: {
+      border: "none",
+      background: "none",
+      cursor: "pointer",
+      color: "inherit",
+      opacity: .75,
+      padding: "0 3px",
+      fontSize: 11
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark"
+  })))))), React.createElement("div", {
+    className: "hint"
+  }, "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E20\u0E32\u0E22\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u0E40\u0E0A\u0E48\u0E19 Rig1 \xB7 Rig2 \xB7 \u0E41\u0E04\u0E21\u0E1B\u0E4C\u0E04\u0E19\u0E07\u0E32\u0E19 \u2014 \u0E0A\u0E37\u0E48\u0E2D\u0E2B\u0E49\u0E32\u0E21\u0E0B\u0E49\u0E33\u0E01\u0E31\u0E19\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E40\u0E14\u0E35\u0E22\u0E27 \xB7 \u0E40\u0E27\u0E49\u0E19\u0E27\u0E48\u0E32\u0E07\u0E44\u0E14\u0E49\u0E16\u0E49\u0E32\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E44\u0E21\u0E48\u0E21\u0E35\u0E44\u0E0B\u0E15\u0E4C\u0E22\u0E48\u0E2D\u0E22")), React.createElement("div", {
     className: "form-field",
     style: {
       gridColumn: "1/-1"
@@ -3929,7 +4722,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 2817) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3236) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -4326,7 +5119,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3063) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3482) ---- */
 function Dashboard({
   user,
   goTo
@@ -5479,7 +6272,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3556) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3975) ---- */
 function Repairs({
   user
 }) {
@@ -5512,7 +6305,7 @@ function Repairs({
     return rows.filter(r => {
       if (q) {
         const qq = q.toLowerCase();
-        if (!(r.running.toLowerCase().includes(qq) || r.title.toLowerCase().includes(qq) || (r.siteId || "").toLowerCase().includes(qq))) return false;
+        if (!(r.running.toLowerCase().includes(qq) || r.title.toLowerCase().includes(qq) || (r.siteId || "").toLowerCase().includes(qq) || (r.subSite || "").toLowerCase().includes(qq))) return false;
       }
       if (status !== "all" && r.status !== status) return false;
       if (cat !== "all" && r.categoryId !== cat) return false;
@@ -5890,7 +6683,14 @@ function Repairs({
     }
   }, React.createElement(ProjectLabel, {
     name: r.project
-  })), React.createElement("td", {
+  }), r.subSite && React.createElement("div", {
+    style: {
+      marginTop: 3
+    }
+  }, React.createElement(SubSiteTag, {
+    value: r.subSite,
+    project: r.project
+  }))), React.createElement("td", {
     className: "hide-on-mobile"
   }, React.createElement(CategoryChip, {
     categoryId: r.categoryId
@@ -6039,7 +6839,7 @@ function RepairDetail({
       }
     }, React.createElement("i", {
       className: "fa-solid fa-user-pen"
-    }), " \u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"), React.createElement("button", {
+    }), " ", user.role === "Reporter" ? "ขอแก้ไขข้อมูล" : "แก้ไขข้อมูล"), React.createElement("button", {
       className: "btn btn-ghost",
       onClick: () => window.shareRepairImage(r, user)
     }, React.createElement("i", {
@@ -6114,7 +6914,7 @@ function RepairDetail({
     }
   }, p.text), React.createElement(Badge, {
     status: p.status
-  }), React.createElement("select", {
+  }), user.role !== "Reporter" && React.createElement("select", {
     className: "inp",
     style: {
       width: "auto",
@@ -6168,10 +6968,28 @@ function RepairDetail({
     className: "v mono"
   }, r.machineCode || "—")), React.createElement("div", null, React.createElement("div", {
     className: "k"
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E01\u0E34\u0E42\u0E25\u0E40\u0E21\u0E15\u0E23"), React.createElement("div", {
+    className: "v"
+  }, r.odometerKm ? Number(r.odometerKm).toLocaleString("th-TH") : "—")), React.createElement("div", null, React.createElement("div", {
+    className: "k"
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07"), React.createElement("div", {
+    className: "v"
+  }, r.hourMeter ? Number(r.hourMeter).toLocaleString("th-TH") : "—")), React.createElement("div", null, React.createElement("div", {
+    className: "k"
+  }, "\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A / \u0E1C\u0E39\u0E49\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21"), React.createElement("div", {
+    className: "v"
+  }, r.driverName || "—")), React.createElement("div", null, React.createElement("div", {
+    className: "k"
   }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23/\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19"), React.createElement("div", {
     className: "v"
   }, React.createElement(ProjectLabel, {
     name: r.project
+  }), r.subSite && React.createElement(SubSiteTag, {
+    value: r.subSite,
+    project: r.project,
+    style: {
+      marginLeft: 6
+    }
   }))), React.createElement("div", null, React.createElement("div", {
     className: "k"
   }, "\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48"), React.createElement("div", {
@@ -6529,7 +7347,7 @@ window.buildRepairFormDoc = function (r, user) {
     rows += "<tr><td class='c-no'>" + (i + 1) + "</td><td class='c-item'>" + fill(p && p.text) + "</td><td class='c-insp'></td></tr>";
   }
   const logo = "<img src='" + window.PNM_LOGO_DATAURL + "' width='92' alt='' style='display:block'>";
-  const html = "<!doctype html><html lang='th'><head><meta charset='utf-8'><title>ใบแจ้งซ่อม " + esc(r.running) + "</title><style>" + "@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Sarabun',Tahoma,Arial,sans-serif;color:#000;font-size:13px;margin:0}" + ".sheet{width:186mm;margin:0 auto}.hd{display:flex;align-items:center;gap:14px;margin-bottom:2px}.hd-title{flex:1;text-align:center}.cn-th{font-size:22px;font-weight:700}.cn-en{font-size:15px;font-weight:700;letter-spacing:.5px}.hd-sp{width:92px}" + ".doc-title{text-align:center;font-size:16px;font-weight:700;margin:6px 0 12px}" + ".row2{display:flex;justify-content:space-between;margin-bottom:8px}" + ".info .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:5px 0}" + "b{font-weight:600;white-space:nowrap}" + ".dot{border-bottom:1px dotted #000;min-height:16px;padding:0 4px;text-align:center;display:inline-block}" + ".f1{flex:1;min-width:70px}.f2{flex:2;min-width:120px}.w180{width:180px}.w120{width:120px}.fwide{flex:1;min-width:300px}" + ".box{border:1.5px solid #000;margin:10px 0}.box-hd{text-align:center;font-weight:700;border-bottom:1.5px solid #000;padding:5px;background:#f2f2f2}" + ".rt{width:100%;border-collapse:collapse;table-layout:fixed}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px;word-break:break-word;overflow-wrap:anywhere}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center;vertical-align:top}.rt .c-item{width:64%;white-space:pre-wrap;line-height:1.45}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px;vertical-align:top}" + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}" + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}" + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}" + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}" + "</style></head><body><div class='sheet'>" + "<div class='hd'><div>" + logo + "</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>" + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>" + "<div class='row2'><div>เลขที่ <span class='dot w180'>" + fill(r.running) + "</span></div><div>วันที่ <span class='dot w120'>" + fill(dateStr) + "</span></div></div>" + "<div class='info'>" + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>" + fill(cat.name) + "</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>" + fill(r.machineCode) + "</span><b>กรรมสิทธิ์</b><span class='dot f1'>" + fill(m.ownership) + "</span></div>" + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>" + fill(m.brand) + "</span><b>รุ่น</b><span class='dot f1'>" + fill(m.model) + "</span><b>ขนาด</b><span class='dot f1'>" + fill(m.size) + "</span><b>ปี</b><span class='dot f1'>" + fill(m.year) + "</span><b>ทะเบียน</b><span class='dot f1'></span></div>" + "<div class='ln'><b>Serial No.</b><span class='dot f1'>" + fill(m.serial) + "</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>" + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'></span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>" + fill(m.hours) + "</span></div>" + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(projLabel) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>" + "</div>" + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>" + rows + "</tbody></table></div>" + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>" + "<tr class='sig-name'><td>" + fill(m.driverName) + "</td><td>" + fill(r.reporterName) + "</td><td></td><td></td></tr>" + "<tr class='sig-paren'><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td></tr>" + "<tr class='sig-date'><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ ..............</td><td>วันที่ ..............</td></tr></table>" + "<div class='box'><div class='box-hd'>สถานที่ทำการซ่อม</div><div class='loc'>" + "<div class='ln'><b>แจ้งซ่อมที่</b><span class='dot fwide'>" + fill(rp.reportAt) + "</span></div>" + "<div class='ln'><b>สถานที่ทำการซ่อม</b>" + box(rp.mode === "onsite") + "ส่งช่างซ่อมหน้างาน ที่ <span class='dot f1'>" + fill(rp.onsite) + "</span></div>" + "<div class='ln indent'>" + box(rp.mode === "workshop") + "โรงซ่อมของบริษัทที่แจ้งซ่อม</div>" + "<div class='ln indent'>" + box(rp.mode === "other") + "อื่นๆ <span class='dot f1'>" + fill(rp.other) + "</span></div>" + "<div class='ln'><b>หมายเหตุ</b><span class='dot fwide'>" + fill(rp.note) + "</span></div>" + "</div></div>" + "</div></body></html>";
+  const html = "<!doctype html><html lang='th'><head><meta charset='utf-8'><title>ใบแจ้งซ่อม " + esc(r.running) + "</title><style>" + "@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Sarabun',Tahoma,Arial,sans-serif;color:#000;font-size:13px;margin:0}" + ".sheet{width:186mm;margin:0 auto}.hd{display:flex;align-items:center;gap:14px;margin-bottom:2px}.hd-title{flex:1;text-align:center}.cn-th{font-size:22px;font-weight:700}.cn-en{font-size:15px;font-weight:700;letter-spacing:.5px}.hd-sp{width:92px}" + ".doc-title{text-align:center;font-size:16px;font-weight:700;margin:6px 0 12px}" + ".row2{display:flex;justify-content:space-between;margin-bottom:8px}" + ".info .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:5px 0}" + "b{font-weight:600;white-space:nowrap}" + ".dot{border-bottom:1px dotted #000;min-height:16px;padding:0 4px;text-align:center;display:inline-block}" + ".f1{flex:1;min-width:70px}.f2{flex:2;min-width:120px}.w180{width:180px}.w120{width:120px}.fwide{flex:1;min-width:300px}" + ".box{border:1.5px solid #000;margin:10px 0}.box-hd{text-align:center;font-weight:700;border-bottom:1.5px solid #000;padding:5px;background:#f2f2f2}" + ".rt{width:100%;border-collapse:collapse;table-layout:fixed}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px;word-break:break-word;overflow-wrap:anywhere}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center;vertical-align:top}.rt .c-item{width:64%;white-space:pre-wrap;line-height:1.45}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px;vertical-align:top}" + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}" + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}" + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}" + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}" + "</style></head><body><div class='sheet'>" + "<div class='hd'><div>" + logo + "</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>" + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>" + "<div class='row2'><div>เลขที่ <span class='dot w180'>" + fill(r.running) + "</span></div><div>วันที่ <span class='dot w120'>" + fill(dateStr) + "</span></div></div>" + "<div class='info'>" + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>" + fill(cat.name) + "</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>" + fill(r.machineCode) + "</span><b>กรรมสิทธิ์</b><span class='dot f1'>" + fill(m.ownership) + "</span></div>" + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>" + fill(m.brand) + "</span><b>รุ่น</b><span class='dot f1'>" + fill(m.model) + "</span><b>ขนาด</b><span class='dot f1'>" + fill(m.size) + "</span><b>ปี</b><span class='dot f1'>" + fill(m.year) + "</span><b>ทะเบียน</b><span class='dot f1'></span></div>" + "<div class='ln'><b>Serial No.</b><span class='dot f1'>" + fill(m.serial) + "</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>" + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'>" + fill(r.odometerKm) + "</span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>" + fill(r.hourMeter || m.hours) + "</span></div>" + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(projLabel) + "</span><b>ไซต์งาน</b><span class='dot f1'>" + fill(r.subSite || m.subSite) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>" + "</div>" + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>" + rows + "</tbody></table></div>" + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>" + "<tr class='sig-name'><td>" + fill(r.driverName || m.driverName) + "</td><td>" + fill(r.reporterName) + "</td><td></td><td></td></tr>" + "<tr class='sig-paren'><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td></tr>" + "<tr class='sig-date'><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ ..............</td><td>วันที่ ..............</td></tr></table>" + "<div class='box'><div class='box-hd'>สถานที่ทำการซ่อม</div><div class='loc'>" + "<div class='ln'><b>แจ้งซ่อมที่</b><span class='dot fwide'>" + fill(rp.reportAt) + "</span></div>" + "<div class='ln'><b>สถานที่ทำการซ่อม</b>" + box(rp.mode === "onsite") + "ส่งช่างซ่อมหน้างาน ที่ <span class='dot f1'>" + fill(rp.onsite) + "</span></div>" + "<div class='ln indent'>" + box(rp.mode === "workshop") + "โรงซ่อมของบริษัทที่แจ้งซ่อม</div>" + "<div class='ln indent'>" + box(rp.mode === "other") + "อื่นๆ <span class='dot f1'>" + fill(rp.other) + "</span></div>" + "<div class='ln'><b>หมายเหตุ</b><span class='dot fwide'>" + fill(rp.note) + "</span></div>" + "</div></div>" + "</div></body></html>";
   return html;
 };
 window.printRepairForm = function (r, user) {
@@ -6832,7 +7650,8 @@ function ProblemsField({
 function EditRepairModal({
   r,
   onClose,
-  onSave
+  onSave,
+  scope
 }) {
   const toDateStr = d => {
     if (!d) return "";
@@ -6844,7 +7663,11 @@ function EditRepairModal({
     desc: r.desc || "",
     repairNote: r.repairNote || "",
     siteId: r.siteId || "",
+    subSite: r.subSite || "",
     machineCode: r.machineCode || "",
+    odometerKm: r.odometerKm || "",
+    hourMeter: r.hourMeter || "",
+    driverName: r.driverName || "",
     project: r.project || "",
     categoryId: r.categoryId || "",
     status: r.status || "new",
@@ -6858,6 +7681,8 @@ function EditRepairModal({
     ...p,
     [k]: v
   }));
+  const isReporter = scope === "reporter";
+  const REPORTER_FIELDS = ["title", "desc", "siteId", "subSite", "machineCode", "odometerKm", "hourMeter", "driverName", "categoryId", "createdAt", "photos", "problems"];
   const submit = () => {
     const title = (f.title || "").split("\n").map(s => s.trim()).filter(Boolean).join("\n");
     const existing = window.getProblems(r);
@@ -6865,7 +7690,7 @@ function EditRepairModal({
       text: t,
       status: existing[i] && existing[i].status || r.status || "new"
     }));
-    const patch = {
+    const full = {
       ...f,
       title,
       problems,
@@ -6873,6 +7698,14 @@ function EditRepairModal({
       cost: f.cost === "" ? "" : Number(f.cost) || 0,
       createdAt: f.createdAt ? new Date(f.createdAt).toISOString() : r.createdAt
     };
+    if (!isReporter) {
+      onSave(r, full);
+      return;
+    }
+    const patch = {};
+    REPORTER_FIELDS.forEach(k => {
+      if (k in full) patch[k] = full[k];
+    });
     onSave(r, patch);
   };
   const technicians = (window.__DATA.users || []).filter(u => ["Technician", "Officer", "Admin", "Engineer"].includes(u.role));
@@ -6886,7 +7719,7 @@ function EditRepairModal({
         color: "#1E40AF",
         marginRight: 8
       }
-    }), "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 \xB7 ", React.createElement("span", {
+    }), isReporter ? "ขอแก้ไขใบแจ้งซ่อม" : "แก้ไขข้อมูล", " \xB7 ", React.createElement("span", {
       className: "ticket-id",
       style: {
         marginLeft: 6
@@ -6899,9 +7732,24 @@ function EditRepairModal({
       className: "btn btn-primary",
       onClick: submit
     }, React.createElement("i", {
-      className: "fa-solid fa-floppy-disk"
-    }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E41\u0E01\u0E49\u0E44\u0E02"))
-  }, React.createElement("div", {
+      className: `fa-solid ${isReporter ? "fa-paper-plane" : "fa-floppy-disk"}`
+    }), " ", isReporter ? "ส่งคำขอแก้ไข" : "บันทึกการแก้ไข"))
+  }, isReporter ? React.createElement("div", {
+    style: {
+      background: "#FEF3C7",
+      border: "1px solid #FDE68A",
+      color: "#92400E",
+      padding: "10px 14px",
+      borderRadius: 8,
+      fontSize: 13,
+      marginBottom: 16
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-shield-halved",
+    style: {
+      marginRight: 6
+    }
+  }), "\u0E41\u0E01\u0E49\u0E44\u0E14\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E35\u0E48\u0E04\u0E38\u0E13\u0E01\u0E23\u0E2D\u0E01\u0E15\u0E2D\u0E19\u0E41\u0E08\u0E49\u0E07 \xB7 \u0E01\u0E14\u0E2A\u0E48\u0E07\u0E41\u0E25\u0E49\u0E27 ", React.createElement("b", null, "\u0E15\u0E49\u0E2D\u0E07\u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A (Admin) \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"), " \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E14\u0E34\u0E21\u0E08\u0E30\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E08\u0E19\u0E01\u0E27\u0E48\u0E32\u0E08\u0E30\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34") : React.createElement("div", {
     style: {
       background: "#EFF6FF",
       border: "1px solid #BFDBFE",
@@ -6942,7 +7790,7 @@ function EditRepairModal({
     rows: "2",
     value: f.desc,
     onChange: e => set("desc", e.target.value)
-  })), React.createElement("div", {
+  })), !isReporter && React.createElement("div", {
     style: {
       gridColumn: "1 / -1"
     }
@@ -7015,18 +7863,73 @@ function EditRepairModal({
   }, (window.__DATA.machines || []).map(m => React.createElement("option", {
     key: m.id,
     value: m.code
-  }, m.name, m.project ? ` · ${m.project}` : "")))), React.createElement("div", null, React.createElement("label", {
+  }, m.name, m.project ? ` · ${m.project}` : "")))), isReporter ? React.createElement("div", null, React.createElement("label", {
+    className: "k"
+  }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23/\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19"), React.createElement("input", {
+    className: "inp",
+    value: f.project || "— ไม่ระบุ —",
+    disabled: true,
+    style: {
+      background: "#F8FAFC",
+      color: "var(--muted)"
+    }
+  })) : React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23/\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19"), React.createElement("select", {
     className: "inp",
     value: f.project,
-    onChange: e => set("project", e.target.value)
+    onChange: e => setF(p => ({
+      ...p,
+      project: e.target.value,
+      subSite: ""
+    }))
   }, React.createElement("option", {
     value: ""
   }, "\u2014 \u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38 \u2014"), Array.from(new Set((window.__DATA.machines || []).map(m => m.project).filter(Boolean))).sort().map(p => React.createElement("option", {
     key: p,
     value: p
-  }, p)))), React.createElement("div", null, React.createElement("label", {
+  }, p)))), (() => {
+    const sites = window.projectSites(f.project);
+    const legacy = f.subSite && !sites.includes(f.subSite);
+    return sites.length || legacy ? React.createElement("div", null, React.createElement("label", {
+      className: "k"
+    }, "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), React.createElement("select", {
+      className: "inp",
+      value: f.subSite,
+      onChange: e => set("subSite", e.target.value)
+    }, React.createElement("option", {
+      value: ""
+    }, "\u2014 \u0E17\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E44\u0E0B\u0E15\u0E4C) \u2014"), sites.map(s => React.createElement("option", {
+      key: s,
+      value: s
+    }, s)), legacy && React.createElement("option", {
+      value: f.subSite
+    }, f.subSite, " (\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27)"))) : null;
+  })(), React.createElement("div", null, React.createElement("label", {
+    className: "k"
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E01\u0E34\u0E42\u0E25\u0E40\u0E21\u0E15\u0E23"), React.createElement("input", {
+    className: "inp",
+    type: "number",
+    min: "0",
+    step: "any",
+    value: f.odometerKm,
+    onChange: e => set("odometerKm", e.target.value)
+  })), React.createElement("div", null, React.createElement("label", {
+    className: "k"
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07"), React.createElement("input", {
+    className: "inp",
+    type: "number",
+    min: "0",
+    step: "any",
+    value: f.hourMeter,
+    onChange: e => set("hourMeter", e.target.value)
+  })), React.createElement("div", null, React.createElement("label", {
+    className: "k"
+  }, "\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A / \u0E1C\u0E39\u0E49\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21"), React.createElement("input", {
+    className: "inp",
+    value: f.driverName,
+    onChange: e => set("driverName", e.target.value)
+  })), React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48"), React.createElement("select", {
     className: "inp",
@@ -7035,7 +7938,7 @@ function EditRepairModal({
   }, window.__DATA.categories.map(c => React.createElement("option", {
     key: c.id,
     value: c.id
-  }, c.name)))), React.createElement("div", null, React.createElement("label", {
+  }, c.name)))), !isReporter && React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), React.createElement("select", {
     className: "inp",
@@ -7044,7 +7947,7 @@ function EditRepairModal({
   }, window.__DATA.statuses.map(s => React.createElement("option", {
     key: s.key,
     value: s.key
-  }, s.label)))), React.createElement("div", null, React.createElement("label", {
+  }, s.label)))), !isReporter && React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E04\u0E48\u0E32\u0E43\u0E0A\u0E49\u0E08\u0E48\u0E32\u0E22 (\u0E1A\u0E32\u0E17)"), React.createElement("input", {
     className: "inp",
@@ -7058,13 +7961,13 @@ function EditRepairModal({
     type: "date",
     value: f.createdAt,
     onChange: e => set("createdAt", e.target.value)
-  })), React.createElement("div", null, React.createElement("label", {
+  })), !isReporter && React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E1C\u0E39\u0E49\u0E41\u0E08\u0E49\u0E07"), React.createElement("input", {
     className: "inp",
     value: f.reporterName,
     onChange: e => set("reporterName", e.target.value)
-  })), React.createElement("div", null, React.createElement("label", {
+  })), !isReporter && React.createElement("div", null, React.createElement("label", {
     className: "k"
   }, "\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A\u0E1C\u0E34\u0E14\u0E0A\u0E2D\u0E1A"), React.createElement("select", {
     className: "inp",
@@ -7486,7 +8389,7 @@ window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4261) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4723) ---- */
 function Users({
   user
 }) {
@@ -8013,7 +8916,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4429) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4891) ---- */
 function Categories({
   user
 }) {
@@ -8276,7 +9179,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4517) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4979) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -8786,6 +9689,7 @@ async function exportMachinesExcel(list) {
       "ขนาด": m.size || "",
       "หมายเลขเครื่อง (Serial)": m.serial || "",
       "โครงการ": m.project || "",
+      "ไซต์งานย่อย": m.subSite || "",
       "สถานที่": m.location || "",
       "กรรมสิทธิ์": m.ownership || "",
       "สถานะ": m.status || "",
@@ -9030,12 +9934,21 @@ function Machines({
   const [q, setQ] = React.useState("");
   const [catF, setCatF] = React.useState([]);
   const [ownF, setOwnF] = React.useState([]);
+  const [siteF, setSiteF] = React.useState([]);
   const [sortF, setSortF] = React.useState("none");
   const [detail, setDetail] = React.useState(null);
   const [edit, setEdit] = React.useState(null);
   React.useEffect(() => {
     setRows(visibleRows);
   }, [visibleRows]);
+  const {
+    mine: myReqs
+  } = window.useDeleteRequests(user);
+  const pendingEditIds = React.useMemo(() => new Set((myReqs || []).filter(x => x.kind === "edit" && x.status === "pending" && x.action === "updateMachine").map(x => String(x.targetKey))), [myReqs]);
+  const decidedCount = (myReqs || []).filter(x => x.status !== "pending").length;
+  React.useEffect(() => {
+    setRows(window.filterByUserProjects(user, window.__DATA.machines, "project"));
+  }, [decidedCount]);
   const catOptions = React.useMemo(() => {
     const count = id => rows.filter(m => (m.categoryId || "") === id).length;
     const opts = (window.__DATA.categories || []).map(c => ({
@@ -9067,14 +9980,33 @@ function Machines({
     });
     return opts;
   }, [rows]);
+  const siteOptions = React.useMemo(() => {
+    const tally = {};
+    rows.forEach(m => {
+      const s = (m.subSite || "").trim() || "__none__";
+      tally[s] = (tally[s] || 0) + 1;
+    });
+    const opts = Object.keys(tally).filter(s => s !== "__none__").sort((a, b) => a.localeCompare(b, "th", {
+      numeric: true
+    })).map(s => ({
+      value: s,
+      label: `${s} (${tally[s]})`
+    }));
+    if (opts.length && tally.__none__) opts.push({
+      value: "__none__",
+      label: `— ไม่ระบุไซต์ — (${tally.__none__})`
+    });
+    return opts;
+  }, [rows]);
   const filtered = rows.filter(m => {
     if (q) {
       const qq = q.toLowerCase();
-      const hay = [m.name, m.code, m.brand, m.model, m.year, m.serial, m.project].map(x => String(x || "").toLowerCase()).join(" ");
+      const hay = [m.name, m.code, m.brand, m.model, m.year, m.serial, m.project, m.subSite].map(x => String(x || "").toLowerCase()).join(" ");
       if (!hay.includes(qq)) return false;
     }
     if (catF.length && !catF.includes(m.categoryId || "__none__")) return false;
     if (ownF.length && !ownF.includes((m.ownership || "").trim() || "__none__")) return false;
+    if (siteF.length && !siteF.includes((m.subSite || "").trim() || "__none__")) return false;
     return true;
   });
   if (sortF !== "none") {
@@ -9111,6 +10043,25 @@ function Machines({
   const save = async form => {
     try {
       if (form.id) {
+        if (user.role !== "Admin") {
+          const before = (window.__DATA.machines || []).find(x => x.id === form.id) || {};
+          const changes = window.diffFields(before, form, window.MACHINE_FIELD_LABELS);
+          const sent = await window.requestEditApproval({
+            user,
+            action: "updateMachine",
+            payload: {
+              id: form.id,
+              patch: form
+            },
+            entityLabel: "เครื่องจักร",
+            targetName: `${form.name || ""} (${form.code || ""})`.trim(),
+            project: form.project || "",
+            targetInfo: [form.brand, form.model, form.serial].filter(Boolean).join(" · "),
+            changes
+          });
+          if (sent) setEdit(null);
+          return;
+        }
         await window.api("updateMachine", {
           id: form.id,
           patch: form
@@ -9160,11 +10111,14 @@ function Machines({
   };
   const handleTransfer = async (machine, {
     toProject,
+    toSubSite,
     note
   }) => {
     const entry = {
       from: machine.project || "ไม่ระบุ",
       to: toProject,
+      fromSubSite: machine.subSite || "",
+      toSubSite: toSubSite || "",
       when: new Date().toISOString(),
       by: user.name,
       note: note || ""
@@ -9172,6 +10126,7 @@ function Machines({
     const transferHistory = [...(machine.transferHistory || []), entry];
     const patch = {
       project: toProject,
+      subSite: toSubSite || "",
       transferHistory
     };
     try {
@@ -9229,6 +10184,12 @@ function Machines({
     selected: ownF,
     onChange: setOwnF,
     options: ownOptions
+  }), siteOptions.length > 0 && React.createElement(CheckFilter, {
+    label: "\u0E17\u0E38\u0E01\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22",
+    icon: "fa-sitemap",
+    selected: siteF,
+    onChange: setSiteF,
+    options: siteOptions
   }), React.createElement("select", {
     value: sortF,
     onChange: e => setSortF(e.target.value),
@@ -9256,13 +10217,14 @@ function Machines({
     style: {
       color: "#1D6F42"
     }
-  }), " \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel"), ["Admin", "Officer", "Engineer"].includes(user.role) && React.createElement("button", {
+  }), " \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel"), ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user)) && React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => setEdit({
       mode: "create",
       m: {
         id: "",
         project: "",
+        subSite: "",
         code: "",
         name: "",
         brand: "",
@@ -9324,7 +10286,25 @@ function Machines({
       }
     }, React.createElement("i", {
       className: `fa-solid ${cat.icon}`
-    }), " ", cat.name), React.createElement("div", {
+    }), " ", cat.name), pendingEditIds.has(String(m.id)) && React.createElement("div", {
+      style: {
+        position: "absolute",
+        left: 8,
+        bottom: 8,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "#FEF3C7",
+        color: "#B45309",
+        fontSize: 10.5,
+        fontWeight: 600
+      },
+      title: "\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E41\u0E01\u0E49\u0E44\u0E02\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"
+    }, React.createElement("i", {
+      className: "fa-solid fa-hourglass-half"
+    }), " \u0E23\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E41\u0E01\u0E49\u0E44\u0E02"), React.createElement("div", {
       className: "status-dot",
       style: {
         background: statusColor(m.status)
@@ -9355,7 +10335,9 @@ function Machines({
       className: "fa-solid fa-diagram-project"
     }), " ", React.createElement(ProjectLabel, {
       name: m.project
-    })), m.ownership && React.createElement("span", null, React.createElement("i", {
+    })), m.subSite && React.createElement("span", null, React.createElement("i", {
+      className: "fa-solid fa-sitemap"
+    }), " ", m.subSite), m.ownership && React.createElement("span", null, React.createElement("i", {
       className: "fa-solid fa-handshake"
     }), " ", m.ownership))));
   }), filtered.length === 0 && React.createElement("div", {
@@ -9369,7 +10351,7 @@ function Machines({
     className: "fa-solid fa-industry"
   }), React.createElement("div", {
     className: "t"
-  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A"), React.createElement("div", null, ["Admin", "Officer", "Engineer"].includes(user.role) ? "กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น" : "รอผู้ดูแลระบบเพิ่มข้อมูล")))), detail && React.createElement(MachineDetail, {
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A"), React.createElement("div", null, ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user)) ? "กดปุ่ม 'เพิ่มเครื่องจักร' ด้านบนเพื่อเริ่มต้น" : "รอผู้ดูแลระบบเพิ่มข้อมูล")))), detail && React.createElement(MachineDetail, {
     m: detail,
     user: user,
     onClose: () => setDetail(null),
@@ -9497,7 +10479,11 @@ function MachineForm({
     }
   }), "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u2014 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E43\u0E19\u0E40\u0E21\u0E19\u0E39 ", React.createElement("strong", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), " \u0E01\u0E48\u0E2D\u0E19") : React.createElement(React.Fragment, null, React.createElement("select", {
     value: f.project || "",
-    onChange: e => up("project", e.target.value)
+    onChange: e => setF(p => ({
+      ...p,
+      project: e.target.value,
+      subSite: ""
+    }))
   }, React.createElement("option", {
     value: ""
   }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014"), projects.map(p => React.createElement("option", {
@@ -9528,7 +10514,13 @@ function MachineForm({
     }), proj.code && React.createElement("span", {
       className: "mono"
     }, proj.code), proj.name) : null;
-  })())), React.createElement("div", {
+  })())), React.createElement(SubSiteField, {
+    project: f.project,
+    value: f.subSite,
+    onChange: v => up("subSite", v),
+    showWhenEmpty: true,
+    hint: "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E17\u0E35\u0E48\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E19\u0E35\u0E49\u0E1B\u0E23\u0E30\u0E08\u0E33\u0E2D\u0E22\u0E39\u0E48 \xB7 \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E43\u0E2B\u0E21\u0E48"
+  }), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E23\u0E2B\u0E31\u0E2A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 *"), React.createElement("input", {
     value: f.code || "",
@@ -9806,7 +10798,9 @@ function TransferMachineModal({
 }) {
   const projects = window.visibleProjects(user).filter(p => p.name !== m.project);
   const [toProject, setToProject] = React.useState("");
+  const [toSubSite, setToSubSite] = React.useState("");
   const [note, setNote] = React.useState("");
+  const toSites = window.projectSites(toProject);
   const inSt = {
     width: "100%",
     padding: "9px 11px",
@@ -9826,6 +10820,7 @@ function TransferMachineModal({
     }
     onSave({
       toProject,
+      toSubSite,
       note
     });
   };
@@ -9881,7 +10876,18 @@ function TransferMachineModal({
       color: "#B45309",
       marginTop: 2
     }
-  }, m.project)), React.createElement("div", null, React.createElement("label", {
+  }, m.project), m.subSite && React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "#B45309",
+      marginTop: 3
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22: ", m.subSite)), React.createElement("div", null, React.createElement("label", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -9895,7 +10901,10 @@ function TransferMachineModal({
   }, "*")), React.createElement("select", {
     style: inSt,
     value: toProject,
-    onChange: e => setToProject(e.target.value)
+    onChange: e => {
+      setToProject(e.target.value);
+      setToSubSite("");
+    }
   }, React.createElement("option", {
     value: ""
   }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 \u2014"), projects.map(p => React.createElement("option", {
@@ -9907,7 +10916,28 @@ function TransferMachineModal({
       color: "var(--muted)",
       marginTop: 5
     }
-  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E2D\u0E37\u0E48\u0E19\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19")), React.createElement("div", null, React.createElement("label", {
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E2D\u0E37\u0E48\u0E19\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A \u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19")), toSites.length > 0 && React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      display: "block",
+      marginBottom: 5
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07"), React.createElement("select", {
+    style: inSt,
+    value: toSubSite,
+    onChange: e => setToSubSite(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E17\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E44\u0E0B\u0E15\u0E4C) \u2014"), toSites.map(s => React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), React.createElement("div", null, React.createElement("label", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -9940,7 +10970,8 @@ function MachineDetail({
     "ซ่อม": "#EF4444",
     "รอซ่อม": "#F59E0B"
   }[m.status] || "#64748B";
-  const canEdit = ["Admin", "Officer", "Engineer"].includes(user.role);
+  const canEdit = ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user));
+  const canEditRepairs = ["Admin", "Officer", "Engineer"].includes(user.role);
   const [viewRepair, setViewRepair] = React.useState(null);
   const [editRepair, setEditRepair] = React.useState(null);
   const [transferModal, setTransferModal] = React.useState(false);
@@ -10381,6 +11412,13 @@ function MachineDetail({
     name: m.project
   }))), React.createElement("div", null, React.createElement("div", {
     className: "k"
+  }, "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), React.createElement("div", {
+    className: "v"
+  }, m.subSite ? React.createElement(SubSiteTag, {
+    value: m.subSite,
+    project: m.project
+  }) : "—")), React.createElement("div", null, React.createElement("div", {
+    className: "k"
   }, "\u0E0B\u0E35\u0E40\u0E23\u0E35\u0E22\u0E25"), React.createElement("div", {
     className: "v mono",
     style: {
@@ -10772,7 +11810,7 @@ function MachineDetail({
         color: "#6D28D9",
         fontWeight: 500
       }
-    }, t.from || "ไม่ระบุ"), React.createElement("i", {
+    }, t.from || "ไม่ระบุ", t.fromSubSite ? ` · ${t.fromSubSite}` : ""), React.createElement("i", {
       className: "fa-solid fa-arrow-right",
       style: {
         fontSize: 10,
@@ -10783,7 +11821,7 @@ function MachineDetail({
         color: "#1E40AF",
         fontWeight: 600
       }
-    }, t.to)), t.note && React.createElement("div", {
+    }, t.to, t.toSubSite ? ` · ${t.toSubSite}` : "")), t.note && React.createElement("div", {
       style: {
         color: "#4B5563",
         marginTop: 3,
@@ -10865,7 +11903,7 @@ function MachineDetail({
       border: "1px solid var(--line)",
       borderRadius: 8
     }
-  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E2D\u0E32\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), canEdit && React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, relatedRows.map(r => React.createElement("tr", {
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E2D\u0E32\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), canEditRepairs && React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, relatedRows.map(r => React.createElement("tr", {
     key: r.id,
     style: {
       cursor: "pointer"
@@ -10902,7 +11940,7 @@ function MachineDetail({
     onClick: () => setViewRepair(r)
   }, React.createElement(Badge, {
     status: r.status
-  })), canEdit && React.createElement("td", null, React.createElement("button", {
+  })), canEditRepairs && React.createElement("td", null, React.createElement("button", {
     className: "ia",
     title: "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25",
     onClick: e => {
@@ -10925,7 +11963,7 @@ function MachineDetail({
     user: user,
     onClose: () => setViewRepair(null),
     onQuick: null,
-    onEdit: canEdit ? r => {
+    onEdit: canEditRepairs ? r => {
       setViewRepair(null);
       setEditRepair(r);
     } : null,
@@ -10946,7 +11984,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5350) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5866) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -11503,7 +12541,7 @@ function DocPJ2({
   const [filterProj, setFilterProj] = React.useState("all");
   const [editCell, setEditCell] = React.useState(null);
   const [uploading, setUploading] = React.useState(null);
-  const canEdit = ["Admin", "Officer", "Engineer", "Safety Officer"].includes(user.role);
+  const canEdit = ["Admin", "Officer", "Engineer", "Safety Officer"].includes(window.effectiveRole(user));
   const today = React.useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -11590,7 +12628,7 @@ function DocPJ2({
     if (filterProj !== "all" && m.project !== filterProj) return false;
     if (q) {
       const qq = q.toLowerCase();
-      if (![m.code, m.name, m.project, m.serial].map(x => (x || "").toLowerCase()).join(" ").includes(qq)) return false;
+      if (![m.code, m.name, m.project, m.subSite, m.serial].map(x => (x || "").toLowerCase()).join(" ").includes(qq)) return false;
     }
     return true;
   }).sort((a, b) => {
@@ -11904,7 +12942,7 @@ function DocPJ2({
     className: "table-wrap"
   }, React.createElement("table", {
     className: "data"
-  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E23\u0E2B\u0E31\u0E2A"), React.createElement("th", null, "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 (1)"), React.createElement("th", null, "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 (2)"), React.createElement("th", null, "PL (\u0E1B\u0E23\u0E30\u0E01\u0E31\u0E19)"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("th", {
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E23\u0E2B\u0E31\u0E2A / \u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("th", null, "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 (1)"), React.createElement("th", null, "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 (2)"), React.createElement("th", null, "PL (\u0E1B\u0E23\u0E30\u0E01\u0E31\u0E19)"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E04\u0E23\u0E31\u0E49\u0E07\u0E16\u0E31\u0E14\u0E44\u0E1B"))), React.createElement("tbody", null, filtered.map(m => React.createElement("tr", {
     key: m.id
@@ -11914,24 +12952,32 @@ function DocPJ2({
       fontSize: 12,
       fontWeight: 600
     }
-  }, m.code || "—"), m.serial && React.createElement("div", {
+  }, m.code || "—"), React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 13,
+      marginTop: 2
+    }
+  }, m.name || "—"), m.subSite && React.createElement("div", {
+    style: {
+      marginTop: 3
+    }
+  }, React.createElement(SubSiteTag, {
+    value: m.subSite,
+    project: m.project
+  })), m.brand && React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "var(--muted)"
+    }
+  }, m.brand, m.model ? ` ${m.model}` : ""), m.serial && React.createElement("div", {
     className: "mono",
     style: {
       fontSize: 11,
       color: "var(--muted)",
       marginTop: 3
     }
-  }, "SN: ", m.serial)), React.createElement("td", null, linkBtn(m, 1)), React.createElement("td", null, linkBtn(m, 2)), React.createElement("td", null, linkBtn(m, "PL")), React.createElement("td", null, React.createElement("div", {
-    style: {
-      fontWeight: 500,
-      fontSize: 13
-    }
-  }, m.name), m.brand && React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: "var(--muted)"
-    }
-  }, m.brand, m.model ? ` ${m.model}` : "")), React.createElement("td", {
+  }, "SN: ", m.serial)), React.createElement("td", null, linkBtn(m, 1)), React.createElement("td", null, linkBtn(m, 2)), React.createElement("td", null, linkBtn(m, "PL")), React.createElement("td", {
     className: "hide-on-mobile",
     style: {
       fontSize: 13
@@ -11939,7 +12985,7 @@ function DocPJ2({
   }, React.createElement(ProjectLabel, {
     name: m.project
   })), React.createElement("td", null, renderDateCell(m, "inspectionDate")), React.createElement("td", null, renderDateCell(m, "nextInspectionDate")))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
-    colSpan: "8"
+    colSpan: "7"
   }, React.createElement("div", {
     className: "empty"
   }, React.createElement("i", {
@@ -12287,7 +13333,7 @@ function MachineTransferHistory({
     if (filterProj !== "all" && t.from !== filterProj && t.to !== filterProj) return false;
     if (q) {
       const qq = q.toLowerCase();
-      if (![t.machineCode, t.machineName, t.from, t.to, t.by, t.note].map(x => (x || "").toLowerCase()).join(" ").includes(qq)) return false;
+      if (![t.machineCode, t.machineName, t.from, t.to, t.fromSubSite, t.toSubSite, t.by, t.note].map(x => (x || "").toLowerCase()).join(" ").includes(qq)) return false;
     }
     return true;
   }), [allTransfers, q, filterProj]);
@@ -12358,7 +13404,19 @@ function MachineTransferHistory({
       fontSize: 12,
       fontWeight: 500
     }
-  }, t.from || "ไม่ระบุ")), React.createElement("td", {
+  }, t.from || "ไม่ระบุ"), t.fromSubSite && React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "#6D28D9",
+      marginTop: 3
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      fontSize: 9,
+      marginRight: 3
+    }
+  }), t.fromSubSite)), React.createElement("td", {
     style: {
       textAlign: "center"
     }
@@ -12377,7 +13435,19 @@ function MachineTransferHistory({
       fontSize: 12,
       fontWeight: 600
     }
-  }, t.to)), React.createElement("td", {
+  }, t.to), t.toSubSite && React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "#1E40AF",
+      marginTop: 3
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      fontSize: 9,
+      marginRight: 3
+    }
+  }), t.toSubSite)), React.createElement("td", {
     className: "hide-on-mobile",
     style: {
       fontSize: 13
@@ -12400,7 +13470,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5847) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6371) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -12567,8 +13637,12 @@ function NewRequest({
     title: "",
     categoryId: "",
     project: initProject,
+    subSite: "",
     machineCode: "",
     siteId: "",
+    odometerKm: "",
+    hourMeter: "",
+    driverName: "",
     reportDate: todayStr,
     placeMode: "onsite",
     placeOnsite: initProject,
@@ -12578,8 +13652,12 @@ function NewRequest({
   const [loading, setLoading] = React.useState(false);
   const projectMachines = React.useMemo(() => {
     if (!f.project) return [];
-    return (window.__DATA.machines || []).filter(m => m.project === f.project);
-  }, [f.project]);
+    return (window.__DATA.machines || []).filter(m => {
+      if (m.project !== f.project) return false;
+      if (f.subSite && (m.subSite || "") && m.subSite !== f.subSite) return false;
+      return true;
+    });
+  }, [f.project, f.subSite]);
   const filteredMachines = React.useMemo(() => {
     if (!f.categoryId) return projectMachines;
     return projectMachines.filter(m => m.categoryId === f.categoryId);
@@ -12591,15 +13669,32 @@ function NewRequest({
   const onProjectChange = p => setF(prev => ({
     ...prev,
     project: p,
+    subSite: "",
     categoryId: "",
     machineCode: "",
     placeOnsite: !prev.placeOnsite || prev.placeOnsite === prev.project ? p : prev.placeOnsite
+  }));
+  const onSubSiteChange = s => setF(prev => ({
+    ...prev,
+    subSite: s,
+    machineCode: ""
   }));
   const onCategoryChange = cid => setF(prev => ({
     ...prev,
     categoryId: cid,
     machineCode: ""
   }));
+  const onMachineChange = code => setF(prev => {
+    const sel = projectMachines.find(m => m.code === code);
+    return {
+      ...prev,
+      machineCode: code,
+      subSite: prev.subSite || sel && sel.subSite || "",
+      hourMeter: sel && sel.hours != null && sel.hours !== "" ? String(sel.hours) : "",
+      driverName: sel && sel.driverName || "",
+      odometerKm: ""
+    };
+  });
   const submit = async () => {
     if (!f.project) {
       Swal.fire({
@@ -12645,6 +13740,7 @@ function NewRequest({
           status: "new"
         })),
         project: f.project,
+        subSite: f.subSite || "",
         categoryId: f.categoryId,
         status: "new",
         reporterId: user.id,
@@ -12652,6 +13748,9 @@ function NewRequest({
         assignedId: "",
         cost: "",
         machineCode: f.machineCode,
+        odometerKm: f.odometerKm || "",
+        hourMeter: f.hourMeter || "",
+        driverName: f.driverName || "",
         repairPlace,
         photos: (f.photos || []).filter(Boolean),
         createdAt
@@ -12783,7 +13882,13 @@ function NewRequest({
     value: p
   }, p))), React.createElement("div", {
     className: "hint"
-  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19 \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E01\u0E23\u0E2D\u0E07\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48\u0E41\u0E25\u0E30\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E31\u0E49\u0E19")), React.createElement("div", {
+  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19 \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E01\u0E23\u0E2D\u0E07\u0E2B\u0E21\u0E27\u0E14\u0E2B\u0E21\u0E39\u0E48\u0E41\u0E25\u0E30\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E31\u0E49\u0E19")), React.createElement(SubSiteField, {
+    project: f.project,
+    value: f.subSite,
+    onChange: onSubSiteChange,
+    className: "form-field full",
+    hint: "\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E04\u0E31\u0E1A \xB7 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E44\u0E0B\u0E15\u0E4C\u0E41\u0E25\u0E49\u0E27\u0E08\u0E30\u0E40\u0E2B\u0E47\u0E19\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E17\u0E35\u0E48\u0E1B\u0E23\u0E30\u0E08\u0E33\u0E44\u0E0B\u0E15\u0E4C\u0E19\u0E31\u0E49\u0E19 (\u0E23\u0E27\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E44\u0E0B\u0E15\u0E4C)"
+  }), React.createElement("div", {
     className: "form-field full"
   }, React.createElement("label", null, React.createElement("span", {
     style: {
@@ -12836,10 +13941,7 @@ function NewRequest({
     }
   }, "3"), "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("select", {
     value: f.machineCode,
-    onChange: e => setF({
-      ...f,
-      machineCode: e.target.value
-    }),
+    onChange: e => onMachineChange(e.target.value),
     disabled: !f.categoryId
   }, React.createElement("option", {
     value: ""
@@ -12892,6 +13994,71 @@ function NewRequest({
       }
     }, "\u0E22\u0E35\u0E48\u0E2B\u0E49\u0E2D:"), " ", sel.brand, sel.model ? ` ${sel.model}` : ""))) : null;
   })()), React.createElement("div", {
+    className: "form-field full",
+    style: {
+      opacity: f.machineCode ? 1 : 0.5,
+      pointerEvents: f.machineCode ? "auto" : "none"
+    }
+  }, React.createElement("label", null, React.createElement("i", {
+    className: "fa-solid fa-gauge",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07 \u0E13 \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E41\u0E08\u0E49\u0E07"), React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
+      gap: 10
+    }
+  }, React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginBottom: 4
+    }
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E01\u0E34\u0E42\u0E25\u0E40\u0E21\u0E15\u0E23"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "any",
+    value: f.odometerKm,
+    onChange: e => setF({
+      ...f,
+      odometerKm: e.target.value
+    }),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 125400"
+  })), React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginBottom: 4
+    }
+  }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "any",
+    value: f.hourMeter,
+    onChange: e => setF({
+      ...f,
+      hourMeter: e.target.value
+    }),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 8320"
+  })), React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginBottom: 4
+    }
+  }, "\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A / \u0E1C\u0E39\u0E49\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21"), React.createElement("input", {
+    value: f.driverName,
+    onChange: e => setF({
+      ...f,
+      driverName: e.target.value
+    }),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E19\u0E32\u0E22\u0E2A\u0E21\u0E0A\u0E32\u0E22 \u0E43\u0E08\u0E14\u0E35"
+  }))), React.createElement("div", {
+    className: "hint"
+  }, "\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E04\u0E31\u0E1A \xB7 \u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E15\u0E34\u0E21\u0E40\u0E25\u0E02\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07\u0E41\u0E25\u0E30\u0E0A\u0E37\u0E48\u0E2D\u0E04\u0E19\u0E02\u0E31\u0E1A\u0E08\u0E32\u0E01\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E43\u0E2B\u0E49 \u0E41\u0E01\u0E49\u0E43\u0E2B\u0E49\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49")), React.createElement("div", {
     className: "form-field full",
     style: {
       opacity: f.machineCode ? 1 : 0.5,
@@ -13107,6 +14274,109 @@ function MyRepairs({
     return window.filterByUserProjects(user, window.__DATA.repairs.filter(r => r.reporterId === user.id), "project");
   });
   const [detail, setDetail] = React.useState(null);
+  const [editFor, setEditFor] = React.useState(null);
+  const needApproval = user.role === "Reporter";
+  const {
+    mine: myReqs
+  } = window.useDeleteRequests(user);
+  const pendingEditIds = React.useMemo(() => new Set((myReqs || []).filter(x => x.kind === "edit" && x.status === "pending" && x.action === "updateRepair").map(x => String(x.targetKey))), [myReqs]);
+  const pendingDeleteIds = React.useMemo(() => new Set((myReqs || []).filter(x => x.kind !== "edit" && x.status === "pending" && x.action === "deleteRepair").map(x => String(x.targetKey))), [myReqs]);
+  const decidedCount = (myReqs || []).filter(x => x.status !== "pending").length;
+  React.useEffect(() => {
+    const src = user.role === "Engineer" ? window.__DATA.repairs : window.__DATA.repairs.filter(r => r.reporterId === user.id);
+    setRows(window.filterByUserProjects(user, src, "project"));
+  }, [decidedCount]);
+  const saveEdit = async (r, patch) => {
+    const changes = window.diffFields(r, patch, window.REPAIR_FIELD_LABELS);
+    if (!changes.length) {
+      Swal.fire({
+        icon: "info",
+        title: "ยังไม่ได้แก้ไขอะไร",
+        text: "ปรับข้อมูลที่ต้องการก่อนบันทึก"
+      });
+      return;
+    }
+    if (needApproval) {
+      const sent = await window.requestEditApproval({
+        user,
+        action: "updateRepair",
+        payload: {
+          id: r.id,
+          patch
+        },
+        entityLabel: "ใบแจ้งซ่อม",
+        targetName: r.running || r.id,
+        project: r.project || "",
+        targetInfo: [r.machineCode, r.subSite].filter(Boolean).join(" · "),
+        changes
+      });
+      if (sent) setEditFor(null);
+      return;
+    }
+    try {
+      await window.api("updateRepair", {
+        id: r.id,
+        patch,
+        by: user.name
+      });
+      const updated = {
+        ...r,
+        ...patch,
+        timeline: [...(r.timeline || []), {
+          status: patch.status || r.status,
+          when: new Date(),
+          by: user.name,
+          note: "แก้ไขข้อมูล"
+        }]
+      };
+      setRows(prev => prev.map(x => x.id === r.id ? updated : x));
+      window.__DATA.repairs = window.__DATA.repairs.map(x => x.id === r.id ? updated : x);
+      setEditFor(null);
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกการแก้ไขแล้ว",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    }
+  };
+  const remove = async r => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteRepair",
+      payload: {
+        id: r.id
+      },
+      entityLabel: "ใบแจ้งซ่อม",
+      targetName: r.running || r.id,
+      project: r.project || "",
+      targetInfo: [r.machineCode, (window.getProblems(r)[0] || {}).text].filter(Boolean).join(" · ")
+    });
+    if (done) {
+      setRows(prev => prev.filter(x => x.id !== r.id));
+      setDetail(null);
+    }
+  };
+  const openEdit = r => {
+    if (pendingEditIds.has(String(r.id))) {
+      Swal.fire({
+        icon: "info",
+        title: "มีคำขอแก้ไขรออนุมัติอยู่แล้ว",
+        text: 'ใบนี้ส่งคำขอไปแล้ว รอผู้ดูแลระบบอนุมัติก่อนจึงจะขอแก้ใหม่ได้ · ติดตามได้ที่เมนู "การแจ้งเตือน"'
+      });
+      return;
+    }
+    setDetail(null);
+    setEditFor(r);
+  };
   const cancel = r => {
     Swal.fire({
       title: "ยกเลิกคำร้อง?",
@@ -13177,11 +14447,45 @@ function MyRepairs({
     className: "hide-on-mobile"
   }, "\u0E2D\u0E31\u0E1B\u0E40\u0E14\u0E15\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"), React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, rows.map(r => {
     const last = r.timeline[r.timeline.length - 1];
+    const waiting = pendingEditIds.has(String(r.id));
+    const waitingDel = pendingDeleteIds.has(String(r.id));
     return React.createElement("tr", {
       key: r.id
     }, React.createElement("td", null, React.createElement("span", {
       className: "ticket-id"
-    }, r.running)), React.createElement("td", {
+    }, r.running), waiting && React.createElement("div", {
+      style: {
+        marginTop: 3,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "1px 7px",
+        borderRadius: 999,
+        background: "#FEF3C7",
+        color: "#B45309",
+        fontSize: 10.5,
+        fontWeight: 600
+      },
+      title: "\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E41\u0E01\u0E49\u0E44\u0E02\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"
+    }, React.createElement("i", {
+      className: "fa-solid fa-hourglass-half"
+    }), " \u0E23\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E41\u0E01\u0E49\u0E44\u0E02"), waitingDel && React.createElement("div", {
+      style: {
+        marginTop: 3,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "1px 7px",
+        borderRadius: 999,
+        background: "#FEE2E2",
+        color: "#B91C1C",
+        fontSize: 10.5,
+        fontWeight: 600
+      },
+      title: "\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E25\u0E1A\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"
+    }, React.createElement("i", {
+      className: "fa-solid fa-hourglass-half"
+    }), " \u0E23\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E25\u0E1A")), React.createElement("td", {
       className: "hide-on-mobile",
       style: {
         color: "var(--muted)",
@@ -13209,15 +14513,34 @@ function MyRepairs({
       className: "row-actions"
     }, React.createElement("button", {
       className: "ia",
+      title: "\u0E14\u0E39\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14",
       onClick: () => setDetail(r)
     }, React.createElement("i", {
       className: "fa-solid fa-eye"
+    })), React.createElement("button", {
+      className: "ia",
+      title: needApproval ? "ขอแก้ไข (ต้องรออนุมัติ)" : "แก้ไขข้อมูล",
+      style: {
+        color: waiting ? "#B45309" : "#1E40AF"
+      },
+      onClick: () => openEdit(r)
+    }, React.createElement("i", {
+      className: "fa-solid fa-pen"
     })), r.status === "new" && React.createElement("button", {
-      className: "ia danger",
+      className: "ia",
+      style: {
+        color: "#D97706"
+      },
       onClick: () => cancel(r),
       title: "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E04\u0E33\u0E23\u0E49\u0E2D\u0E07"
     }, React.createElement("i", {
       className: "fa-solid fa-ban"
+    })), React.createElement("button", {
+      className: "ia danger",
+      title: needApproval ? "ขอลบใบนี้ (ต้องรออนุมัติ)" : "ลบใบแจ้งซ่อม",
+      onClick: () => remove(r)
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
     })))));
   }), rows.length === 0 && React.createElement("tr", null, React.createElement("td", {
     colSpan: "7"
@@ -13231,7 +14554,13 @@ function MyRepairs({
     r: detail,
     user: user,
     onClose: () => setDetail(null),
-    onQuick: () => {}
+    onQuick: () => {},
+    onEdit: openEdit
+  }), editFor && React.createElement(EditRepairModal, {
+    r: editFor,
+    scope: needApproval ? "reporter" : undefined,
+    onClose: () => setEditFor(null),
+    onSave: saveEdit
   }));
 }
 Object.assign(window, {
@@ -13240,20 +14569,29 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6049) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6678) ---- */
 function AssetRegistry({
   user
 }) {
-  const canEdit = ["Admin", "Officer", "Engineer"].includes(user.role);
+  const canEdit = ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user));
   const [rows, setRows] = React.useState(() => window.__DATA.assetRegistry || null);
   const [err, setErr] = React.useState("");
   const [q, setQ] = React.useState("");
   const [site, setSite] = React.useState("");
+  const [subSite, setSubSite] = React.useState("");
   const [owner, setOwner] = React.useState("");
   const [groupBy, setGroupBy] = React.useState("site");
   const [collapsed, setCollapsed] = React.useState({});
   const [edit, setEdit] = React.useState(null);
   const [history, setHistory] = React.useState(null);
+  const {
+    mine: myReqs
+  } = window.useDeleteRequests(user);
+  const pendingEditKeys = React.useMemo(() => new Set((myReqs || []).filter(x => x.kind === "edit" && x.status === "pending" && x.action === "saveAssetRegistry").map(x => String(x.targetKey))), [myReqs]);
+  const decidedCount = (myReqs || []).filter(x => x.status !== "pending").length;
+  React.useEffect(() => {
+    if (Array.isArray(window.__DATA.assetRegistry)) setRows(window.__DATA.assetRegistry.slice());
+  }, [decidedCount]);
   React.useEffect(() => {
     if (rows) return;
     let alive = true;
@@ -13272,21 +14610,33 @@ function AssetRegistry({
   const scoped = React.useMemo(() => window.filterByUserProjects(user, rows || [], "site"), [rows, user]);
   const sites = React.useMemo(() => [...new Set(scoped.map(r => r.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [scoped]);
   const owners = React.useMemo(() => [...new Set(scoped.map(r => r.ownership).filter(Boolean))].sort(), [scoped]);
+  const subSites = React.useMemo(() => {
+    const pool = site ? scoped.filter(r => r.site === site) : scoped;
+    return [...new Set(pool.map(r => r.subSite).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th", {
+      numeric: true
+    }));
+  }, [scoped, site]);
   const filtered = React.useMemo(() => {
     const kw = q.trim().toLowerCase();
     return scoped.filter(r => {
       if (site && r.site !== site) return false;
+      if (subSite && (r.subSite || "") !== subSite) return false;
       if (owner && r.ownership !== owner) return false;
       if (!kw) return true;
-      return [r.assetCode, r.name, r.brand, r.model, r.serial, r.site, r.holder, r.note].some(v => String(v || "").toLowerCase().includes(kw));
+      return [r.assetCode, r.name, r.brand, r.model, r.serial, r.site, r.subSite, r.holder, r.note].some(v => String(v || "").toLowerCase().includes(kw));
     });
-  }, [scoped, q, site, owner]);
+  }, [scoped, q, site, subSite, owner]);
   const totalQty = React.useMemo(() => filtered.reduce((s, r) => s + (Number(r.quantity) || 0), 0), [filtered]);
   const GROUP_META = {
     site: {
       label: "สถานที่ (โครงการ)",
       empty: "— ไม่ระบุสถานที่ —",
       field: r => r.site
+    },
+    subSite: {
+      label: "ไซต์งานย่อย",
+      empty: "— ไม่ระบุไซต์งานย่อย —",
+      field: r => r.subSite
     },
     ownership: {
       label: "กรรมสิทธิ์",
@@ -13327,7 +14677,23 @@ function AssetRegistry({
     key: r.key
   }, React.createElement("td", null, React.createElement("span", {
     className: "ticket-id"
-  }, r.assetCode || r.id || "—")), React.createElement("td", null, React.createElement("div", {
+  }, r.assetCode || r.id || "—"), pendingEditKeys.has(String(r.key)) && React.createElement("div", {
+    style: {
+      marginTop: 3,
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "1px 7px",
+      borderRadius: 999,
+      background: "#FEF3C7",
+      color: "#B45309",
+      fontSize: 10.5,
+      fontWeight: 600
+    },
+    title: "\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E41\u0E01\u0E49\u0E44\u0E02\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34"
+  }, React.createElement("i", {
+    className: "fa-solid fa-hourglass-half"
+  }), " \u0E23\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E41\u0E01\u0E49\u0E44\u0E02")), React.createElement("td", null, React.createElement("div", {
     className: "cell-title"
   }, r.name || "—", r.serial && React.createElement("div", {
     className: "desc"
@@ -13367,7 +14733,14 @@ function AssetRegistry({
     style: {
       color: "var(--muted)"
     }
-  }, "\u2014"), (r.transferHistory || []).length > 0 && React.createElement("button", {
+  }, "\u2014"), r.subSite && React.createElement("div", {
+    style: {
+      marginTop: 3
+    }
+  }, React.createElement(SubSiteTag, {
+    value: r.subSite,
+    project: r.site
+  })), (r.transferHistory || []).length > 0 && React.createElement("button", {
     className: "ia",
     title: "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22",
     onClick: () => setHistory(r),
@@ -13404,6 +14777,25 @@ function AssetRegistry({
     setRows(sorted);
   };
   const save = async form => {
+    if (form.key && user.role !== "Admin") {
+      const before = (rows || []).find(x => x.key === form.key) || {};
+      const changes = window.diffFields(before, form, window.ASSET_FIELD_LABELS);
+      const sent = await window.requestEditApproval({
+        user,
+        action: "saveAssetRegistry",
+        payload: {
+          key: form.key,
+          asset: form
+        },
+        entityLabel: "ทะเบียนทรัพย์สิน",
+        targetName: `${form.assetCode || form.id || ""} ${form.name || ""}`.trim(),
+        project: form.site || "",
+        targetInfo: [form.brand, form.model, form.serial, form.holder].filter(Boolean).join(" · "),
+        changes
+      });
+      if (sent) setEdit(null);
+      return;
+    }
     const saved = await window.api("saveAssetRegistry", {
       key: form.key || "",
       asset: form
@@ -13446,6 +14838,7 @@ function AssetRegistry({
     ownership: "",
     holder: "",
     site: "",
+    subSite: "",
     receivedAt: "",
     note: ""
   };
@@ -13492,10 +14885,22 @@ function AssetRegistry({
     onChange: e => setQ(e.target.value)
   })), React.createElement("select", {
     value: site,
-    onChange: e => setSite(e.target.value)
+    onChange: e => {
+      setSite(e.target.value);
+      setSubSite("");
+    }
   }, React.createElement("option", {
     value: ""
   }, "\u0E17\u0E38\u0E01\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48"), sites.map(s => React.createElement("option", {
+    key: s,
+    value: s
+  }, s))), subSites.length > 0 && React.createElement("select", {
+    value: subSite,
+    onChange: e => setSubSite(e.target.value),
+    title: "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), subSites.map(s => React.createElement("option", {
     key: s,
     value: s
   }, s))), React.createElement("select", {
@@ -13515,6 +14920,8 @@ function AssetRegistry({
   }, "\u0E44\u0E21\u0E48\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21"), React.createElement("option", {
     value: "site"
   }, "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E15\u0E32\u0E21\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48"), React.createElement("option", {
+    value: "subSite"
+  }, "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E15\u0E32\u0E21\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22"), React.createElement("option", {
     value: "ownership"
   }, "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E15\u0E32\u0E21\u0E01\u0E23\u0E23\u0E21\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C"), React.createElement("option", {
     value: "name"
@@ -13661,13 +15068,13 @@ function AssetHistoryModal({
       fontSize: 13,
       fontWeight: 500
     }
-  }, t.from || "— ไม่ระบุ —", " ", React.createElement("i", {
+  }, t.from || "— ไม่ระบุ —", t.fromSubSite ? ` · ${t.fromSubSite}` : "", " ", React.createElement("i", {
     className: "fa-solid fa-arrow-right",
     style: {
       color: "#7C3AED",
       margin: "0 6px"
     }
-  }), " ", t.to), React.createElement("div", {
+  }), " ", t.to, t.toSubSite ? ` · ${t.toSubSite}` : ""), React.createElement("div", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -13703,7 +15110,9 @@ function TransferAssetsModal({
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [q, setQ] = React.useState("");
-  const [fromFilter, setFromFilter] = React.useState("");
+  const [fromProject, setFromProject] = React.useState("");
+  const [fromSubSite, setFromSubSite] = React.useState("");
+  const [toSubSite, setToSubSite] = React.useState("");
   const [qty, setQty] = React.useState({});
   React.useEffect(() => {
     if (assets) return;
@@ -13745,15 +15154,42 @@ function TransferAssetsModal({
     };
   }, [toProject]);
   const sites = React.useMemo(() => [...new Set((assets || []).map(a => a.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [assets]);
+  const fromOptions = React.useMemo(() => {
+    const counts = {};
+    (assets || []).forEach(a => {
+      if (a.site) counts[a.site] = (counts[a.site] || 0) + 1;
+    });
+    const named = projects.map(p => ({
+      value: p.name,
+      label: (p.code ? `[${p.code}] ` : "") + p.name,
+      n: counts[p.name] || 0
+    }));
+    const legacy = sites.filter(s => !projects.some(p => p.name === s)).map(s => ({
+      value: s,
+      label: s + " (ข้อมูลเดิม)",
+      n: counts[s] || 0
+    }));
+    return named.concat(legacy);
+  }, [projects, sites, assets]);
+  const changeFrom = v => {
+    setFromProject(v);
+    setFromSubSite("");
+    setQty({});
+  };
+  const changeFromSubSite = v => {
+    setFromSubSite(v);
+    setQty({});
+  };
   const candidates = React.useMemo(() => {
+    if (!fromProject) return [];
     const kw = q.trim().toLowerCase();
     return (assets || []).filter(a => {
-      if (toProject && a.site === toProject) return false;
-      if (fromFilter && a.site !== fromFilter) return false;
+      if (a.site !== fromProject) return false;
+      if (fromSubSite && (a.subSite || "") !== fromSubSite) return false;
       if (!kw) return true;
-      return [a.assetCode, a.name, a.brand, a.model, a.serial, a.site].some(v => String(v || "").toLowerCase().includes(kw));
+      return [a.assetCode, a.name, a.brand, a.model, a.serial, a.site, a.subSite].some(v => String(v || "").toLowerCase().includes(kw));
     });
-  }, [assets, q, fromFilter, toProject]);
+  }, [assets, q, fromProject, fromSubSite]);
   const picked = React.useMemo(() => (assets || []).filter(a => qty[a.key] !== undefined), [assets, qty]);
   const totalMoving = picked.reduce((s, a) => s + (Number(qty[a.key]) || 0), 0);
   const toggle = a => setQty(prev => {
@@ -13781,10 +15217,25 @@ function TransferAssetsModal({
     return n;
   });
   const submit = async () => {
+    if (!fromProject) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาเลือกโครงการต้นทาง"
+      });
+      return;
+    }
     if (!toProject) {
       Swal.fire({
         icon: "warning",
         title: "กรุณาเลือกโครงการปลายทาง"
+      });
+      return;
+    }
+    if (fromProject === toProject) {
+      Swal.fire({
+        icon: "warning",
+        title: "ต้นทางกับปลายทางซ้ำกัน",
+        text: "กรุณาเลือกโครงการปลายทางที่ต่างจากต้นทาง"
       });
       return;
     }
@@ -13808,12 +15259,12 @@ function TransferAssetsModal({
       });
       return;
     }
-    const froms = [...new Set(picked.map(a => a.site || "ไม่ระบุ"))].join(", ");
     setBusy(true);
     try {
       const res = await window.api("transferAssets", {
         moves,
         toProject,
+        toSubSite,
         note,
         by: user.name,
         doc: {
@@ -13821,7 +15272,10 @@ function TransferAssetsModal({
           docDate,
           sender,
           receiver,
-          fromProjectLabel: froms
+          fromProject,
+          fromSubSite,
+          toSubSite,
+          fromProjectLabel: fromProject + (fromSubSite ? ` · ${fromSubSite}` : "")
         }
       });
       window.__DATA.assetRegistry = null;
@@ -13832,7 +15286,7 @@ function TransferAssetsModal({
       } = await Swal.fire({
         icon: "success",
         title: "ย้ายโครงการสำเร็จ",
-        html: "ย้าย <b>" + res.items.length + "</b> รายการ ไปยัง <b>" + toProject + "</b><br/>ออกใบส่งของเลขที่ <b class='mono'>" + docNo + "</b>",
+        html: "ย้าย <b>" + res.items.length + "</b> รายการ จาก <b>" + fromProject + (fromSubSite ? " · " + fromSubSite : "") + "</b> ไปยัง <b>" + toProject + (toSubSite ? " · " + toSubSite : "") + "</b><br/>ออกใบส่งของเลขที่ <b class='mono'>" + docNo + "</b>",
         showCancelButton: true,
         confirmButtonText: "<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลดใบส่งของ",
         cancelButtonText: "ปิด",
@@ -13896,16 +15350,94 @@ function TransferAssetsModal({
     className: "form-grid"
   }, React.createElement("div", {
     className: "form-field full"
-  }, React.createElement("label", null, "\u0E22\u0E49\u0E32\u0E22\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("select", {
-    style: inSt,
-    value: toProject,
-    onChange: e => setToProject(e.target.value)
+  }, React.createElement("label", null, "\u0E40\u0E2A\u0E49\u0E19\u0E17\u0E32\u0E07\u0E01\u0E32\u0E23\u0E2A\u0E48\u0E07 \u2014 \u0E08\u0E32\u0E01\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07 \u0E44\u0E1B\u0E22\u0E31\u0E07\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 *"), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      flexWrap: "wrap"
+    }
+  }, React.createElement("select", {
+    style: {
+      ...inSt,
+      flex: "1 1 200px",
+      minWidth: 0
+    },
+    value: fromProject,
+    onChange: e => changeFrom(e.target.value)
   }, React.createElement("option", {
     value: ""
-  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 \u2014"), projects.map(p => React.createElement("option", {
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07 \u2014"), fromOptions.map(o => React.createElement("option", {
+    key: o.value,
+    value: o.value
+  }, o.label, o.n ? ` · ${o.n} รายการ` : " · ไม่มีทรัพย์สิน"))), React.createElement("i", {
+    className: "fa-solid fa-arrow-right",
+    style: {
+      color: "#7C3AED",
+      flex: "0 0 auto"
+    }
+  }), React.createElement("select", {
+    style: {
+      ...inSt,
+      flex: "1 1 200px",
+      minWidth: 0
+    },
+    value: toProject,
+    onChange: e => {
+      setToProject(e.target.value);
+      setToSubSite("");
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 \u2014"), projects.filter(p => p.name !== fromProject).map(p => React.createElement("option", {
     key: p.id,
     value: p.name
-  }, p.code ? `[${p.code}] ` : "", p.name)))), React.createElement("div", {
+  }, p.code ? `[${p.code}] ` : "", p.name)))), (window.projectSites(fromProject).length > 0 || window.projectSites(toProject).length > 0) && React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      flexWrap: "wrap",
+      marginTop: 8
+    }
+  }, React.createElement("select", {
+    style: {
+      ...inSt,
+      flex: "1 1 200px",
+      minWidth: 0
+    },
+    value: fromSubSite,
+    onChange: e => changeFromSubSite(e.target.value),
+    disabled: !window.projectSites(fromProject).length
+  }, React.createElement("option", {
+    value: ""
+  }, window.projectSites(fromProject).length ? "— ทุกไซต์งานย่อยของต้นทาง —" : "— ต้นทางไม่มีไซต์งานย่อย —"), window.projectSites(fromProject).map(s => React.createElement("option", {
+    key: s,
+    value: s
+  }, s))), React.createElement("i", {
+    className: "fa-solid fa-sitemap",
+    style: {
+      color: "#7C3AED",
+      flex: "0 0 auto",
+      fontSize: 12
+    }
+  }), React.createElement("select", {
+    style: {
+      ...inSt,
+      flex: "1 1 200px",
+      minWidth: 0
+    },
+    value: toSubSite,
+    onChange: e => setToSubSite(e.target.value),
+    disabled: !window.projectSites(toProject).length
+  }, React.createElement("option", {
+    value: ""
+  }, window.projectSites(toProject).length ? "— ทั้งโครงการ (ไม่ระบุไซต์) —" : "— ปลายทางไม่มีไซต์งานย่อย —"), window.projectSites(toProject).map(s => React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), React.createElement("div", {
+    className: "hint"
+  }, "\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07\u0E43\u0E0A\u0E49\u0E40\u0E1B\u0E47\u0E19 \"\u0E08\u0E32\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\" \u0E1A\u0E19\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07 \xB7 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07\u0E01\u0E48\u0E2D\u0E19 \u0E41\u0E25\u0E49\u0E27\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E14\u0E49\u0E32\u0E19\u0E25\u0E48\u0E32\u0E07\u0E08\u0E30\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E2D\u0E07\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23/\u0E44\u0E0B\u0E15\u0E4C\u0E19\u0E31\u0E49\u0E19 \xB7 \u0E44\u0E0B\u0E15\u0E4C\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07\u0E08\u0E30\u0E16\u0E39\u0E01\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E43\u0E2B\u0E49\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E17\u0E38\u0E01\u0E0A\u0E34\u0E49\u0E19\u0E17\u0E35\u0E48\u0E22\u0E49\u0E32\u0E22")), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07"), React.createElement("input", {
     value: docNo,
@@ -13954,19 +15486,17 @@ function TransferAssetsModal({
     placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E23\u0E2B\u0E31\u0E2A / \u0E0A\u0E37\u0E48\u0E2D / \u0E22\u0E35\u0E48\u0E2B\u0E49\u0E2D / Serial...",
     value: q,
     onChange: e => setQ(e.target.value)
-  })), React.createElement("select", {
+  })), React.createElement("div", {
     style: {
-      ...inSt,
-      width: "auto"
-    },
-    value: fromFilter,
-    onChange: e => setFromFilter(e.target.value)
-  }, React.createElement("option", {
-    value: ""
-  }, "\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07"), sites.map(s => React.createElement("option", {
-    key: s,
-    value: s
-  }, s)))), React.createElement("div", {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      whiteSpace: "nowrap"
+    }
+  }, "\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07: ", React.createElement("b", {
+    style: {
+      color: fromProject ? "var(--text)" : "#B45309"
+    }
+  }, fromProject || "ยังไม่ได้เลือก", fromSubSite ? ` · ${fromSubSite}` : ""))), React.createElement("div", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -14081,7 +15611,7 @@ function TransferAssetsModal({
       style: {
         color: "var(--muted)"
       }
-    }, a.site || "—"));
+    }, a.site || "—", a.subSite ? ` · ${a.subSite}` : ""));
   }), candidates.length === 0 && React.createElement("tr", null, React.createElement("td", {
     colSpan: "6"
   }, React.createElement("div", {
@@ -14091,7 +15621,7 @@ function TransferAssetsModal({
     }
   }, React.createElement("div", {
     className: "t"
-  }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"), React.createElement("div", null, toProject ? "ลองเปลี่ยนคำค้นหรือโครงการต้นทาง (รายการที่อยู่โครงการปลายทางแล้วจะถูกซ่อน)" : "ลองเปลี่ยนคำค้น"))))))))));
+  }, fromProject ? fromSubSite ? `ไม่พบทรัพย์สินในไซต์ ${fromSubSite}` : "ไม่พบทรัพย์สินในโครงการต้นทาง" : "ยังไม่ได้เลือกโครงการต้นทาง"), React.createElement("div", null, fromProject ? "ลองเปลี่ยนคำค้น เลือกไซต์งานย่อยอื่น หรือเลือกโครงการต้นทางอื่น" : "เลือกโครงการต้นทางด้านบนก่อน แล้วรายการทรัพย์สินจะแสดงที่นี่"))))))))));
 }
 function AssetForm({
   mode,
@@ -14195,7 +15725,11 @@ function AssetForm({
     className: "form-field"
   }, React.createElement("label", null, "\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48 (\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23)"), React.createElement("select", {
     value: f.site || "",
-    onChange: e => up("site", e.target.value)
+    onChange: e => setF(p => ({
+      ...p,
+      site: e.target.value,
+      subSite: ""
+    }))
   }, React.createElement("option", {
     value: ""
   }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014"), projects.map(p => React.createElement("option", {
@@ -14203,7 +15737,13 @@ function AssetForm({
     value: p.name
   }, p.code ? `[${p.code}] ` : "", p.name)), f.site && !projects.some(p => p.name === f.site) && React.createElement("option", {
     value: f.site
-  }, f.site, " (\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E14\u0E34\u0E21)"))), React.createElement("div", {
+  }, f.site, " (\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E14\u0E34\u0E21)"))), React.createElement(SubSiteField, {
+    project: f.site,
+    value: f.subSite,
+    onChange: v => up("subSite", v),
+    showWhenEmpty: true,
+    hint: "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E17\u0E35\u0E48\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E19\u0E35\u0E49\u0E2D\u0E22\u0E39\u0E48 \xB7 \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E43\u0E2B\u0E21\u0E48"
+  }), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32"), React.createElement("input", {
     type: "date",
@@ -14244,7 +15784,7 @@ window.buildDeliveryOrderHtml = function (doc) {
     <td style="text-align:left;padding-left:6px">${esc(it.serial || "")}</td>
     <td>${it.quantity != null ? esc(it.quantity) : ""}</td>
     <td>${esc(it.unit || "")}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.from || "")}</td>
+    <td style="text-align:left;padding-left:6px">${esc((it.from || "") + (it.fromSubSite ? " · " + it.fromSubSite : ""))}</td>
   </tr>`).join("");
   const totalQty = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
   const cancelStamp = doc.cancelled ? `
@@ -14268,7 +15808,7 @@ window.buildDeliveryOrderHtml = function (doc) {
       <div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:40mm;text-align:center">${fmt(doc.docDate || doc.when)}</span></div>
     </div>
     <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>จากโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.fromProjectLabel || "")}</span></div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.toProject || "")}</span></div>
+    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc((doc.toProject || "") + (doc.toSubSite ? " · " + doc.toSubSite : ""))}</span></div>
     <table class="do">
       <thead><tr>
         <th style="width:10mm">ลำดับ</th><th style="width:26mm">รหัสทรัพย์สิน</th><th>รายการ</th>
@@ -14332,7 +15872,7 @@ window.downloadDeliveryOrderPdf = async function (doc) {
 function DeliveryOrders({
   user
 }) {
-  const canEdit = ["Admin", "Officer", "Engineer"].includes(user.role);
+  const canEdit = ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user));
   const [rows, setRows] = React.useState(() => window.__DATA.deliveryOrders || null);
   const [err, setErr] = React.useState("");
   const [q, setQ] = React.useState("");
@@ -14626,7 +16166,14 @@ function DeliveryOrders({
     }
   }, React.createElement(ProjectLabel, {
     name: d.toProject
-  })), React.createElement("td", {
+  }), d.toSubSite && React.createElement("div", {
+    style: {
+      marginTop: 3
+    }
+  }, React.createElement(SubSiteTag, {
+    value: d.toSubSite,
+    project: d.toProject
+  }))), React.createElement("td", {
     style: {
       whiteSpace: "nowrap"
     }
@@ -14781,6 +16328,12 @@ function DeliveryOrderView({
     className: "v"
   }, React.createElement(ProjectLabel, {
     name: doc.toProject
+  }), doc.toSubSite && React.createElement(SubSiteTag, {
+    value: doc.toSubSite,
+    project: doc.toProject,
+    style: {
+      marginLeft: 6
+    }
   }))), React.createElement("div", null, React.createElement("div", {
     className: "k"
   }, "\u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07\u0E21\u0E2D\u0E1A"), React.createElement("div", {
@@ -14832,7 +16385,7 @@ function DeliveryOrderView({
     style: {
       color: "var(--muted)"
     }
-  }, it.from || "—")))))));
+  }, it.from || "—", it.fromSubSite ? ` · ${it.fromSubSite}` : "")))))));
 }
 function DeliveryOrderEdit({
   doc,
@@ -14850,6 +16403,7 @@ function DeliveryOrderEdit({
     docDate: toDateStr(doc.docDate || doc.when),
     fromProjectLabel: doc.fromProjectLabel || "",
     toProject: doc.toProject || "",
+    toSubSite: doc.toSubSite || "",
     sender: doc.sender || "",
     receiver: doc.receiver || "",
     note: doc.note || ""
@@ -14879,6 +16433,7 @@ function DeliveryOrderEdit({
       docDate: f.docDate,
       fromProjectLabel: f.fromProjectLabel,
       toProject: f.toProject,
+      toSubSite: f.toSubSite,
       sender: f.sender,
       receiver: f.receiver,
       note: f.note,
@@ -14966,7 +16521,25 @@ function DeliveryOrderEdit({
   }, React.createElement("label", null, "\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("input", {
     value: f.toProject,
     onChange: e => set("toProject", e.target.value)
-  })), React.createElement("div", {
+  })), (() => {
+    const sites = window.projectSites(f.toProject);
+    const legacy = f.toSubSite && !sites.includes(f.toSubSite);
+    return sites.length || legacy ? React.createElement("div", {
+      className: "form-field"
+    }, React.createElement("label", null, "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07"), React.createElement("select", {
+      value: f.toSubSite,
+      onChange: e => set("toSubSite", e.target.value)
+    }, React.createElement("option", {
+      value: ""
+    }, "\u2014 \u0E17\u0E31\u0E49\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E44\u0E0B\u0E15\u0E4C) \u2014"), sites.map(s => React.createElement("option", {
+      key: s,
+      value: s
+    }, s)), legacy && React.createElement("option", {
+      value: f.toSubSite
+    }, f.toSubSite, " (\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27)")), React.createElement("div", {
+      className: "hint"
+    }, "\u0E41\u0E01\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E1A\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 \u0E44\u0E21\u0E48\u0E22\u0E49\u0E32\u0E22\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19")) : null;
+  })(), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07\u0E21\u0E2D\u0E1A"), React.createElement("input", {
     value: f.sender,
@@ -15068,7 +16641,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6942) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 7666) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -15676,6 +17249,25 @@ function SpareParts({
   }));
 }
 window.SpareParts = SpareParts;
+const IDLE_LIMIT_MS = 15 * 60 * 1000;
+const IDLE_KEY = "rms_last_active";
+function touchActivity() {
+  try {
+    localStorage.setItem(IDLE_KEY, String(Date.now()));
+  } catch (e) {}
+}
+function isSessionExpired() {
+  const t = Number(localStorage.getItem(IDLE_KEY) || 0);
+  return !t || Date.now() - t > IDLE_LIMIT_MS;
+}
+function clearSession() {
+  localStorage.removeItem("rms_user");
+  localStorage.removeItem("rms_workspace");
+  localStorage.removeItem(IDLE_KEY);
+}
+window.touchActivity = touchActivity;
+window.isSessionExpired = isSessionExpired;
+window.clearSession = clearSession;
 function App() {
   const [user, setUser] = React.useState(null);
   const [workspace, setWorkspace] = React.useState(null);
@@ -15696,6 +17288,10 @@ function App() {
   }, []);
   React.useEffect(() => {
     if (booting) return;
+    if (localStorage.getItem("rms_user") && isSessionExpired()) {
+      clearSession();
+      return;
+    }
     const s = localStorage.getItem("rms_user");
     if (s) {
       try {
@@ -15732,11 +17328,54 @@ function App() {
     window.__DELREQ.start(user);
     window.askNotifyPermission(user);
   }, [user && user.id, user && user.role]);
+  React.useEffect(() => {
+    if (!user) return;
+    touchActivity();
+    const checkIdle = () => {
+      if (!isSessionExpired()) return;
+      clearSession();
+      setUser(null);
+      setWorkspace(null);
+      window.__DATA.activeErp = null;
+      window.__DATA.activeProject = "";
+      Swal.fire({
+        icon: "info",
+        title: "หมดเวลาใช้งาน",
+        text: "ไม่ได้ใช้งานเกิน 15 นาที กรุณาเข้าสู่ระบบใหม่",
+        confirmButtonText: "ตกลง"
+      });
+    };
+    let lastWrite = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastWrite < 5000) return;
+      lastWrite = now;
+      touchActivity();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkIdle();
+    };
+    const events = ["mousedown", "keydown", "touchstart", "click", "scroll", "wheel"];
+    events.forEach(ev => window.addEventListener(ev, onActivity, {
+      passive: true,
+      capture: true
+    }));
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = setInterval(checkIdle, 30000);
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, onActivity, {
+        capture: true
+      }));
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(timer);
+    };
+  }, [user && user.id]);
   const login = u => {
     setUser(u);
     localStorage.setItem("rms_user", JSON.stringify(u));
     setWorkspace(null);
     localStorage.removeItem("rms_workspace");
+    touchActivity();
     setPage(window.defaultPageFor(u));
   };
   const enterWorkspace = ws => {
@@ -15768,8 +17407,7 @@ function App() {
       if (r.isConfirmed) {
         setUser(null);
         setWorkspace(null);
-        localStorage.removeItem("rms_user");
-        localStorage.removeItem("rms_workspace");
+        clearSession();
         window.__DATA.activeErp = null;
         window.__DATA.activeProject = "";
       }
@@ -15865,8 +17503,7 @@ function App() {
     onLogout: () => {
       setUser(null);
       setWorkspace(null);
-      localStorage.removeItem("rms_user");
-      localStorage.removeItem("rms_workspace");
+      clearSession();
       window.__DATA.activeErp = null;
       window.__DATA.activeProject = "";
     }
@@ -15947,7 +17584,7 @@ function App() {
     },
     "notifications": {
       t: "การแจ้งเตือน",
-      c: "คำขออนุมัติลบข้อมูล · การลบทุกชนิดต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin)"
+      c: "คำขออนุมัติลบ / แก้ไขข้อมูล · ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ"
     }
   };
   const pt = pageTitles[safePage] || pageTitles.dashboard;
