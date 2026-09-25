@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 570) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 626) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -594,7 +594,7 @@ async function api(action, payload = {}) {
       }
     case 'bootstrap':
       {
-        let [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap] = await Promise.all([_db.ref('/users').get(), _db.ref('/categories').get(), _db.ref('/machines').get(), _db.ref('/repairs').get(), _db.ref('/projects').get(), _db.ref('/withdrawals').get()]);
+        let [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap, permSnap] = await Promise.all([_db.ref('/users').get(), _db.ref('/categories').get(), _db.ref('/machines').get(), _db.ref('/repairs').get(), _db.ref('/projects').get(), _db.ref('/withdrawals').get(), _db.ref('/permissions').get()]);
         if (!usersSnap.val()) {
           await _seedIfEmpty();
           [usersSnap, catSnap, projSnap] = await Promise.all([_db.ref('/users').get(), _db.ref('/categories').get(), _db.ref('/projects').get()]);
@@ -617,13 +617,34 @@ async function api(action, payload = {}) {
           ...value,
           key
         }));
+        const permissions = permSnap.val() || {};
         return {
           users,
           categories,
           machines,
           repairs,
           projects,
-          withdrawals
+          withdrawals,
+          permissions
+        };
+      }
+    case 'savePermissions':
+      {
+        const {
+          cfg,
+          by
+        } = payload;
+        if (String((by || {}).role || '') !== 'Admin') {
+          throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ตั้งสิทธิ์การใช้งานได้');
+        }
+        await _db.ref('/permissions').set({
+          roles: cfg && cfg.roles || {},
+          users: cfg && cfg.users || {},
+          updatedAt: new Date().toISOString(),
+          updatedBy: (by || {}).name || ''
+        });
+        return {
+          saved: true
         };
       }
     case 'upsertWithdrawal':
@@ -1409,7 +1430,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1538) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1610) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1470,6 +1491,13 @@ const ERP_SYSTEMS = [{
   startPage: "withdrawals",
   roles: ["Admin"]
 }, {
+  id: "manage",
+  name: "ระบบการจัดการ",
+  desc: "ผู้ใช้งาน สิทธิ์เข้าถึง หมวดหมู่ และโครงการ",
+  icon: "fa-sliders",
+  status: "ready",
+  startPage: "users"
+}, {
   id: "pc",
   name: "PC (Petty Cash)",
   desc: "รอพัฒนา",
@@ -1492,6 +1520,17 @@ function fmtDateTime(d) {
   if (typeof d === "string") d = new Date(d);
   return `${fmtDate(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+function fmtDateTH(d) {
+  if (!d) return "";
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt)) return String(d);
+  return dt.toLocaleDateString("th-TH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
+}
+window.fmtDateTH = fmtDateTH;
 window.__DATA = {
   users: [],
   categories: [],
@@ -1503,10 +1542,12 @@ window.__DATA = {
   deliveryOrders: null,
   statuses: STATUSES,
   erpSystems: ERP_SYSTEMS,
+  permissions: {},
   activeErp: null,
   activeProject: "",
   fmtDate,
-  fmtDateTime
+  fmtDateTime,
+  fmtDateTH
 };
 window.__DATA.bootstrap = async function () {
   const d = await window.api("bootstrap");
@@ -1525,6 +1566,7 @@ window.__DATA.bootstrap = async function () {
   window.__DATA.repairs = d.repairs || [];
   window.__DATA.projects = d.projects || [];
   window.__DATA.withdrawals = d.withdrawals || [];
+  window.__DATA.permissions = d.permissions || {};
   return window.__DATA;
 };
 window.getStatus = key => STATUSES.find(s => s.key === key) || STATUSES[0];
@@ -1546,10 +1588,157 @@ window.projectShort = name => {
 window.projectFull = name => String(name || "");
 window.getActiveProject = user => user?.activeProject || window.__DATA.activeProject || "";
 window.getActiveErp = user => user?.activeErp || window.__DATA.activeErp || null;
+window.APP_ROLES = ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"];
+window.APP_FEATURES = [{
+  key: "dashboard",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "แดชบอร์ด",
+  icon: "fa-gauge-high",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "repairs",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "รายการแจ้งซ่อม",
+  icon: "fa-clipboard-list",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer"]
+}, {
+  key: "spare-parts",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "อะไหล่ที่ใช้ซ่อม",
+  icon: "fa-box-open",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "r-dashboard",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "สรุปงานของฉัน",
+  icon: "fa-chart-pie",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Reporter"]
+}, {
+  key: "r-new",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "แจ้งซ่อมใหม่",
+  icon: "fa-circle-plus",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "r-mine",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "ติดตามสถานะงานของฉัน",
+  icon: "fa-clipboard-check",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Reporter"]
+}, {
+  key: "machines",
+  sys: "assets",
+  group: "Asset",
+  label: "ทะเบียนเครื่องจักร",
+  icon: "fa-industry",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "asset-registry",
+  sys: "assets",
+  group: "Asset",
+  label: "ทะเบียนทรัพย์สิน",
+  icon: "fa-boxes-stacked",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Reporter"]
+}, {
+  key: "asset-do",
+  sys: "assets",
+  group: "Asset",
+  label: "ใบส่งของ (DO)",
+  icon: "fa-file-export",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Reporter"]
+}, {
+  key: "doc-pj2",
+  sys: "assets",
+  group: "Asset",
+  label: "ปจ2-เอกสารรับรอง",
+  icon: "fa-certificate",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "transfer-history",
+  sys: "assets",
+  group: "Asset",
+  label: "ประวัติการย้ายเครื่องจักร",
+  icon: "fa-clock-rotate-left",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"]
+}, {
+  key: "withdrawals",
+  sys: "consume",
+  group: "Consume",
+  label: "รายการเบิกของ",
+  icon: "fa-file-invoice",
+  roles: ["Admin"]
+}, {
+  key: "projects",
+  sys: "manage",
+  group: "ระบบการจัดการ",
+  label: "โครงการ",
+  icon: "fa-diagram-project",
+  roles: ["Admin", "Director", "Officer"]
+}, {
+  key: "users",
+  sys: "manage",
+  group: "ระบบการจัดการ",
+  label: "จัดการผู้ใช้งาน",
+  icon: "fa-users-gear",
+  roles: ["Admin", "Director", "Officer"]
+}, {
+  key: "categories",
+  sys: "manage",
+  group: "ระบบการจัดการ",
+  label: "จัดการหมวดหมู่",
+  icon: "fa-tags",
+  roles: ["Admin", "Director", "Officer"]
+}, {
+  key: "login-logs",
+  sys: "manage",
+  group: "ระบบการจัดการ",
+  label: "ประวัติการล็อกอิน",
+  icon: "fa-shield-halved",
+  roles: ["Admin"]
+}, {
+  key: "permissions",
+  sys: "manage",
+  group: "ระบบการจัดการ",
+  label: "สิทธิ์การใช้งาน",
+  icon: "fa-user-shield",
+  roles: ["Admin"]
+}];
+window.SYSTEM_PAGES = {
+  repairs: ["dashboard", "repairs", "spare-parts", "machines", "r-dashboard", "r-new", "r-mine"],
+  assets: ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history"],
+  consume: ["withdrawals"],
+  manage: ["projects", "users", "categories", "login-logs", "permissions"]
+};
+window.defaultPagesFor = role => window.APP_FEATURES.filter(f => (f.roles || []).includes(role)).map(f => f.key);
+window.allowedPagesFor = user => {
+  if (!user) return new Set();
+  const cfg = window.__DATA.permissions || {};
+  const byRole = (cfg.roles || {})[user.role];
+  const base = byRole && byRole.set ? byRole.allow || [] : window.defaultPagesFor(user.role);
+  const set = new Set(base);
+  const mine = (cfg.users || {})[user.id];
+  if (mine) {
+    (mine.allow || []).forEach(k => set.add(k));
+    (mine.deny || []).forEach(k => set.delete(k));
+  }
+  set.add("notifications");
+  if (user.role === "Admin") set.add("permissions");
+  return set;
+};
+window.canAccessPage = (user, key) => !!key && window.allowedPagesFor(user).has(key);
 window.canUseErp = (user, sys) => {
   if (!sys || sys.status !== "ready") return false;
-  if (Array.isArray(sys.roles) && sys.roles.length) return sys.roles.includes(user?.role);
-  return true;
+  if (Array.isArray(sys.roles) && sys.roles.length && !sys.roles.includes(user?.role)) return false;
+  const pages = window.SYSTEM_PAGES[sys.id];
+  if (!pages || !pages.length) return true;
+  const allowed = window.allowedPagesFor(user);
+  return pages.some(k => allowed.has(k));
 };
 window.effectiveRole = user => {
   if (!user) return "";
@@ -1569,8 +1758,7 @@ window.userProjects = user => {
   if (!user) return [];
   const activeProject = window.getActiveProject(user);
   if (activeProject) return [activeProject];
-  const fromProjects = (window.__DATA.projects || []).map(p => typeof p === "string" ? p : p.name).filter(Boolean);
-  const allNames = fromProjects.length ? fromProjects : Array.from(new Set((window.__DATA.machines || []).map(m => m.project).filter(Boolean)));
+  const allNames = window.allProjectNames();
   if (window.userCanSeeAllProjects(user)) return allNames;
   return (Array.isArray(user.projects) ? user.projects : []).filter(p => allNames.includes(p));
 };
@@ -1591,8 +1779,19 @@ window.filterByUserProjects = (user, items, projectKey = "project") => {
   const allowed = new Set(user.projects || []);
   return items.filter(x => !x[projectKey] || allowed.has(x[projectKey]));
 };
+window.allProjectNames = () => {
+  const names = new Set();
+  (window.__DATA.projects || []).forEach(p => {
+    const nm = p && typeof p === "object" ? p.name : p;
+    if (nm) names.add(nm);
+  });
+  (window.__DATA.machines || []).forEach(m => {
+    if (m && m.project) names.add(m.project);
+  });
+  return [...names].sort((a, b) => String(a).localeCompare(String(b), "th"));
+};
 window.allowedProjectNames = user => {
-  const all = (window.__DATA.projects || []).map(p => p.name).filter(Boolean);
+  const all = window.allProjectNames();
   if (!user) return [];
   if (["Admin", "Director"].includes(user.role)) return all;
   const assigned = (Array.isArray(user.projects) ? user.projects : []).filter(p => all.includes(p));
@@ -1997,7 +2196,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 1880) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2037) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2650,7 +2849,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2299) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2456) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -3140,7 +3339,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2535) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2692) ---- */
 const {
   useState,
   useEffect,
@@ -3389,7 +3588,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2638) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2795) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -3617,7 +3816,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2821) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2978) ---- */
 function ChangePasswordModal({
   user,
   onClose
@@ -3867,7 +4066,10 @@ function Sidebar({
   onNav,
   onLogout,
   open,
-  onClose
+  onClose,
+  pinOn,
+  onOpenPin,
+  onLockNow
 }) {
   const [changePwModal, setChangePwModal] = React.useState(false);
   const delReq = window.useDeleteRequests(user);
@@ -3892,6 +4094,11 @@ function Sidebar({
     key: "machines",
     icon: "fa-industry",
     label: "ทะเบียนเครื่องจักร"
+  }];
+  const manageNav = [{
+    key: "projects",
+    icon: "fa-diagram-project",
+    label: "โครงการ"
   }, {
     key: "users",
     icon: "fa-users-gear",
@@ -3900,11 +4107,15 @@ function Sidebar({
     key: "categories",
     icon: "fa-tags",
     label: "จัดการหมวดหมู่"
-  }, ...(user.role === "Admin" ? [{
+  }, {
     key: "login-logs",
     icon: "fa-shield-halved",
     label: "ประวัติการล็อกอิน"
-  }] : [])];
+  }, {
+    key: "permissions",
+    icon: "fa-user-shield",
+    label: "สิทธิ์การใช้งาน"
+  }];
   const techNav = [{
     key: "dashboard",
     icon: "fa-gauge-high",
@@ -4001,17 +4212,14 @@ function Sidebar({
     key: "transfer-history",
     icon: "fa-clock-rotate-left",
     label: "ประวัติการย้ายเครื่องจักร"
-  }, {
-    key: "projects",
-    icon: "fa-diagram-project",
-    label: "โครงการ"
   }];
   const consumeNav = [{
     key: "withdrawals",
     icon: "fa-file-invoice",
     label: "รายการเบิกของ"
   }];
-  const nav = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const navBySystem = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "manage" ? manageNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const nav = navBySystem.filter(x => window.canAccessPage(user, x.key));
   return React.createElement(React.Fragment, null, open && React.createElement("div", {
     className: "sidebar-scrim show",
     onClick: onClose
@@ -4057,7 +4265,33 @@ function Sidebar({
       background: "#FEE2E2",
       color: "#B91C1C"
     }
-  }, delReq.badge)), React.createElement("div", {
+  }, delReq.badge)), window.__PIN.available() && React.createElement("div", {
+    className: "nav-item",
+    onClick: () => {
+      onOpenPin && onOpenPin();
+      onClose && onClose();
+    },
+    title: "\u0E25\u0E47\u0E2D\u0E01\u0E41\u0E2D\u0E1B\u0E14\u0E49\u0E27\u0E22 PIN 6 \u0E2B\u0E25\u0E31\u0E01 \u2014 \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19\u0E04\u0E49\u0E32\u0E07\u0E44\u0E27\u0E49\u0E44\u0E14\u0E49\u0E16\u0E32\u0E27\u0E23 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38"
+  }, React.createElement("i", {
+    className: "fa-solid fa-shield-halved"
+  }), React.createElement("span", null, "\u0E25\u0E47\u0E2D\u0E01\u0E14\u0E49\u0E27\u0E22 PIN"), React.createElement("span", {
+    className: "badge",
+    style: pinOn ? {
+      background: "#DCFCE7",
+      color: "#166534"
+    } : {
+      background: "rgba(255,255,255,.12)",
+      color: "rgba(255,255,255,.72)"
+    }
+  }, pinOn ? "เปิด" : "ปิด")), window.__PIN.available() && pinOn && React.createElement("div", {
+    className: "nav-item",
+    onClick: () => {
+      onLockNow && onLockNow();
+      onClose && onClose();
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-lock"
+  }), React.createElement("span", null, "\u0E25\u0E47\u0E2D\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E2D\u0E17\u0E31\u0E19\u0E17\u0E35")), React.createElement("div", {
     className: "nav-item",
     onClick: () => setChangePwModal(true)
   }, React.createElement("i", {
@@ -4085,7 +4319,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2983) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3160) ---- */
 function Projects({
   user
 }) {
@@ -4722,7 +4956,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3236) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3413) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -5119,7 +5353,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3482) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3659) ---- */
 function Dashboard({
   user,
   goTo
@@ -5167,6 +5401,18 @@ function Dashboard({
   React.useEffect(() => {
     setJobLimit(36);
   }, [mapProject, jobStatus]);
+  const jobProjectOptions = React.useMemo(() => {
+    const names = new Set(mapProjects.map(p => p.name));
+    openJobs.forEach(r => {
+      if (r.project) names.add(r.project);
+    });
+    return [...names].sort((a, b) => String(a).localeCompare(String(b), "th")).map(name => ({
+      name,
+      open: (jobsByProject[name] || {
+        open: 0
+      }).open
+    }));
+  }, [mapProjects, openJobs, jobsByProject]);
   const jobStatusChips = React.useMemo(() => {
     const list = window.__DATA.statuses.filter(s => s.key !== "done");
     return [{
@@ -5666,9 +5912,28 @@ function Dashboard({
     style: {
       display: "flex",
       gap: 6,
-      flexWrap: "wrap"
+      flexWrap: "wrap",
+      alignItems: "center"
     }
-  }, jobStatusChips.map(c => React.createElement("button", {
+  }, React.createElement("select", {
+    value: mapProject,
+    onChange: e => setMapProject(e.target.value),
+    title: "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E14\u0E39\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23",
+    style: {
+      padding: "7px 10px",
+      border: "1px solid var(--line)",
+      borderRadius: 9,
+      fontFamily: "Kanit",
+      fontSize: 13,
+      background: "#fff",
+      maxWidth: 230
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (", openJobs.length.toLocaleString("th-TH"), ")"), jobProjectOptions.map(p => React.createElement("option", {
+    key: p.name,
+    value: p.name
+  }, window.projectShort(p.name), " (", p.open.toLocaleString("th-TH"), ")"))), jobStatusChips.map(c => React.createElement("button", {
     key: c.key,
     className: `btn btn-sm ${jobStatus === c.key ? "btn-primary" : "btn-ghost"}`,
     onClick: () => setJobStatus(c.key)
@@ -6272,7 +6537,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3975) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 4168) ---- */
 function Repairs({
   user
 }) {
@@ -8389,7 +8654,7 @@ window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4723) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4916) ---- */
 function Users({
   user
 }) {
@@ -8673,7 +8938,8 @@ function UserForm({
     projects: Array.isArray(init.projects) ? init.projects : []
   });
   const roles = ["Admin", "Officer", "Engineer", "Safety Officer", "Technician", "Reporter", "Director"];
-  const allProjects = React.useMemo(() => Array.from(new Set((window.__DATA.machines || []).map(m => m.project).filter(Boolean))).sort(), []);
+  const allProjects = React.useMemo(() => window.allProjectNames(), []);
+  const registryNames = React.useMemo(() => new Set((window.__DATA.projects || []).map(p => p && p.name).filter(Boolean)), []);
   const isSuperRole = ["Admin", "Director"].includes(f.role);
   const isProjectLocked = (window.PROJECT_LOCKED_ROLES || []).includes(f.role);
   const toggleProject = p => setF(prev => {
@@ -8911,12 +9177,22 @@ function UserForm({
         textOverflow: "ellipsis",
         whiteSpace: "nowrap"
       }
-    }, p));
+    }, p), !registryNames.has(p) && React.createElement("span", {
+      title: "\u0E0A\u0E37\u0E48\u0E2D\u0E19\u0E35\u0E49\u0E21\u0E35\u0E41\u0E15\u0E48\u0E1A\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 \u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23",
+      style: {
+        fontSize: 10,
+        color: "#B45309",
+        background: "#FEF3C7",
+        borderRadius: 5,
+        padding: "1px 5px",
+        whiteSpace: "nowrap"
+      }
+    }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19"));
   }))))));
 }
 window.Users = Users;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4891) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 5092) ---- */
 function Categories({
   user
 }) {
@@ -9179,7 +9455,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4979) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 5180) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -11984,7 +12260,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5866) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 6067) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -12150,7 +12426,7 @@ function Withdrawals({
   const clean = v => String(v ?? "").trim();
   const safeKey = v => (clean(v) || `WD-${Date.now()}`).replace(/[.#$/\[\]]/g, "-").replace(/\s+/g, "-");
   const parseItems = doc => Array.isArray(doc.items) ? doc.items : [];
-  const logoSvg = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+  const logoSvg = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
   const buildPdfHtml = doc => {
     const fmt = v => {
       const d = new Date(v);
@@ -12195,6 +12471,7 @@ function Withdrawals({
     const el = document.createElement("div");
     el.innerHTML = buildPdfHtml(doc);
     document.body.appendChild(el);
+    await window.__waitImages(el);
     try {
       await html2pdf().set({
         margin: 0,
@@ -12748,7 +13025,7 @@ function DocPJ2({
         alignItems: "center",
         gap: 4
       }
-    }, window.__DATA.fmtDate(val), color === "#EF4444" && React.createElement("span", {
+    }, window.fmtDateTH(val), color === "#EF4444" && React.createElement("span", {
       style: {
         fontSize: 10
       }
@@ -13470,7 +13747,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6371) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6574) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -14569,7 +14846,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6678) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6881) ---- */
 function AssetRegistry({
   user
 }) {
@@ -15757,7 +16034,7 @@ function AssetForm({
     onChange: e => up("note", e.target.value)
   })))));
 }
-const DO_LOGO_SVG = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+const DO_LOGO_SVG = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
 window.buildDeliveryOrderHtml = function (doc) {
   const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const fmt = v => {
@@ -15847,6 +16124,7 @@ window.downloadDeliveryOrderPdf = async function (doc) {
   const el = document.createElement("div");
   el.innerHTML = window.buildDeliveryOrderHtml(doc);
   document.body.appendChild(el);
+  await window.__waitImages(el);
   try {
     await html2pdf().set({
       margin: 0,
@@ -16641,7 +16919,1094 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 7666) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 7871) ---- */
+const PIN_LEN = 6;
+const PIN_MAX_FAIL = 5;
+const PIN_GRACE_MS = 60 * 1000;
+const PIN_KEY = "rms_pin";
+const PIN_LOCK_KEY = "rms_pin_locked";
+const PIN_AWAY_KEY = "rms_pin_away_at";
+const PIN_FAIL_KEY = "rms_pin_fail";
+const PIN_ASK_KEY = "rms_pin_asked";
+function pinRead() {
+  try {
+    return JSON.parse(localStorage.getItem(PIN_KEY) || "null");
+  } catch (e) {
+    return null;
+  }
+}
+function pinSalt() {
+  try {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.from(a).map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) {
+    return Date.now().toString(16) + Math.random().toString(16).slice(2);
+  }
+}
+async function pinDigest(pin, salt) {
+  const bytes = new TextEncoder().encode(salt + ":" + pin);
+  try {
+    const buf = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 16777619) >>> 0;
+    return "fnv-" + h.toString(16) + "-" + bytes.length;
+  }
+}
+window.__PIN = {
+  LEN: PIN_LEN,
+  MAX_FAIL: PIN_MAX_FAIL,
+  record() {
+    return pinRead();
+  },
+  enabled() {
+    const r = pinRead();
+    return !!(r && r.hash);
+  },
+  async set(pin, uid) {
+    const salt = pinSalt();
+    const hash = await pinDigest(pin, salt);
+    localStorage.setItem(PIN_KEY, JSON.stringify({
+      salt,
+      hash,
+      uid: uid || "",
+      at: Date.now()
+    }));
+    this.unlock();
+  },
+  async verify(pin) {
+    const r = pinRead();
+    if (!r || !r.hash) return false;
+    return (await pinDigest(pin, r.salt)) === r.hash;
+  },
+  disable() {
+    [PIN_KEY, PIN_LOCK_KEY, PIN_AWAY_KEY, PIN_FAIL_KEY].forEach(k => {
+      try {
+        localStorage.removeItem(k);
+      } catch (e) {}
+    });
+  },
+  fails() {
+    return Number(localStorage.getItem(PIN_FAIL_KEY) || 0);
+  },
+  bumpFail() {
+    const n = this.fails() + 1;
+    try {
+      localStorage.setItem(PIN_FAIL_KEY, String(n));
+    } catch (e) {}
+    return n;
+  },
+  lockNow() {
+    if (!this.enabled()) return;
+    try {
+      localStorage.setItem(PIN_LOCK_KEY, "1");
+      localStorage.setItem(PIN_AWAY_KEY, "0");
+    } catch (e) {}
+  },
+  markAway() {
+    if (!this.enabled()) return;
+    if (localStorage.getItem(PIN_LOCK_KEY) === "1") return;
+    try {
+      localStorage.setItem(PIN_LOCK_KEY, "1");
+      localStorage.setItem(PIN_AWAY_KEY, String(Date.now()));
+    } catch (e) {}
+  },
+  isLocked() {
+    if (!this.enabled()) return false;
+    if (localStorage.getItem(PIN_LOCK_KEY) !== "1") return false;
+    const away = Number(localStorage.getItem(PIN_AWAY_KEY) || 0);
+    return !away || Date.now() - away > PIN_GRACE_MS;
+  },
+  unlock() {
+    [PIN_LOCK_KEY, PIN_AWAY_KEY, PIN_FAIL_KEY].forEach(k => {
+      try {
+        localStorage.removeItem(k);
+      } catch (e) {}
+    });
+    if (window.touchActivity) window.touchActivity();
+  },
+  asked() {
+    return localStorage.getItem(PIN_ASK_KEY) === "1";
+  },
+  markAsked() {
+    try {
+      localStorage.setItem(PIN_ASK_KEY, "1");
+    } catch (e) {}
+  },
+  available() {
+    return !!(window.__pwa && (window.__pwa.isMobile() || window.__pwa.isStandalone()));
+  }
+};
+if (window.__PIN.enabled() && localStorage.getItem(PIN_LOCK_KEY) !== "1") {
+  try {
+    localStorage.setItem(PIN_LOCK_KEY, "1");
+    localStorage.setItem(PIN_AWAY_KEY, localStorage.getItem("rms_last_active") || "0");
+  } catch (e) {}
+}
+function PinDots({
+  count,
+  shake
+}) {
+  return React.createElement("div", {
+    className: `pin-dots${shake ? " pin-shake" : ""}`
+  }, Array.from({
+    length: PIN_LEN
+  }).map((_, i) => React.createElement("span", {
+    key: i,
+    className: `pin-dot${i < count ? " on" : ""}`
+  })));
+}
+function PinPad({
+  onDigit,
+  onBack,
+  disabled
+}) {
+  return React.createElement("div", {
+    className: "pin-pad"
+  }, ["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(k => React.createElement("button", {
+    key: k,
+    type: "button",
+    className: "pin-key",
+    disabled: disabled,
+    onClick: () => onDigit(k)
+  }, k)), React.createElement("span", null), React.createElement("button", {
+    type: "button",
+    className: "pin-key",
+    disabled: disabled,
+    onClick: () => onDigit("0")
+  }, "0"), React.createElement("button", {
+    type: "button",
+    className: "pin-key is-fn",
+    disabled: disabled,
+    onClick: onBack,
+    "aria-label": "\u0E25\u0E1A\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"
+  }, React.createElement("i", {
+    className: "fa-solid fa-delete-left"
+  })));
+}
+function usePinEntry(onFull) {
+  const [pin, setPin] = React.useState("");
+  const [shake, setShake] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const cb = React.useRef(onFull);
+  cb.current = onFull;
+  React.useEffect(() => {
+    if (pin.length !== PIN_LEN) return;
+    let alive = true;
+    setBusy(true);
+    (async () => {
+      let ok = false;
+      try {
+        ok = await cb.current(pin);
+      } catch (e) {
+        ok = false;
+      }
+      if (!alive) return;
+      setBusy(false);
+      setPin("");
+      if (!ok) {
+        setShake(true);
+        setTimeout(() => setShake(false), 420);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [pin]);
+  const push = d => setPin(p => p.length >= PIN_LEN ? p : p + d);
+  const back = () => setPin(p => p.slice(0, -1));
+  React.useEffect(() => {
+    const h = e => {
+      if (/^[0-9]$/.test(e.key)) push(e.key);else if (e.key === "Backspace") back();else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
+  return {
+    pin,
+    push,
+    back,
+    shake,
+    busy,
+    clear: () => setPin("")
+  };
+}
+function PinLockScreen({
+  user,
+  onUnlock,
+  onForceLogout
+}) {
+  const [msg, setMsg] = React.useState("");
+  const entry = usePinEntry(async pin => {
+    if (await window.__PIN.verify(pin)) {
+      window.__PIN.unlock();
+      onUnlock();
+      return true;
+    }
+    const n = window.__PIN.bumpFail();
+    if (n >= PIN_MAX_FAIL) {
+      window.__PIN.disable();
+      window.clearSession();
+      onForceLogout();
+      Swal.fire({
+        icon: "error",
+        title: "กรอก PIN ผิดเกินกำหนด",
+        text: `กรอกผิด ${PIN_MAX_FAIL} ครั้ง ระบบปิดการใช้ PIN และออกจากระบบแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านอีกครั้ง`,
+        confirmButtonColor: "#1E40AF"
+      });
+      return true;
+    }
+    setMsg(`PIN ไม่ถูกต้อง · เหลืออีก ${PIN_MAX_FAIL - n} ครั้ง`);
+    return false;
+  });
+  const forgot = () => {
+    Swal.fire({
+      icon: "question",
+      title: "ลืม PIN?",
+      text: "ระบบจะปิดการใช้ PIN และออกจากระบบ ให้เข้าสู่ระบบด้วยรหัสผ่านใหม่ แล้วตั้ง PIN อีกครั้งได้",
+      showCancelButton: true,
+      confirmButtonText: "ออกจากระบบ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#EF4444"
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      window.__PIN.disable();
+      window.clearSession();
+      onForceLogout();
+    });
+  };
+  return React.createElement("div", {
+    className: "pin-screen pin-ui"
+  }, React.createElement("div", {
+    className: "pin-head"
+  }, React.createElement("div", {
+    className: "pin-avatar"
+  }, window.initials(user.name)), React.createElement("div", null, React.createElement("div", {
+    className: "pin-name"
+  }, user.name), React.createElement("div", {
+    className: "pin-role"
+  }, user.role, user.dept ? ` · ${user.dept}` : "")), React.createElement("div", {
+    className: "pin-title"
+  }, React.createElement("i", {
+    className: "fa-solid fa-lock"
+  }), " \u0E01\u0E23\u0E2D\u0E01 PIN ", PIN_LEN, " \u0E2B\u0E25\u0E31\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19")), React.createElement("div", {
+    className: "pin-body"
+  }, React.createElement(PinDots, {
+    count: entry.pin.length,
+    shake: entry.shake
+  }), React.createElement("div", {
+    className: "pin-msg"
+  }, msg), React.createElement(PinPad, {
+    onDigit: entry.push,
+    onBack: entry.back,
+    disabled: entry.busy
+  })), React.createElement("div", {
+    className: "pin-foot"
+  }, React.createElement("button", {
+    type: "button",
+    className: "pin-link",
+    onClick: forgot
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-question"
+  }), " \u0E25\u0E37\u0E21 PIN \u2014 \u0E40\u0E02\u0E49\u0E32\u0E14\u0E49\u0E27\u0E22\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19"), React.createElement("div", {
+    className: "pin-note"
+  }, "\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19\u0E04\u0E49\u0E32\u0E07\u0E44\u0E27\u0E49\u0E44\u0E14\u0E49\u0E16\u0E32\u0E27\u0E23 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38 \xB7 \u0E1B\u0E25\u0E14\u0E25\u0E47\u0E2D\u0E01\u0E14\u0E49\u0E27\u0E22 PIN \u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19")));
+}
+function PinSetupModal({
+  user,
+  onClose
+}) {
+  const on = window.__PIN.enabled();
+  const [mode, setMode] = React.useState(on ? "menu" : "new");
+  const [pending, setPending] = React.useState("");
+  const [after, setAfter] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const done = (title, text) => {
+    Swal.fire({
+      icon: "success",
+      title,
+      text,
+      timer: 2200,
+      showConfirmButton: false
+    });
+    onClose();
+  };
+  const entry = usePinEntry(async pin => {
+    if (mode === "current") {
+      if (!(await window.__PIN.verify(pin))) {
+        setMsg("PIN เดิมไม่ถูกต้อง");
+        return false;
+      }
+      setMsg("");
+      if (after === "off") {
+        window.__PIN.disable();
+        done("ปิดการใช้ PIN แล้ว", "กลับไปใช้การหมดเวลาใช้งาน 15 นาทีตามเดิม");
+        return true;
+      }
+      setMode("new");
+      return true;
+    }
+    if (mode === "new") {
+      setPending(pin);
+      setMsg("");
+      setMode("confirm");
+      return true;
+    }
+    if (mode === "confirm") {
+      if (pin !== pending) {
+        setPending("");
+        setMode("new");
+        setMsg("PIN ที่กรอกไม่ตรงกัน ลองตั้งใหม่อีกครั้ง");
+        return false;
+      }
+      await window.__PIN.set(pin, user.id);
+      setPending("");
+      done(on ? "เปลี่ยน PIN แล้ว" : "เปิดใช้ PIN แล้ว", "ตั้งแต่นี้ล็อกอินค้างไว้ได้ถาวร ปลดล็อกด้วย PIN");
+      return true;
+    }
+    return true;
+  });
+  const heads = {
+    current: {
+      t: "ยืนยัน PIN เดิม",
+      s: "กรอก PIN ที่ใช้อยู่ตอนนี้"
+    },
+    new: {
+      t: on ? "ตั้ง PIN ใหม่" : `ตั้ง PIN ${PIN_LEN} หลัก`,
+      s: "เลือกเลขที่จำได้ แต่คนอื่นเดาไม่ได้"
+    },
+    confirm: {
+      t: "กรอก PIN อีกครั้ง",
+      s: "เพื่อยืนยันว่าไม่ได้กดพลาด"
+    }
+  };
+  const head = heads[mode] || heads.new;
+  return React.createElement(Modal, {
+    open: true,
+    onClose: onClose,
+    title: "\u0E25\u0E47\u0E2D\u0E01\u0E41\u0E2D\u0E1B\u0E14\u0E49\u0E27\u0E22 PIN"
+  }, mode === "menu" ? React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 10
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 10,
+      alignItems: "flex-start",
+      background: "#ECFDF5",
+      border: "1px solid #A7F3D0",
+      borderRadius: 12,
+      padding: "12px 13px",
+      fontSize: 13,
+      color: "#065F46"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-check",
+    style: {
+      marginTop: 2
+    }
+  }), React.createElement("span", null, "\u0E40\u0E1B\u0E34\u0E14\u0E43\u0E0A\u0E49 PIN \u0E2D\u0E22\u0E39\u0E48 \xB7 \u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19\u0E04\u0E49\u0E32\u0E07\u0E44\u0E27\u0E49\u0E44\u0E14\u0E49\u0E16\u0E32\u0E27\u0E23 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E21\u0E14\u0E2D\u0E32\u0E22\u0E38 \u0E41\u0E2D\u0E1B\u0E08\u0E30\u0E25\u0E47\u0E2D\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E2D\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E1B\u0E34\u0E14\u0E41\u0E2D\u0E1B\u0E17\u0E34\u0E49\u0E07\u0E44\u0E27\u0E49 \u0E2B\u0E23\u0E37\u0E2D\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E40\u0E01\u0E34\u0E19 15 \u0E19\u0E32\u0E17\u0E35")), React.createElement("button", {
+    type: "button",
+    className: "pin-opt",
+    onClick: () => {
+      setAfter("change");
+      setMsg("");
+      setMode("current");
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-key",
+    style: {
+      background: "var(--accent-soft)",
+      color: "var(--primary)"
+    }
+  }), React.createElement("span", null, "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 PIN", React.createElement("small", null, "\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2B\u0E31\u0E2A ", PIN_LEN, " \u0E2B\u0E25\u0E31\u0E01\u0E43\u0E2B\u0E21\u0E48"))), React.createElement("button", {
+    type: "button",
+    className: "pin-opt is-danger",
+    onClick: () => {
+      setAfter("off");
+      setMsg("");
+      setMode("current");
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-lock-open",
+    style: {
+      background: "#FEE2E2",
+      color: "var(--danger)"
+    }
+  }), React.createElement("span", null, "\u0E1B\u0E34\u0E14\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49 PIN", React.createElement("small", null, "\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E40\u0E14\u0E49\u0E07\u0E2D\u0E2D\u0E01\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19 15 \u0E19\u0E32\u0E17\u0E35")))) : React.createElement("div", {
+    className: "pin-ui on-light"
+  }, React.createElement("div", {
+    style: {
+      textAlign: "center"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 15,
+      fontWeight: 500
+    }
+  }, head.t), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginTop: 3
+    }
+  }, head.s)), React.createElement(PinDots, {
+    count: entry.pin.length,
+    shake: entry.shake
+  }), React.createElement("div", {
+    className: "pin-msg"
+  }, msg), React.createElement(PinPad, {
+    onDigit: entry.push,
+    onBack: entry.back,
+    disabled: entry.busy
+  }), mode === "new" && !on && React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 9,
+      alignItems: "flex-start",
+      marginTop: 16,
+      background: "var(--line-soft)",
+      borderRadius: 11,
+      padding: "11px 12px",
+      fontSize: 12,
+      color: "var(--muted)",
+      lineHeight: 1.6
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-shield-halved",
+    style: {
+      marginTop: 2,
+      color: "var(--primary)"
+    }
+  }), React.createElement("span", null, "\u0E40\u0E1B\u0E34\u0E14 PIN \u0E41\u0E25\u0E49\u0E27\u0E08\u0E30\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E40\u0E14\u0E49\u0E07\u0E2D\u0E2D\u0E01\u0E40\u0E1E\u0E23\u0E32\u0E30\u0E2B\u0E21\u0E14\u0E40\u0E27\u0E25\u0E32\u0E2D\u0E35\u0E01 \xB7 PIN \u0E40\u0E01\u0E47\u0E1A\u0E44\u0E27\u0E49\u0E43\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19 \u0E16\u0E49\u0E32\u0E01\u0E23\u0E2D\u0E01\u0E1C\u0E34\u0E14 ", PIN_MAX_FAIL, " \u0E04\u0E23\u0E31\u0E49\u0E07\u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E1B\u0E34\u0E14 PIN \u0E41\u0E25\u0E30\u0E43\u0E2B\u0E49\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19\u0E14\u0E49\u0E27\u0E22\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E2B\u0E21\u0E48"))));
+}
+window.PinLockScreen = PinLockScreen;
+window.PinSetupModal = PinSetupModal;
+
+/* ---- block 19 (ต้นฉบับบรรทัด 8204) ---- */
+function Permissions({
+  user
+}) {
+  const [tab, setTab] = React.useState("role");
+  const [cfg, setCfg] = React.useState(() => {
+    const p = window.__DATA.permissions || {};
+    return {
+      roles: {
+        ...(p.roles || {})
+      },
+      users: {
+        ...(p.users || {})
+      }
+    };
+  });
+  const [dirty, setDirty] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [pickUser, setPickUser] = React.useState("");
+  const roles = window.APP_ROLES;
+  const features = window.APP_FEATURES;
+  const groups = React.useMemo(() => [...new Set(features.map(f => f.group))], [features]);
+  const users = React.useMemo(() => (window.__DATA.users || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "th")), []);
+  const roleAllow = role => {
+    const c = cfg.roles[role];
+    return new Set(c && c.set ? c.allow || [] : window.defaultPagesFor(role));
+  };
+  const setRoleAllow = (role, s) => {
+    setCfg(c => ({
+      ...c,
+      roles: {
+        ...c.roles,
+        [role]: {
+          set: true,
+          allow: [...s]
+        }
+      }
+    }));
+    setDirty(true);
+  };
+  const toggleRole = (role, key) => {
+    const s = roleAllow(role);
+    if (s.has(key)) s.delete(key);else s.add(key);
+    setRoleAllow(role, s);
+  };
+  const resetRole = role => {
+    setCfg(c => {
+      const r = {
+        ...c.roles
+      };
+      delete r[role];
+      return {
+        ...c,
+        roles: r
+      };
+    });
+    setDirty(true);
+  };
+  const roleTouched = role => !!(cfg.roles[role] && cfg.roles[role].set);
+  const allOfGroup = (role, group, on) => {
+    const s = roleAllow(role);
+    features.filter(f => f.group === group).forEach(f => {
+      if (on) s.add(f.key);else s.delete(f.key);
+    });
+    setRoleAllow(role, s);
+  };
+  const userState = (uid, key) => {
+    const c = cfg.users[uid] || {};
+    if ((c.allow || []).includes(key)) return "allow";
+    if ((c.deny || []).includes(key)) return "deny";
+    return "role";
+  };
+  const setUserState = (uid, key, st) => {
+    setCfg(c => {
+      const cur = c.users[uid] || {};
+      const allow = new Set(cur.allow || []);
+      const deny = new Set(cur.deny || []);
+      allow.delete(key);
+      deny.delete(key);
+      if (st === "allow") allow.add(key);
+      if (st === "deny") deny.add(key);
+      const next = {
+        ...c.users
+      };
+      if (allow.size || deny.size) next[uid] = {
+        allow: [...allow],
+        deny: [...deny]
+      };else delete next[uid];
+      return {
+        ...c,
+        users: next
+      };
+    });
+    setDirty(true);
+  };
+  const clearUser = uid => {
+    setCfg(c => {
+      const u = {
+        ...c.users
+      };
+      delete u[uid];
+      return {
+        ...c,
+        users: u
+      };
+    });
+    setDirty(true);
+  };
+  const overrideCount = uid => {
+    const c = cfg.users[uid] || {};
+    return (c.allow || []).length + (c.deny || []).length;
+  };
+  const valid = new Set(features.map(f => f.key));
+  const save = async () => {
+    setSaving(true);
+    try {
+      const clean = {
+        roles: {},
+        users: {}
+      };
+      Object.entries(cfg.roles).forEach(([r, v]) => {
+        if (!roles.includes(r)) return;
+        clean.roles[r] = {
+          set: true,
+          allow: (v.allow || []).filter(k => valid.has(k))
+        };
+      });
+      Object.entries(cfg.users).forEach(([uid, v]) => {
+        const allow = (v.allow || []).filter(k => valid.has(k));
+        const deny = (v.deny || []).filter(k => valid.has(k));
+        if (allow.length || deny.length) clean.users[uid] = {
+          allow,
+          deny
+        };
+      });
+      await window.api("savePermissions", {
+        cfg: clean,
+        by: {
+          id: user.id,
+          name: user.name,
+          role: user.role
+        }
+      });
+      window.__DATA.permissions = clean;
+      setDirty(false);
+      const r = await Swal.fire({
+        icon: "success",
+        title: "บันทึกสิทธิ์แล้ว",
+        text: "ผู้ใช้คนอื่นจะเห็นผลเมื่อเข้าสู่ระบบใหม่ · เครื่องนี้ควรโหลดหน้าใหม่เพื่อให้เมนูตรงกับสิทธิ์ล่าสุด",
+        showCancelButton: true,
+        confirmButtonText: "โหลดหน้าใหม่",
+        cancelButtonText: "ไว้ทีหลัง",
+        confirmButtonColor: "#1E40AF"
+      });
+      if (r.isConfirmed) location.reload();
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const chk = {
+    width: 17,
+    height: 17,
+    accentColor: "#1E40AF",
+    cursor: "pointer"
+  };
+  const segBtn = on => ({
+    padding: "7px 14px",
+    borderRadius: 7,
+    border: "none",
+    fontSize: 13,
+    cursor: "pointer",
+    fontFamily: "Kanit",
+    background: on ? "var(--primary)" : "transparent",
+    color: on ? "#fff" : "var(--muted)"
+  });
+  const target = users.find(u => u.id === pickUser) || null;
+  const targetRoleSet = target ? roleAllow(target.role) : null;
+  const targetAllowed = React.useMemo(() => {
+    if (!target) return null;
+    const s = new Set(targetRoleSet);
+    const c = cfg.users[target.id] || {};
+    (c.allow || []).forEach(k => s.add(k));
+    (c.deny || []).forEach(k => s.delete(k));
+    return s;
+  }, [target, cfg]);
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 14
+    }
+  }, React.createElement("div", {
+    className: "card-h"
+  }, React.createElement("div", null, React.createElement("h3", null, React.createElement("i", {
+    className: "fa-solid fa-user-shield",
+    style: {
+      color: "var(--primary)",
+      marginRight: 8
+    }
+  }), "\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19"), React.createElement("div", {
+    className: "sub"
+  }, "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E27\u0E48\u0E32\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E44\u0E2B\u0E19\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19\u0E2D\u0E30\u0E44\u0E23\u0E44\u0E14\u0E49 \xB7 \u0E22\u0E01\u0E40\u0E27\u0E49\u0E19\u0E40\u0E1B\u0E47\u0E19\u0E23\u0E32\u0E22\u0E04\u0E19\u0E44\u0E14\u0E49\u0E43\u0E19\u0E41\u0E17\u0E47\u0E1A \"\u0E23\u0E32\u0E22\u0E1A\u0E38\u0E04\u0E04\u0E25\"")), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      flexWrap: "wrap"
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      background: "var(--bg)",
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: 3
+    }
+  }, React.createElement("button", {
+    style: segBtn(tab === "role"),
+    onClick: () => setTab("role")
+  }, React.createElement("i", {
+    className: "fa-solid fa-user-tag"
+  }), " \u0E15\u0E32\u0E21\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07"), React.createElement("button", {
+    style: segBtn(tab === "user"),
+    onClick: () => setTab("user")
+  }, React.createElement("i", {
+    className: "fa-solid fa-user-pen"
+  }), " \u0E23\u0E32\u0E22\u0E1A\u0E38\u0E04\u0E04\u0E25")), React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: save,
+    disabled: saving || !dirty
+  }, saving ? React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 14,
+      height: 14,
+      borderWidth: 2
+    }
+  }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-floppy-disk"
+  }), " ", dirty ? "บันทึกสิทธิ์" : "บันทึกแล้ว")))), dirty && React.createElement("div", {
+    style: {
+      margin: "0 16px 14px",
+      display: "flex",
+      gap: 9,
+      alignItems: "flex-start",
+      background: "#FFFBEB",
+      border: "1px solid #FDE68A",
+      borderRadius: 10,
+      padding: "10px 12px",
+      fontSize: 12.5,
+      color: "#92400E"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-triangle-exclamation",
+    style: {
+      marginTop: 2
+    }
+  }), React.createElement("span", null, "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E41\u0E25\u0E49\u0E27\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01 \u2014 \u0E01\u0E14 \"\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\" \u0E01\u0E48\u0E2D\u0E19\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E19\u0E35\u0E49 \u0E44\u0E21\u0E48\u0E07\u0E31\u0E49\u0E19\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E41\u0E01\u0E49\u0E08\u0E30\u0E2B\u0E32\u0E22\u0E44\u0E1B"))), tab === "role" ? React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "card-h"
+  }, React.createElement("div", null, React.createElement("h3", null, "\u0E15\u0E32\u0E23\u0E32\u0E07\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E15\u0E32\u0E21\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07"), React.createElement("div", {
+    className: "sub"
+  }, "\u0E15\u0E34\u0E4A\u0E01 = \u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49 \xB7 \u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E40\u0E04\u0E22\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E08\u0E30\u0E43\u0E0A\u0E49\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E02\u0E2D\u0E07\u0E23\u0E30\u0E1A\u0E1A"))), React.createElement("div", {
+    className: "card-body"
+  }, React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
+    style: {
+      minWidth: 190
+    }
+  }, "\u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19"), roles.map(r => React.createElement("th", {
+    key: r,
+    style: {
+      textAlign: "center",
+      whiteSpace: "nowrap"
+    }
+  }, r, React.createElement("div", {
+    style: {
+      fontSize: 10,
+      fontWeight: 400,
+      color: "var(--muted)",
+      marginTop: 2
+    }
+  }, roleTouched(r) ? React.createElement("button", {
+    onClick: () => resetRole(r),
+    title: "\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E02\u0E2D\u0E07\u0E23\u0E30\u0E1A\u0E1A",
+    style: {
+      border: "none",
+      background: "none",
+      color: "var(--primary)",
+      cursor: "pointer",
+      fontSize: 10,
+      fontFamily: "Kanit",
+      padding: 0
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate-left"
+  }), " \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19") : "ค่าเริ่มต้น"))))), React.createElement("tbody", null, groups.map(g => React.createElement(React.Fragment, {
+    key: g
+  }, React.createElement("tr", null, React.createElement("td", {
+    colSpan: roles.length + 1,
+    style: {
+      background: "var(--line-soft)"
+    }
+  }, React.createElement("span", {
+    className: "group-label",
+    style: {
+      fontWeight: 500,
+      fontSize: 12.5,
+      color: "var(--primary)"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-layer-group",
+    style: {
+      marginRight: 7
+    }
+  }), g))), features.filter(f => f.group === g).map(f => React.createElement("tr", {
+    key: f.key
+  }, React.createElement("td", null, React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${f.icon}`,
+    style: {
+      color: "var(--muted)",
+      width: 15,
+      textAlign: "center"
+    }
+  }), React.createElement("span", {
+    style: {
+      fontSize: 13
+    }
+  }, f.label)), React.createElement("div", {
+    className: "mono",
+    style: {
+      fontSize: 10.5,
+      color: "var(--muted)",
+      marginTop: 2
+    }
+  }, f.key)), roles.map(r => {
+    const locked = r === "Admin" && f.key === "permissions";
+    return React.createElement("td", {
+      key: r,
+      style: {
+        textAlign: "center"
+      }
+    }, React.createElement("input", {
+      type: "checkbox",
+      style: {
+        ...chk,
+        cursor: locked ? "not-allowed" : "pointer"
+      },
+      checked: locked || roleAllow(r).has(f.key),
+      disabled: locked,
+      title: locked ? "Admin ต้องเข้าหน้านี้ได้เสมอ" : "",
+      onChange: () => toggleRole(r, f.key)
+    }));
+  }))), React.createElement("tr", null, React.createElement("td", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)"
+    }
+  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E17\u0E31\u0E49\u0E07\u0E01\u0E25\u0E38\u0E48\u0E21"), roles.map(r => React.createElement("td", {
+    key: r,
+    style: {
+      textAlign: "center",
+      whiteSpace: "nowrap"
+    }
+  }, React.createElement("button", {
+    onClick: () => allOfGroup(r, g, true),
+    title: `เปิดทุกฟังก์ชันในกลุ่ม ${g}`,
+    style: {
+      border: "1px solid var(--line)",
+      background: "#fff",
+      borderRadius: 5,
+      cursor: "pointer",
+      fontSize: 10,
+      padding: "1px 5px",
+      marginRight: 3
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-check",
+    style: {
+      color: "var(--success)"
+    }
+  })), React.createElement("button", {
+    onClick: () => allOfGroup(r, g, false),
+    title: `ปิดทุกฟังก์ชันในกลุ่ม ${g}`,
+    style: {
+      border: "1px solid var(--line)",
+      background: "#fff",
+      borderRadius: 5,
+      cursor: "pointer",
+      fontSize: 10,
+      padding: "1px 5px"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark",
+    style: {
+      color: "var(--danger)"
+    }
+  })))))))))))) : React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "card-h"
+  }, React.createElement("div", null, React.createElement("h3", null, "\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E23\u0E32\u0E22\u0E1A\u0E38\u0E04\u0E04\u0E25"), React.createElement("div", {
+    className: "sub"
+  }, "\u0E43\u0E0A\u0E49\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E43\u0E2B\u0E49\u0E04\u0E19\u0E43\u0E14\u0E04\u0E19\u0E2B\u0E19\u0E36\u0E48\u0E07\u0E15\u0E48\u0E32\u0E07\u0E08\u0E32\u0E01\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E40\u0E02\u0E32 \xB7 \u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E17\u0E31\u0E1A\u0E04\u0E48\u0E32\u0E02\u0E2D\u0E07\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E40\u0E2A\u0E21\u0E2D")), React.createElement("select", {
+    value: pickUser,
+    onChange: e => setPickUser(e.target.value),
+    style: {
+      padding: "9px 11px",
+      border: "1px solid var(--line)",
+      borderRadius: 9,
+      fontFamily: "Kanit",
+      fontSize: 13,
+      minWidth: 230,
+      background: "#fff"
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19 \u2014"), users.map(u => React.createElement("option", {
+    key: u.id,
+    value: u.id
+  }, u.name, " \xB7 ", u.role, overrideCount(u.id) ? ` (ยกเว้น ${overrideCount(u.id)})` : "")))), React.createElement("div", {
+    className: "card-body"
+  }, !target ? React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 34
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-user-pen"
+  }), React.createElement("div", {
+    className: "t",
+    style: {
+      fontSize: 14
+    }
+  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E15\u0E31\u0E49\u0E07\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E04\u0E19"), React.createElement("div", null, "\u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E2D\u0E30\u0E44\u0E23\u0E44\u0E27\u0E49 = \u0E43\u0E0A\u0E49\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E15\u0E32\u0E21\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E40\u0E02\u0E32\u0E15\u0E32\u0E21\u0E1B\u0E01\u0E15\u0E34")) : React.createElement(React.Fragment, null, React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap",
+      marginBottom: 14,
+      background: "var(--line-soft)",
+      borderRadius: 11,
+      padding: "11px 13px"
+    }
+  }, React.createElement("div", {
+    className: "avatar",
+    style: {
+      width: 38,
+      height: 38,
+      borderRadius: "50%",
+      display: "grid",
+      placeItems: "center",
+      background: "var(--accent-soft)",
+      color: "var(--primary)",
+      fontWeight: 600,
+      fontSize: 13
+    }
+  }, window.initials(target.name)), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 150
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500
+    }
+  }, target.name), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, target.role, target.dept ? ` · ${target.dept}` : "")), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, "\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49 ", [...targetAllowed].filter(k => valid.has(k)).length, "/", features.length, " \u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19"), overrideCount(target.id) > 0 && React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => clearUser(target.id)
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate-left"
+  }), " \u0E25\u0E49\u0E32\u0E07\u0E04\u0E48\u0E32\u0E22\u0E01\u0E40\u0E27\u0E49\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14")), React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
+    style: {
+      minWidth: 190
+    }
+  }, "\u0E1F\u0E31\u0E07\u0E01\u0E4C\u0E0A\u0E31\u0E19"), React.createElement("th", {
+    style: {
+      textAlign: "center",
+      whiteSpace: "nowrap"
+    }
+  }, "\u0E15\u0E32\u0E21\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07 (", target.role, ")"), React.createElement("th", {
+    style: {
+      textAlign: "center",
+      whiteSpace: "nowrap"
+    }
+  }, "\u0E15\u0E31\u0E49\u0E07\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E04\u0E19\u0E19\u0E35\u0E49"), React.createElement("th", {
+    style: {
+      textAlign: "center",
+      whiteSpace: "nowrap"
+    }
+  }, "\u0E2A\u0E23\u0E38\u0E1B\u0E27\u0E48\u0E32\u0E40\u0E02\u0E49\u0E32\u0E44\u0E14\u0E49\u0E44\u0E2B\u0E21"))), React.createElement("tbody", null, groups.map(g => React.createElement(React.Fragment, {
+    key: g
+  }, React.createElement("tr", null, React.createElement("td", {
+    colSpan: "4",
+    style: {
+      background: "var(--line-soft)"
+    }
+  }, React.createElement("span", {
+    className: "group-label",
+    style: {
+      fontWeight: 500,
+      fontSize: 12.5,
+      color: "var(--primary)"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-layer-group",
+    style: {
+      marginRight: 7
+    }
+  }), g))), features.filter(f => f.group === g).map(f => {
+    const st = userState(target.id, f.key);
+    const byRole = targetRoleSet.has(f.key);
+    const finalOk = st === "allow" ? true : st === "deny" ? false : byRole;
+    return React.createElement("tr", {
+      key: f.key
+    }, React.createElement("td", null, React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${f.icon}`,
+      style: {
+        color: "var(--muted)",
+        width: 15,
+        textAlign: "center"
+      }
+    }), React.createElement("span", {
+      style: {
+        fontSize: 13
+      }
+    }, f.label))), React.createElement("td", {
+      style: {
+        textAlign: "center"
+      }
+    }, React.createElement("span", {
+      className: "badge",
+      style: byRole ? {
+        background: "#DCFCE7",
+        color: "#166534"
+      } : {
+        background: "#F1F5F9",
+        color: "#64748B"
+      }
+    }, byRole ? "เข้าได้" : "เข้าไม่ได้")), React.createElement("td", {
+      style: {
+        textAlign: "center",
+        whiteSpace: "nowrap"
+      }
+    }, [{
+      k: "role",
+      l: "ตามตำแหน่ง"
+    }, {
+      k: "allow",
+      l: "เปิดให้"
+    }, {
+      k: "deny",
+      l: "ปิดกั้น"
+    }].map(o => React.createElement("button", {
+      key: o.k,
+      onClick: () => setUserState(target.id, f.key, o.k),
+      style: {
+        fontFamily: "Kanit",
+        fontSize: 11,
+        padding: "3px 8px",
+        cursor: "pointer",
+        border: "1px solid " + (st === o.k ? "var(--primary)" : "var(--line)"),
+        background: st === o.k ? "var(--accent-soft)" : "#fff",
+        color: st === o.k ? "var(--primary)" : "var(--muted)",
+        borderRadius: o.k === "role" ? "7px 0 0 7px" : o.k === "deny" ? "0 7px 7px 0" : 0,
+        marginLeft: o.k === "role" ? 0 : -1
+      }
+    }, o.l))), React.createElement("td", {
+      style: {
+        textAlign: "center"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${finalOk ? "fa-circle-check" : "fa-circle-xmark"}`,
+      style: {
+        color: finalOk ? "var(--success)" : "var(--danger)",
+        fontSize: 15
+      }
+    })));
+  }))))))))));
+}
+window.Permissions = Permissions;
+
+/* ---- block 20 (ต้นฉบับบรรทัด 8556) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -16662,6 +18027,7 @@ function WorkspacePicker({
     if (sys.id === "assets") return `${stats.assets} รายการ · เชื่อมงานซ่อม ${stats.repairs} ใบงาน`;
     if (sys.id === "production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
     if (sys.id === "consume") return `เตรียมเชื่อมสต๊อก/เบิกจ่าย ${stats.withdrawals} รายการ`;
+    if (sys.id === "manage") return `${stats.users} ผู้ใช้งาน · ${(window.__DATA.projects || []).length} โครงการ`;
     if (sys.id === "pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
     if (sys.id === "hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
     return "พร้อมเชื่อมข้อมูล";
@@ -16671,7 +18037,7 @@ function WorkspacePicker({
       if (sys.status === "ready") Swal.fire({
         icon: "info",
         title: "ไม่มีสิทธิ์เข้าใช้ระบบนี้",
-        text: `${sys.name} เปิดใช้เฉพาะ ${(sys.roles || []).join(" / ")}`
+        text: (sys.roles || []).length ? `${sys.name} เปิดใช้เฉพาะ ${sys.roles.join(" / ")}` : `บัญชีของคุณยังไม่ได้รับสิทธิ์ใช้งาน ${sys.name} · แจ้งผู้ดูแลระบบให้เปิดสิทธิ์ที่ ระบบการจัดการ → สิทธิ์การใช้งาน`
       });else Swal.fire({
         icon: "info",
         title: "ระบบนี้รอพัฒนา",
@@ -16799,7 +18165,7 @@ function WorkspacePicker({
         background: "#E0E7FF",
         color: "#3730A3"
       }
-    }, "\u0E40\u0E09\u0E1E\u0E32\u0E30 ", (s.roles || []).join(" / ")) : !ready && React.createElement("span", {
+    }, (s.roles || []).length ? `เฉพาะ ${s.roles.join(" / ")}` : "ยังไม่ได้รับสิทธิ์") : !ready && React.createElement("span", {
       className: "badge",
       style: {
         fontSize: 11,
@@ -17275,6 +18641,9 @@ function App() {
   const [sbOpen, setSbOpen] = React.useState(false);
   const [booting, setBooting] = React.useState(true);
   const [bootErr, setBootErr] = React.useState(null);
+  const [locked, setLocked] = React.useState(false);
+  const [pinOn, setPinOn] = React.useState(() => window.__PIN.enabled());
+  const [pinSetup, setPinSetup] = React.useState(false);
   React.useEffect(() => {
     (async () => {
       try {
@@ -17288,10 +18657,12 @@ function App() {
   }, []);
   React.useEffect(() => {
     if (booting) return;
-    if (localStorage.getItem("rms_user") && isSessionExpired()) {
+    const pinKept = window.__PIN.enabled();
+    if (localStorage.getItem("rms_user") && !pinKept && isSessionExpired()) {
       clearSession();
       return;
     }
+    if (pinKept && localStorage.getItem("rms_user")) setLocked(window.__PIN.isLocked());
     const s = localStorage.getItem("rms_user");
     if (s) {
       try {
@@ -17329,10 +18700,35 @@ function App() {
     window.askNotifyPermission(user);
   }, [user && user.id, user && user.role]);
   React.useEffect(() => {
+    if (!user || !workspace || locked) return;
+    if (!window.__PIN.available() || window.__PIN.enabled() || window.__PIN.asked()) return;
+    const t = setTimeout(() => {
+      window.__PIN.markAsked();
+      Swal.fire({
+        icon: "question",
+        title: "ตั้ง PIN ไหม?",
+        html: "ตั้ง PIN 6 หลักไว้ปลดล็อกแอป แล้วจะไม่ถูกเด้งออกเพราะหมดเวลาใช้งานอีก<br/><span style='font-size:13px;color:#64748B'>เปลี่ยนหรือปิดได้ทีหลังที่เมนู <b>ล็อกด้วย PIN</b></span>",
+        showCancelButton: true,
+        confirmButtonText: "ตั้ง PIN เลย",
+        cancelButtonText: "ไว้ก่อน",
+        confirmButtonColor: "#1E40AF"
+      }).then(r => {
+        if (r.isConfirmed) setPinSetup(true);
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [user && user.id, !!workspace, locked]);
+  React.useEffect(() => {
     if (!user) return;
     touchActivity();
     const checkIdle = () => {
       if (!isSessionExpired()) return;
+      if (window.__PIN.enabled()) {
+        window.__PIN.lockNow();
+        setLocked(true);
+        touchActivity();
+        return;
+      }
       clearSession();
       setUser(null);
       setWorkspace(null);
@@ -17352,8 +18748,17 @@ function App() {
       lastWrite = now;
       touchActivity();
     };
+    const onAway = () => window.__PIN.markAway();
     const onVisible = () => {
-      if (document.visibilityState === "visible") checkIdle();
+      if (document.visibilityState !== "visible") {
+        onAway();
+        return;
+      }
+      if (window.__PIN.isLocked()) {
+        setLocked(true);
+        return;
+      }
+      checkIdle();
     };
     const events = ["mousedown", "keydown", "touchstart", "click", "scroll", "wheel"];
     events.forEach(ev => window.addEventListener(ev, onActivity, {
@@ -17361,16 +18766,23 @@ function App() {
       capture: true
     }));
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pagehide", onAway);
     const timer = setInterval(checkIdle, 30000);
     return () => {
       events.forEach(ev => window.removeEventListener(ev, onActivity, {
         capture: true
       }));
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pagehide", onAway);
       clearInterval(timer);
     };
   }, [user && user.id]);
   const login = u => {
+    const rec = window.__PIN.record();
+    if (rec && rec.uid && rec.uid !== u.id) window.__PIN.disable();
+    window.__PIN.unlock();
+    setLocked(false);
+    setPinOn(window.__PIN.enabled());
     setUser(u);
     localStorage.setItem("rms_user", JSON.stringify(u));
     setWorkspace(null);
@@ -17497,6 +18909,21 @@ function App() {
   if (!user) return React.createElement(Login, {
     onLogin: login
   });
+  if (locked) return React.createElement(PinLockScreen, {
+    user: user,
+    onUnlock: () => {
+      setLocked(false);
+      touchActivity();
+    },
+    onForceLogout: () => {
+      setLocked(false);
+      setPinOn(false);
+      setUser(null);
+      setWorkspace(null);
+      window.__DATA.activeErp = null;
+      window.__DATA.activeProject = "";
+    }
+  });
   if (!workspace) return React.createElement(WorkspacePicker, {
     user: user,
     onContinue: enterWorkspace,
@@ -17514,9 +18941,11 @@ function App() {
     activeProject: workspace.project
   };
   const systemId = workspace.erp?.id || "repairs";
-  const isSafety = user.role === "Safety Officer";
-  const allowedPages = (systemId === "assets" ? isSafety ? ["doc-pj2", "machines", "transfer-history"] : ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history", "projects"] : systemId === "consume" ? ["withdrawals"] : isSafety ? ["dashboard", "repairs", "spare-parts", "machines", "r-new"] : ["dashboard", "repairs", "spare-parts", "machines", "users", "categories", "login-logs", "r-dashboard", "r-new", "r-mine"]).concat("notifications");
-  const safePage = allowedPages.includes(page) ? page : workspace.erp?.startPage || allowedPages[0];
+  const myPages = window.allowedPagesFor(activeUser);
+  const allowedPages = (window.SYSTEM_PAGES[systemId] || window.SYSTEM_PAGES.repairs).filter(k => myPages.has(k)).concat("notifications");
+  const startPage = workspace.erp?.startPage;
+  const fallbackPage = (allowedPages.includes(startPage) ? startPage : allowedPages[0]) || "notifications";
+  const safePage = allowedPages.includes(page) ? page : fallbackPage;
   const pageTitles = {
     "dashboard": {
       t: "แดชบอร์ด",
@@ -17570,6 +18999,10 @@ function App() {
       t: "โครงการ",
       c: "Projects · จัดการข้อมูลโครงการทั้งหมด"
     },
+    "permissions": {
+      t: "สิทธิ์การใช้งาน",
+      c: "กำหนดสิทธิ์เข้าถึงฟังก์ชันตามตำแหน่ง และยกเว้นเป็นรายบุคคล · เฉพาะ Admin"
+    },
     "r-dashboard": {
       t: "สรุปงานของฉัน",
       c: "ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"
@@ -17614,16 +19047,19 @@ function App() {
     if (safePage === "asset-do") return React.createElement(DeliveryOrders, {
       user: activeUser
     });
-    if (safePage === "withdrawals") return user.role === "Admin" ? React.createElement(Withdrawals, {
+    if (safePage === "withdrawals") return React.createElement(Withdrawals, {
       user: activeUser
-    }) : null;
+    });
     if (safePage === "doc-pj2") return React.createElement(DocPJ2, {
       user: activeUser
     });
     if (safePage === "transfer-history") return React.createElement(MachineTransferHistory, {
       user: activeUser
     });
-    if (safePage === "login-logs") return user.role === "Admin" ? React.createElement(LoginLogs, null) : null;
+    if (safePage === "login-logs") return React.createElement(LoginLogs, null);
+    if (safePage === "permissions") return React.createElement(Permissions, {
+      user: activeUser
+    });
     if (safePage === "projects") return React.createElement(Projects, {
       user: activeUser
     });
@@ -17656,7 +19092,13 @@ function App() {
     onNav: setPage,
     onLogout: logout,
     open: sbOpen,
-    onClose: () => setSbOpen(false)
+    onClose: () => setSbOpen(false),
+    pinOn: pinOn,
+    onOpenPin: () => setPinSetup(true),
+    onLockNow: () => {
+      window.__PIN.lockNow();
+      setLocked(true);
+    }
   }), React.createElement("main", {
     className: "main"
   }, React.createElement("div", {
@@ -17690,6 +19132,12 @@ function App() {
     onClick: () => setPage("r-new")
   }, React.createElement("i", {
     className: "fa-solid fa-plus"
-  }), " \u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E43\u0E2B\u0E21\u0E48"))), renderPage()));
+  }), " \u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E43\u0E2B\u0E21\u0E48"))), renderPage()), pinSetup && React.createElement(PinSetupModal, {
+    user: activeUser,
+    onClose: () => {
+      setPinSetup(false);
+      setPinOn(window.__PIN.enabled());
+    }
+  }));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));

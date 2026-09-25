@@ -99,6 +99,18 @@ window.__loadPdf = function(){
   return window.html2pdf ? Promise.resolve()
     : window.__lazyScript("https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js");
 };
+// รอรูปในเอกสาร (โลโก้บริษัท) โหลดเสร็จก่อนสั่งแปลงเป็น PDF — กันหัวกระดาษออกมาว่าง
+window.__waitImages = function(el){
+  var imgs = Array.prototype.slice.call((el || document).querySelectorAll("img"));
+  return Promise.all(imgs.map(function(im){
+    if(im.complete) return null;
+    return new Promise(function(res){
+      im.addEventListener("load", res, {once:true});
+      im.addEventListener("error", res, {once:true});
+      setTimeout(res, 3000);                 // รูปเสียหรือค้าง ก็ไม่ปล่อยให้ค้างทั้งหน้า
+    });
+  }));
+};
 // แผนที่ (Leaflet + แผนที่ฐานจาก OpenStreetMap — ไม่ต้องใช้ API key)
 window.__loadMap = function(){
   if(window.L) return Promise.resolve();
@@ -545,6 +557,50 @@ table.data tr:last-child td{border-bottom:0}
   .ia{width:30px;height:30px}
   .photo-grid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}
 }
+/* ===== ล็อกแอปด้วย PIN ===== */
+.pin-ui{--pin-fg:#fff;--pin-key-bg:rgba(255,255,255,.12);--pin-key-line:rgba(255,255,255,.22);
+  --pin-key-press:rgba(255,255,255,.3);--pin-dot-line:rgba(255,255,255,.5);--pin-dot-on:#fff;--pin-err:#FCA5A5}
+.pin-ui.on-light{--pin-fg:var(--text);--pin-key-bg:#F1F5F9;--pin-key-line:#E2E8F0;
+  --pin-key-press:#DBEAFE;--pin-dot-line:#CBD5E1;--pin-dot-on:var(--primary);--pin-err:var(--danger)}
+.pin-dots{display:flex;justify-content:center;gap:15px;margin:20px 0 4px}
+.pin-dot{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--pin-dot-line);
+  transition:transform .14s,background .14s,border-color .14s}
+.pin-dot.on{background:var(--pin-dot-on);border-color:var(--pin-dot-on);transform:scale(1.15)}
+.pin-shake{animation:pinShake .4s}
+@keyframes pinShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-9px)}30%{transform:translateX(8px)}
+  45%{transform:translateX(-6px)}60%{transform:translateX(5px)}80%{transform:translateX(-3px)}}
+.pin-msg{min-height:19px;text-align:center;font-size:12.5px;color:var(--pin-err);margin:2px 0 0}
+.pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:282px;margin:14px auto 0}
+.pin-key{height:62px;border:1px solid var(--pin-key-line);border-radius:50%;background:var(--pin-key-bg);
+  color:var(--pin-fg);font-family:Kanit;font-size:24px;font-weight:300;cursor:pointer;
+  display:grid;place-items:center;-webkit-tap-highlight-color:transparent;transition:background .12s,transform .08s}
+.pin-key:active{background:var(--pin-key-press);transform:scale(.94)}
+.pin-key:disabled{opacity:.45}
+.pin-key.is-fn{background:transparent;border-color:transparent;font-size:19px}
+.pin-key.is-fn:active{background:var(--pin-key-bg)}
+/* จอล็อกเต็มหน้า — ต่ำกว่า SweetAlert (1060) แต่สูงกว่าทุกชั้นในแอป */
+.pin-screen{position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;align-items:center;overflow-y:auto;
+  padding:calc(26px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+  background:linear-gradient(168deg,#172554 0%,#1E3A8A 52%,#1E40AF 100%);color:#fff;font-family:Kanit}
+.pin-screen .pin-head{margin:auto 0 0;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+.pin-avatar{width:66px;height:66px;border-radius:50%;display:grid;place-items:center;font-size:22px;font-weight:600;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3)}
+.pin-name{font-size:17px;font-weight:500}
+.pin-role{font-size:12.5px;color:rgba(255,255,255,.62)}
+.pin-title{font-size:14px;color:rgba(255,255,255,.88);margin-top:6px}
+.pin-screen .pin-body{width:100%;max-width:330px;margin-bottom:auto}
+.pin-foot{width:100%;max-width:330px;display:flex;flex-direction:column;align-items:center;gap:9px;margin-top:22px}
+.pin-link{background:none;border:none;color:rgba(255,255,255,.82);font-family:Kanit;font-size:13px;
+  padding:9px 14px;border-radius:9px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pin-link:active{background:rgba(255,255,255,.12)}
+.pin-note{font-size:11.5px;color:rgba(255,255,255,.52);text-align:center;line-height:1.55}
+/* กล่องตั้งค่า PIN */
+.pin-opt{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;border:1px solid var(--line);
+  border-radius:12px;background:#fff;font-family:Kanit;font-size:14px;color:var(--text);text-align:left;cursor:pointer}
+.pin-opt:active{background:var(--line-soft)}
+.pin-opt i{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:14px;flex-shrink:0}
+.pin-opt small{display:block;font-size:11.5px;color:var(--muted);font-weight:300;margin-top:1px}
+.pin-opt.is-danger{color:var(--danger)}
 @media (max-width:420px){
   .main{padding:0 10px calc(58px + env(safe-area-inset-bottom)) !important}
   .topbar{margin:0 -10px 10px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px 56px}
@@ -1022,13 +1078,14 @@ async function api(action, payload = {}) {
 
     case 'bootstrap': {
       // ดึงทุกอย่างพร้อมกันรอบเดียว — ไม่เช็ค seed ก่อน เพราะทำให้เสีย round-trip ฟรีทุกครั้งที่เปิดเว็บ
-      let [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap] = await Promise.all([
+      let [usersSnap, catSnap, machSnap, repSnap, projSnap, wdSnap, permSnap] = await Promise.all([
         _db.ref('/users').get(),
         _db.ref('/categories').get(),
         _db.ref('/machines').get(),
         _db.ref('/repairs').get(),
         _db.ref('/projects').get(),
         _db.ref('/withdrawals').get(),
+        _db.ref('/permissions').get(),
       ]);
       // ฐานข้อมูลว่างจริง (ติดตั้งใหม่) ค่อยสร้างข้อมูลตั้งต้นแล้วดึงเฉพาะส่วนที่ seed ซ้ำ
       if (!usersSnap.val()) {
@@ -1050,7 +1107,22 @@ async function api(action, payload = {}) {
       }));
       const projects = Object.values(projSnap.val() || {});
       const withdrawals = Object.entries(wdSnap.val() || {}).map(([key, value]) => ({ ...value, key }));
-      return { users, categories, machines, repairs, projects, withdrawals };
+      const permissions = permSnap.val() || {};
+      return { users, categories, machines, repairs, projects, withdrawals, permissions };
+    }
+
+    case 'savePermissions': {
+      const { cfg, by } = payload;
+      if (String((by || {}).role || '') !== 'Admin') {
+        throw new Error('เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่ตั้งสิทธิ์การใช้งานได้');
+      }
+      await _db.ref('/permissions').set({
+        roles: (cfg && cfg.roles) || {},
+        users: (cfg && cfg.users) || {},
+        updatedAt: new Date().toISOString(),
+        updatedBy: (by || {}).name || '',
+      });
+      return { saved: true };
     }
 
     case 'upsertWithdrawal': {
@@ -1552,12 +1624,22 @@ const ERP_SYSTEMS = [
   { id:"production", name:"Production", desc:"รอพัฒนา", icon:"fa-industry", status:"soon" },
   { id:"assets", name:"Asset", desc:"ทะเบียนและข้อมูลทรัพย์สิน/เครื่องจักร", icon:"fa-boxes-stacked", status:"ready", startPage:"machines" },
   { id:"consume", name:"Consume", desc:"เบิกจ่าย/เช็คสต๊อก · เปิดใช้เฉพาะผู้ดูแลระบบ (Admin)", icon:"fa-box-open", status:"ready", startPage:"withdrawals", roles:["Admin"] },
+  // ระบบการจัดการ — ไม่ล็อก role ไว้ตรงนี้ เพราะคุมด้วยสิทธิ์รายฟังก์ชันแล้ว (เข้าได้ถ้ามีสิทธิ์อย่างน้อย 1 หน้า)
+  { id:"manage", name:"ระบบการจัดการ", desc:"ผู้ใช้งาน สิทธิ์เข้าถึง หมวดหมู่ และโครงการ", icon:"fa-sliders", status:"ready", startPage:"users" },
   { id:"pc", name:"PC (Petty Cash)", desc:"รอพัฒนา", icon:"fa-money-bill-wave", status:"soon" },
   { id:"hr-time", name:"บุคลากร/เวลาทำงาน", desc:"รอพัฒนา", icon:"fa-users", status:"soon" },
 ];
 
 function fmtDate(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function fmtDateTime(d){ if(!d) return ""; if(typeof d==="string") d=new Date(d); return `${fmtDate(d)} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+// วัน/เดือน/ปี แบบที่คนไทยอ่าน (ปี พ.ศ.) — ใช้กับตาราง/เอกสารที่ให้คนอ่าน ไม่ใช้กับค่าที่ส่งเข้า input type=date
+function fmtDateTH(d){
+  if(!d) return "";
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if(isNaN(dt)) return String(d);
+  return dt.toLocaleDateString("th-TH",{day:"2-digit",month:"2-digit",year:"numeric"});
+}
+window.fmtDateTH = fmtDateTH;
 
 window.__DATA = {
   users: [],
@@ -1570,9 +1652,10 @@ window.__DATA = {
   deliveryOrders: null,  // ใบส่งของ (DO) — โหลดแบบ lazy เช่นกัน
   statuses: STATUSES,
   erpSystems: ERP_SYSTEMS,
+  permissions: {},       // สิทธิ์เข้าถึงฟังก์ชันที่ Admin ตั้งไว้ (ว่าง = ใช้ค่าเริ่มต้นตาม role)
   activeErp: null,
   activeProject: "",
-  fmtDate, fmtDateTime
+  fmtDate, fmtDateTime, fmtDateTH
 };
 
 window.__DATA.bootstrap = async function(){
@@ -1590,6 +1673,7 @@ window.__DATA.bootstrap = async function(){
   window.__DATA.repairs    = d.repairs    || [];
   window.__DATA.projects   = d.projects   || [];
   window.__DATA.withdrawals = d.withdrawals || [];
+  window.__DATA.permissions = d.permissions || {};
   return window.__DATA;
 };
 
@@ -1617,11 +1701,72 @@ window.projectFull  = (name) => String(name || "");
 window.getActiveProject = (user) => user?.activeProject || window.__DATA.activeProject || "";
 window.getActiveErp = (user) => user?.activeErp || window.__DATA.activeErp || null;
 
-// ระบบงานที่จำกัดสิทธิ์ตาม role — ใส่ roles:[...] ไว้ใน ERP_SYSTEMS (ไม่ใส่ = ทุก role ที่ล็อกอินได้)
+// ===== ทะเบียนฟังก์ชัน (หน้า) + สิทธิ์เข้าถึง =====
+// แหล่งข้อมูลเดียวที่บอกว่า "ระบบงานไหนมีหน้าอะไร" และ "ตำแหน่งไหนเข้าได้บ้างโดยค่าเริ่มต้น"
+// Admin ปรับเองได้ที่ ระบบการจัดการ → สิทธิ์การใช้งาน (เก็บที่ /permissions ใน Firebase)
+window.APP_ROLES = ["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"];
+
+window.APP_FEATURES = [
+  // ── งานซ่อม ──
+  { key:"dashboard",        sys:"repairs", group:"งานซ่อม",        label:"แดชบอร์ด",              icon:"fa-gauge-high",        roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  { key:"repairs",          sys:"repairs", group:"งานซ่อม",        label:"รายการแจ้งซ่อม",        icon:"fa-clipboard-list",    roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer"] },
+  { key:"spare-parts",      sys:"repairs", group:"งานซ่อม",        label:"อะไหล่ที่ใช้ซ่อม",       icon:"fa-box-open",          roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  { key:"r-dashboard",      sys:"repairs", group:"งานซ่อม",        label:"สรุปงานของฉัน",         icon:"fa-chart-pie",         roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
+  { key:"r-new",            sys:"repairs", group:"งานซ่อม",        label:"แจ้งซ่อมใหม่",           icon:"fa-circle-plus",       roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  { key:"r-mine",           sys:"repairs", group:"งานซ่อม",        label:"ติดตามสถานะงานของฉัน",  icon:"fa-clipboard-check",   roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
+  // ── Asset ──
+  { key:"machines",         sys:"assets",  group:"Asset",          label:"ทะเบียนเครื่องจักร",     icon:"fa-industry",          roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  { key:"asset-registry",   sys:"assets",  group:"Asset",          label:"ทะเบียนทรัพย์สิน",       icon:"fa-boxes-stacked",     roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
+  { key:"asset-do",         sys:"assets",  group:"Asset",          label:"ใบส่งของ (DO)",          icon:"fa-file-export",       roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
+  { key:"doc-pj2",          sys:"assets",  group:"Asset",          label:"ปจ2-เอกสารรับรอง",       icon:"fa-certificate",       roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  { key:"transfer-history", sys:"assets",  group:"Asset",          label:"ประวัติการย้ายเครื่องจักร", icon:"fa-clock-rotate-left", roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
+  // ── Consume ──
+  { key:"withdrawals",      sys:"consume", group:"Consume",        label:"รายการเบิกของ",          icon:"fa-file-invoice",      roles:["Admin"] },
+  // ── ระบบการจัดการ ──
+  { key:"projects",         sys:"manage",  group:"ระบบการจัดการ",  label:"โครงการ",                icon:"fa-diagram-project",   roles:["Admin","Director","Officer"] },
+  { key:"users",            sys:"manage",  group:"ระบบการจัดการ",  label:"จัดการผู้ใช้งาน",         icon:"fa-users-gear",        roles:["Admin","Director","Officer"] },
+  { key:"categories",       sys:"manage",  group:"ระบบการจัดการ",  label:"จัดการหมวดหมู่",          icon:"fa-tags",              roles:["Admin","Director","Officer"] },
+  { key:"login-logs",       sys:"manage",  group:"ระบบการจัดการ",  label:"ประวัติการล็อกอิน",       icon:"fa-shield-halved",     roles:["Admin"] },
+  { key:"permissions",      sys:"manage",  group:"ระบบการจัดการ",  label:"สิทธิ์การใช้งาน",          icon:"fa-user-shield",       roles:["Admin"] },
+];
+
+// หน้าที่อยู่ในแต่ละระบบงาน (หน้า "การแจ้งเตือน" เปิดได้จากทุกระบบ จึงไม่อยู่ในนี้)
+window.SYSTEM_PAGES = {
+  repairs: ["dashboard","repairs","spare-parts","machines","r-dashboard","r-new","r-mine"],
+  assets:  ["machines","asset-registry","asset-do","doc-pj2","transfer-history"],
+  consume: ["withdrawals"],
+  manage:  ["projects","users","categories","login-logs","permissions"],
+};
+
+window.defaultPagesFor = (role) => window.APP_FEATURES.filter(f=>(f.roles||[]).includes(role)).map(f=>f.key);
+
+// สิทธิ์จริงของคนนี้ = ค่าตามตำแหน่ง (ค่าเริ่มต้น หรือที่ Admin ตั้งไว้) + ที่ยกเว้นไว้เป็นรายคน
+window.allowedPagesFor = (user) => {
+  if(!user) return new Set();
+  const cfg = window.__DATA.permissions || {};
+  const byRole = (cfg.roles||{})[user.role];
+  // set:true = Admin ตั้งค่าตำแหน่งนี้เองแล้ว ให้ยึดตามนั้น (ติ๊กออกหมด = เข้าไม่ได้เลย ไม่ใช่กลับไปใช้ค่าเริ่มต้น)
+  const base = (byRole && byRole.set) ? (byRole.allow || []) : window.defaultPagesFor(user.role);
+  const set = new Set(base);
+  const mine = (cfg.users||{})[user.id];
+  if(mine){
+    (mine.allow||[]).forEach(k=>set.add(k));
+    (mine.deny||[]).forEach(k=>set.delete(k));
+  }
+  set.add("notifications");                            // ทุกคนต้องเห็นคำขอ/สถานะของตัวเอง
+  if(user.role === "Admin") set.add("permissions");    // กันตั้งค่าพลาดแล้วปิดทางเข้าหน้าสิทธิ์ของตัวเอง
+  return set;
+};
+window.canAccessPage = (user, key) => !!key && window.allowedPagesFor(user).has(key);
+
+// ระบบงานที่เข้าได้ = สถานะพร้อมใช้ + ไม่ติด roles ที่ล็อกไว้ + มีสิทธิ์อย่างน้อย 1 ฟังก์ชันในระบบนั้น
 window.canUseErp = (user, sys) => {
   if(!sys || sys.status !== "ready") return false;
-  if(Array.isArray(sys.roles) && sys.roles.length) return sys.roles.includes(user?.role);
-  return true;
+  if(Array.isArray(sys.roles) && sys.roles.length && !sys.roles.includes(user?.role)) return false;
+  const pages = window.SYSTEM_PAGES[sys.id];
+  if(!pages || !pages.length) return true;
+  const allowed = window.allowedPagesFor(user);
+  return pages.some(k => allowed.has(k));
 };
 
 // สิทธิ์ที่ "ขึ้นกับระบบงานที่กำลังใช้อยู่" — Reporter ที่เข้าระบบ Asset Management ทำงานได้เท่า Engineer
@@ -1648,8 +1793,7 @@ window.userProjects = (user) => {
   if(!user) return [];
   const activeProject = window.getActiveProject(user);
   if(activeProject) return [activeProject];
-  const fromProjects = (window.__DATA.projects||[]).map(p => typeof p === "string" ? p : p.name).filter(Boolean);
-  const allNames = fromProjects.length ? fromProjects : Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean)));
+  const allNames = window.allProjectNames();
   if(window.userCanSeeAllProjects(user)) return allNames;
   return (Array.isArray(user.projects) ? user.projects : []).filter(p=>allNames.includes(p));
 };
@@ -1677,8 +1821,21 @@ window.filterByUserProjects = (user, items, projectKey="project") => {
 
 // ชื่อโครงการที่ "บัญชีนี้มีสิทธิ์" — คิดจาก role + โครงการที่มอบหมายเท่านั้น
 // ไม่ผูกกับโครงการที่เลือกตอนเข้าใช้งาน (workspace) เพราะบางงานต้องเลือกข้ามโครงการได้ เช่น ย้ายเครื่องจักร
+// ชื่อโครงการทั้งหมดที่ระบบรู้จัก = ทะเบียนโครงการ + ชื่อโครงการที่ติดอยู่กับเครื่องจักร
+// ต้องใช้ตัวเดียวกันทั้งตอนมอบหมายสิทธิ์ (หน้าจัดการผู้ใช้งาน) และตอนตรวจสิทธิ์
+// ไม่งั้นชื่อที่มีแค่ฝั่งเดียวจะติ๊กให้ไม่ได้ หรือติ๊กแล้วถูกกรองทิ้งจนไม่มีผลอะไรเลย
+window.allProjectNames = () => {
+  const names = new Set();
+  (window.__DATA.projects||[]).forEach(p=>{
+    const nm = (p && typeof p === "object") ? p.name : p;
+    if(nm) names.add(nm);
+  });
+  (window.__DATA.machines||[]).forEach(m=>{ if(m && m.project) names.add(m.project); });
+  return [...names].sort((a,b)=>String(a).localeCompare(String(b),"th"));
+};
+
 window.allowedProjectNames = (user) => {
-  const all = (window.__DATA.projects||[]).map(p=>p.name).filter(Boolean);
+  const all = window.allProjectNames();
   if(!user) return [];
   if(["Admin","Director"].includes(user.role)) return all;
   const assigned = (Array.isArray(user.projects) ? user.projects : []).filter(p=>all.includes(p));
@@ -2877,7 +3034,7 @@ function ChangePasswordModal({user,onClose}){
   );
 }
 
-function Sidebar({user,active,onNav,onLogout,open,onClose}){
+function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLockNow}){
   const [changePwModal,setChangePwModal] = React.useState(false);
   const delReq = window.useDeleteRequests(user);
   const isAdminish = ["Admin","Officer","Director"].includes(user.role);
@@ -2889,9 +3046,14 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
     { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+  ];
+  // ระบบการจัดการ — งานตั้งค่าข้อมูลหลักและสิทธิ์ ย้ายมารวมไว้ที่นี่ทั้งหมด
+  const manageNav = [
+    { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
     { key:"users", icon:"fa-users-gear", label:"จัดการผู้ใช้งาน" },
     { key:"categories", icon:"fa-tags", label:"จัดการหมวดหมู่" },
-    ...(user.role==="Admin" ? [{ key:"login-logs", icon:"fa-shield-halved", label:"ประวัติการล็อกอิน" }] : []),
+    { key:"login-logs", icon:"fa-shield-halved", label:"ประวัติการล็อกอิน" },
+    { key:"permissions", icon:"fa-user-shield", label:"สิทธิ์การใช้งาน" },
   ];
   const techNav = [
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
@@ -2927,17 +3089,19 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
     { key:"asset-do", icon:"fa-file-export", label:"ใบส่งของ (DO)" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
-    { key:"projects", icon:"fa-diagram-project", label:"โครงการ" },
   ];
   const consumeNav = [
     { key:"withdrawals", icon:"fa-file-invoice", label:"รายการเบิกของ" },
   ];
-  const nav = systemId==="assets"
+  const navBySystem = systemId==="assets"
     ? (isSafety ? safetyAssetNav : assetNav)
+    : systemId==="manage" ? manageNav
     : systemId==="consume" ? consumeNav
     : isSafety ? safetyNav
     : isAdminish ? adminNav
     : isTech ? techNav : reporterNav;
+  // เมนูที่เห็นจริง = เมนูของระบบงานนี้ ∩ สิทธิ์ที่ได้รับ (ตั้งที่ ระบบการจัดการ → สิทธิ์การใช้งาน)
+  const nav = navBySystem.filter(x=>window.canAccessPage(user,x.key));
   return (
     <>
       {open && <div className="sidebar-scrim show" onClick={onClose}></div>}
@@ -2962,6 +3126,19 @@ function Sidebar({user,active,onNav,onLogout,open,onClose}){
             <span>การแจ้งเตือน</span>
             {delReq.badge>0 && <span className="badge" style={{background:"#FEE2E2",color:"#B91C1C"}}>{delReq.badge}</span>}
           </div>
+          {window.__PIN.available() && (
+            <div className="nav-item" onClick={()=>{ onOpenPin && onOpenPin(); onClose && onClose(); }}
+                 title="ล็อกแอปด้วย PIN 6 หลัก — เปิดแล้วล็อกอินค้างไว้ได้ถาวร ไม่มีหมดอายุ">
+              <i className="fa-solid fa-shield-halved"></i>
+              <span>ล็อกด้วย PIN</span>
+              <span className="badge" style={pinOn?{background:"#DCFCE7",color:"#166534"}:{background:"rgba(255,255,255,.12)",color:"rgba(255,255,255,.72)"}}>{pinOn?"เปิด":"ปิด"}</span>
+            </div>
+          )}
+          {window.__PIN.available() && pinOn && (
+            <div className="nav-item" onClick={()=>{ onLockNow && onLockNow(); onClose && onClose(); }}>
+              <i className="fa-solid fa-lock"></i><span>ล็อกหน้าจอทันที</span>
+            </div>
+          )}
           <div className="nav-item" onClick={()=>setChangePwModal(true)}><i className="fa-solid fa-gear"></i><span>ตั้งค่า</span></div>
         </nav>
         <div className="me">
@@ -3539,6 +3716,14 @@ function Dashboard({user,goTo}){
 
   React.useEffect(()=>{ setJobLimit(36); },[mapProject,jobStatus]);
 
+  // โครงการที่เลือกดูได้ในการ์ดงานค้าง — รวมโครงการที่มีงานค้างแต่ยังไม่มีในทะเบียนโครงการด้วย
+  const jobProjectOptions = React.useMemo(()=>{
+    const names = new Set(mapProjects.map(p=>p.name));
+    openJobs.forEach(r=>{ if(r.project) names.add(r.project); });
+    return [...names].sort((a,b)=>String(a).localeCompare(String(b),"th"))
+      .map(name=>({name, open:(jobsByProject[name]||{open:0}).open}));
+  },[mapProjects,openJobs,jobsByProject]);
+
   const jobStatusChips = React.useMemo(()=>{
     const list = window.__DATA.statuses.filter(s=>s.key!=="done");
     return [{key:"all",label:"ทั้งหมด",n:openJobs.filter(r=>!mapProject||r.project===mapProject).length}].concat(
@@ -3767,7 +3952,15 @@ function Dashboard({user,goTo}){
                 {jobCards.length.toLocaleString("th-TH")} ใบ{mapProject?` · เฉพาะโครงการ ${window.projectShort(mapProject)}`:""} · ไม่รวมงานที่ปิดเรียบร้อยแล้ว
               </div>
             </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <select value={mapProject} onChange={e=>setMapProject(e.target.value)} title="เลือกดูเฉพาะโครงการ"
+                style={{padding:"7px 10px",border:"1px solid var(--line)",borderRadius:9,fontFamily:"Kanit",
+                        fontSize:13,background:"#fff",maxWidth:230}}>
+                <option value="">ทุกโครงการ ({openJobs.length.toLocaleString("th-TH")})</option>
+                {jobProjectOptions.map(p=>(
+                  <option key={p.name} value={p.name}>{window.projectShort(p.name)} ({p.open.toLocaleString("th-TH")})</option>
+                ))}
+              </select>
               {jobStatusChips.map(c=>(
                 <button key={c.key} className={`btn btn-sm ${jobStatus===c.key?"btn-primary":"btn-ghost"}`} onClick={()=>setJobStatus(c.key)}>
                   {c.label} <span style={{opacity:.8,marginLeft:4}}>({c.n})</span>
@@ -4818,7 +5011,9 @@ function Users({user}){
 function UserForm({init,onClose,onSave}){
   const [f,setF] = React.useState({...init, projects: Array.isArray(init.projects)?init.projects:[]});
   const roles = ["Admin","Officer","Engineer","Safety Officer","Technician","Reporter","Director"];
-  const allProjects = React.useMemo(()=>Array.from(new Set((window.__DATA.machines||[]).map(m=>m.project).filter(Boolean))).sort(),[]);
+  const allProjects = React.useMemo(()=>window.allProjectNames(),[]);
+  // ชื่อที่ไม่มีในทะเบียนโครงการ (มีแต่บนเครื่องจักร) — ทำป้ายบอกไว้ เผื่อชื่อพิมพ์ไม่ตรงกัน
+  const registryNames = React.useMemo(()=>new Set((window.__DATA.projects||[]).map(p=>p && p.name).filter(Boolean)),[]);
   const isSuperRole = ["Admin","Director"].includes(f.role);
   const isProjectLocked = (window.PROJECT_LOCKED_ROLES||[]).includes(f.role);   // ต้องเลือกโครงการเสมอ ไม่เลือก = ไม่เห็นอะไรเลย
   const toggleProject = (p) => setF(prev=>{ const cur=prev.projects||[]; return {...prev,projects:cur.includes(p)?cur.filter(x=>x!==p):[...cur,p]}; });
@@ -4873,6 +5068,12 @@ function UserForm({init,onClose,onSave}){
                       <label key={p} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,cursor:"pointer",background:on?"rgba(30,64,175,.08)":"#fff",border:`1px solid ${on?"rgba(30,64,175,.4)":"var(--line)"}`,fontSize:13,transition:"all .15s"}}>
                         <input type="checkbox" checked={on} onChange={()=>toggleProject(p)} style={{margin:0,cursor:"pointer",accentColor:"var(--primary)",width:16,height:16}} />
                         <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p}</span>
+                        {!registryNames.has(p) && (
+                          <span title="ชื่อนี้มีแต่บนข้อมูลเครื่องจักร ยังไม่มีในทะเบียนโครงการ"
+                                style={{fontSize:10,color:"#B45309",background:"#FEF3C7",borderRadius:5,padding:"1px 5px",whiteSpace:"nowrap"}}>
+                            ไม่มีในทะเบียน
+                          </span>
+                        )}
                       </label>
                     );
                   })}
@@ -5925,7 +6126,8 @@ function Withdrawals({user}){
   const clean = v => String(v ?? "").trim();
   const safeKey = v => (clean(v) || `WD-${Date.now()}`).replace(/[.#$/\[\]]/g,"-").replace(/\s+/g,"-");
   const parseItems = (doc) => Array.isArray(doc.items) ? doc.items : [];
-  const logoSvg = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+  // โลโก้บริษัทตัวจริง (ไฟล์เดียวกับหน้า Login) — เลิกใช้ SVG ที่วาดเลียนแบบไว้ชั่วคราว
+  const logoSvg = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
   const buildPdfHtml = (doc) => {
     const fmt = v => { const d = new Date(v); return v && !isNaN(d) ? d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"}) : (v||""); };
     const items = parseItems(doc).map((x,i)=>({...x,no:i+1}));
@@ -5941,6 +6143,7 @@ function Withdrawals({user}){
       Swal.close();
     }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return; }
     const el = document.createElement("div"); el.innerHTML = buildPdfHtml(doc); document.body.appendChild(el);
+    await window.__waitImages(el);
     try{ await html2pdf().set({margin:0,filename:pdfName(doc),image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save(); }
     finally{ el.remove(); }
   };
@@ -6075,7 +6278,7 @@ function DocPJ2({user}){
       <div style={{display:"flex",alignItems:"center",gap:5}}>
         {val ? (
           <span style={{fontSize:12,fontWeight:color?"600":"400",color:color?color:"inherit",background:color?color+"18":"transparent",padding:color?"2px 7px":"0",borderRadius:5,display:"inline-flex",alignItems:"center",gap:4}}>
-            {window.__DATA.fmtDate(val)}
+            {window.fmtDateTH(val)}
             {color==="#EF4444"&&<span style={{fontSize:10}}>⚠ เกินกำหนด</span>}
             {color==="#F59E0B"&&<span style={{fontSize:10}}>ใกล้ถึงกำหนด</span>}
           </span>
@@ -7261,7 +7464,8 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
   );
 }
 // ===== ใบส่งของ (Delivery Order) =====
-const DO_LOGO_SVG = `<svg width="31mm" height="36mm" viewBox="0 0 180 210" xmlns="http://www.w3.org/2000/svg"><path d="M107 24A70 70 0 1 0 77 158" fill="none" stroke="#155E95" stroke-width="18"/><path d="M127 47a70 70 0 0 1 0 86" fill="none" stroke="#F28A23" stroke-width="18"/><path d="M42 130c25-53 61-67 107-63-25 16-40 34-47 59 17-8 32-19 46-36-12 50-50 74-104 78 15-12 26-25 35-41-13 2-25 3-37 3z" fill="#155E95"/><path d="M57 147c20-24 45-39 78-48-12 22-18 43-17 69-19-18-37-24-61-21z" fill="#7BC043"/><path d="M83 83l72-7-47 52 2-29-49 40z" fill="#fff"/><text x="90" y="188" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="14" font-weight="700" fill="#155E95">บริษัท พานามณี จำกัด</text><text x="90" y="204" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="12" fill="#155E95">Panamanee Co., Ltd</text></svg>`;
+// โลโก้บริษัทตัวจริง (ไฟล์เดียวกับหน้า Login) — เลิกใช้ SVG ที่วาดเลียนแบบไว้ชั่วคราว
+const DO_LOGO_SVG = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
 
 window.buildDeliveryOrderHtml = function(doc){
   const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -7330,6 +7534,7 @@ window.downloadDeliveryOrderPdf = async function(doc){
   const el = document.createElement("div");
   el.innerHTML = window.buildDeliveryOrderHtml(doc);
   document.body.appendChild(el);
+  await window.__waitImages(el);
   try{
     await html2pdf().set({margin:0,filename:name,image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save();
   }finally{ el.remove(); }
@@ -7664,6 +7869,691 @@ window.DeliveryOrders = DeliveryOrders;
 </script>
 
 <script type="text/babel">
+/* ===== ล็อกแอปด้วย PIN =====
+   ตั้ง PIN แล้วเซสชันบนเครื่องนี้จะไม่หมดอายุอีกเลย (ไม่ต้องกรอก username/password ใหม่)
+   เปลี่ยนจาก "เด้งออกเมื่อไม่ได้ใช้งาน 15 นาที" เป็น "ล็อกหน้าจอ แล้วปลดด้วย PIN 6 หลัก"
+   แอปจะล็อกเมื่อ: สลับ/ปิดแอปทิ้งไว้เกิน 1 นาที · ไม่ได้แตะเกิน 15 นาที · กดล็อกเอง
+   PIN เก็บเฉพาะในเครื่อง (localStorage) เป็นค่าแฮช SHA-256 + salt ไม่ได้ส่งขึ้น Firebase
+*/
+const PIN_LEN = 6;
+const PIN_MAX_FAIL = 5;
+const PIN_GRACE_MS = 60 * 1000;          // สลับไปแอปอื่นแป๊บเดียวแล้วกลับมา ไม่ต้องกรอก PIN ซ้ำ
+const PIN_KEY = "rms_pin";
+const PIN_LOCK_KEY = "rms_pin_locked";
+const PIN_AWAY_KEY = "rms_pin_away_at";
+const PIN_FAIL_KEY = "rms_pin_fail";
+const PIN_ASK_KEY = "rms_pin_asked";
+
+function pinRead(){
+  try{ return JSON.parse(localStorage.getItem(PIN_KEY) || "null"); }catch(e){ return null; }
+}
+function pinSalt(){
+  try{
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.from(a).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return Date.now().toString(16) + Math.random().toString(16).slice(2); }
+}
+async function pinDigest(pin, salt){
+  const bytes = new TextEncoder().encode(salt + ":" + pin);
+  try{
+    const buf = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }catch(e){
+    // เปิดผ่าน http ธรรมดา (ไม่ใช่ https/localhost) เบราว์เซอร์จะไม่ให้ใช้ crypto.subtle
+    let h = 0x811c9dc5;
+    for(let i=0;i<bytes.length;i++) h = Math.imul(h ^ bytes[i], 16777619) >>> 0;
+    return "fnv-" + h.toString(16) + "-" + bytes.length;
+  }
+}
+
+window.__PIN = {
+  LEN: PIN_LEN,
+  MAX_FAIL: PIN_MAX_FAIL,
+  record(){ return pinRead(); },
+  enabled(){ const r = pinRead(); return !!(r && r.hash); },
+  async set(pin, uid){
+    const salt = pinSalt();
+    const hash = await pinDigest(pin, salt);
+    localStorage.setItem(PIN_KEY, JSON.stringify({salt, hash, uid: uid||"", at: Date.now()}));
+    this.unlock();
+  },
+  async verify(pin){
+    const r = pinRead();
+    if(!r || !r.hash) return false;
+    return (await pinDigest(pin, r.salt)) === r.hash;
+  },
+  disable(){
+    [PIN_KEY, PIN_LOCK_KEY, PIN_AWAY_KEY, PIN_FAIL_KEY].forEach(k=>{
+      try{ localStorage.removeItem(k); }catch(e){}
+    });
+  },
+  fails(){ return Number(localStorage.getItem(PIN_FAIL_KEY) || 0); },
+  bumpFail(){ const n = this.fails() + 1; try{ localStorage.setItem(PIN_FAIL_KEY, String(n)); }catch(e){} return n; },
+  // ล็อกเดี๋ยวนี้ ไม่มีช่วงผ่อนผัน (กดปุ่มล็อกเอง / ไม่ได้ใช้งานนานเกินกำหนด)
+  lockNow(){
+    if(!this.enabled()) return;
+    try{ localStorage.setItem(PIN_LOCK_KEY,"1"); localStorage.setItem(PIN_AWAY_KEY,"0"); }catch(e){}
+  },
+  // ออกจากหน้าจอไป (ปิดแอป/สลับแอป) — กลับมาภายใน 1 นาที ยังไม่ต้องกรอก PIN
+  markAway(){
+    if(!this.enabled()) return;
+    if(localStorage.getItem(PIN_LOCK_KEY)==="1") return;   // ล็อกค้างอยู่แล้ว อย่ารีเซ็ตเวลาให้ปลดง่ายขึ้น
+    try{ localStorage.setItem(PIN_LOCK_KEY,"1"); localStorage.setItem(PIN_AWAY_KEY, String(Date.now())); }catch(e){}
+  },
+  isLocked(){
+    if(!this.enabled()) return false;
+    if(localStorage.getItem(PIN_LOCK_KEY) !== "1") return false;
+    const away = Number(localStorage.getItem(PIN_AWAY_KEY) || 0);
+    return !away || (Date.now() - away) > PIN_GRACE_MS;
+  },
+  unlock(){
+    [PIN_LOCK_KEY, PIN_AWAY_KEY, PIN_FAIL_KEY].forEach(k=>{
+      try{ localStorage.removeItem(k); }catch(e){}
+    });
+    if(window.touchActivity) window.touchActivity();
+  },
+  asked(){ return localStorage.getItem(PIN_ASK_KEY) === "1"; },
+  markAsked(){ try{ localStorage.setItem(PIN_ASK_KEY,"1"); }catch(e){} },
+  // เมนู PIN โผล่เฉพาะเครื่องมือถือ / แอปที่ติดตั้งแล้ว
+  available(){ return !!(window.__pwa && (window.__pwa.isMobile() || window.__pwa.isStandalone())); },
+};
+
+// เปิดแอปขึ้นมาใหม่ทั้งที่เปิด PIN ไว้ → ถือว่าเพิ่งออกจากหน้าจอไป
+// (บางครั้งแอปถูกปิดแบบ force kill จน pagehide ไม่ทำงาน ต้องกันไว้ที่นี่ด้วย)
+if(window.__PIN.enabled() && localStorage.getItem(PIN_LOCK_KEY) !== "1"){
+  try{
+    localStorage.setItem(PIN_LOCK_KEY,"1");
+    localStorage.setItem(PIN_AWAY_KEY, localStorage.getItem("rms_last_active") || "0");
+  }catch(e){}
+}
+
+// ---- ช่องกรอก PIN (จุด + แป้นตัวเลข) -------------------------------------
+function PinDots({count,shake}){
+  return (
+    <div className={`pin-dots${shake?" pin-shake":""}`}>
+      {Array.from({length:PIN_LEN}).map((_,i)=><span key={i} className={`pin-dot${i<count?" on":""}`}></span>)}
+    </div>
+  );
+}
+
+function PinPad({onDigit,onBack,disabled}){
+  return (
+    <div className="pin-pad">
+      {["1","2","3","4","5","6","7","8","9"].map(k=>(
+        <button key={k} type="button" className="pin-key" disabled={disabled} onClick={()=>onDigit(k)}>{k}</button>
+      ))}
+      <span></span>
+      <button type="button" className="pin-key" disabled={disabled} onClick={()=>onDigit("0")}>0</button>
+      <button type="button" className="pin-key is-fn" disabled={disabled} onClick={onBack} aria-label="ลบตัวเลขล่าสุด">
+        <i className="fa-solid fa-delete-left"></i>
+      </button>
+    </div>
+  );
+}
+
+/* กรอกครบ PIN_LEN หลักแล้วเรียก onFull(pin) ให้เอง
+   onFull คืน true = ผ่าน (ล้างช่องเฉยๆ) · false = ไม่ผ่าน (สั่น + ล้างช่อง) */
+function usePinEntry(onFull){
+  const [pin,setPin] = React.useState("");
+  const [shake,setShake] = React.useState(false);
+  const [busy,setBusy] = React.useState(false);
+  const cb = React.useRef(onFull);
+  cb.current = onFull;
+
+  React.useEffect(()=>{
+    if(pin.length !== PIN_LEN) return;
+    let alive = true;
+    setBusy(true);
+    (async()=>{
+      let ok = false;
+      try{ ok = await cb.current(pin); }catch(e){ ok = false; }
+      if(!alive) return;
+      setBusy(false);
+      setPin("");
+      if(!ok){
+        setShake(true);
+        setTimeout(()=>setShake(false), 420);
+      }
+    })();
+    return ()=>{ alive = false; };
+  },[pin]);
+
+  const push = (d)=> setPin(p => (p.length>=PIN_LEN ? p : p + d));
+  const back = ()=> setPin(p => p.slice(0,-1));
+
+  // เผื่อเครื่องที่มีแป้นพิมพ์ (แท็บเล็ตต่อคีย์บอร์ด / เปิดบนเดสก์ท็อป)
+  React.useEffect(()=>{
+    const h = (e)=>{
+      if(/^[0-9]$/.test(e.key)) push(e.key);
+      else if(e.key === "Backspace") back();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown",h);
+    return ()=>window.removeEventListener("keydown",h);
+  },[]);
+
+  return {pin,push,back,shake,busy,clear:()=>setPin("")};
+}
+
+// ---- จอล็อก ---------------------------------------------------------------
+function PinLockScreen({user,onUnlock,onForceLogout}){
+  const [msg,setMsg] = React.useState("");
+  const entry = usePinEntry(async (pin)=>{
+    if(await window.__PIN.verify(pin)){
+      window.__PIN.unlock();
+      onUnlock();
+      return true;
+    }
+    const n = window.__PIN.bumpFail();
+    if(n >= PIN_MAX_FAIL){
+      window.__PIN.disable();
+      window.clearSession();
+      onForceLogout();
+      Swal.fire({icon:"error",title:"กรอก PIN ผิดเกินกำหนด",
+        text:`กรอกผิด ${PIN_MAX_FAIL} ครั้ง ระบบปิดการใช้ PIN และออกจากระบบแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านอีกครั้ง`,
+        confirmButtonColor:"#1E40AF"});
+      return true;
+    }
+    setMsg(`PIN ไม่ถูกต้อง · เหลืออีก ${PIN_MAX_FAIL - n} ครั้ง`);
+    return false;
+  });
+
+  const forgot = () => {
+    Swal.fire({icon:"question",title:"ลืม PIN?",
+      text:"ระบบจะปิดการใช้ PIN และออกจากระบบ ให้เข้าสู่ระบบด้วยรหัสผ่านใหม่ แล้วตั้ง PIN อีกครั้งได้",
+      showCancelButton:true,confirmButtonText:"ออกจากระบบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#EF4444"
+    }).then(r=>{
+      if(!r.isConfirmed) return;
+      window.__PIN.disable();
+      window.clearSession();
+      onForceLogout();
+    });
+  };
+
+  return (
+    <div className="pin-screen pin-ui">
+      <div className="pin-head">
+        <div className="pin-avatar">{window.initials(user.name)}</div>
+        <div>
+          <div className="pin-name">{user.name}</div>
+          <div className="pin-role">{user.role}{user.dept?` · ${user.dept}`:""}</div>
+        </div>
+        <div className="pin-title"><i className="fa-solid fa-lock"></i> กรอก PIN {PIN_LEN} หลักเพื่อเข้าใช้งาน</div>
+      </div>
+
+      <div className="pin-body">
+        <PinDots count={entry.pin.length} shake={entry.shake}/>
+        <div className="pin-msg">{msg}</div>
+        <PinPad onDigit={entry.push} onBack={entry.back} disabled={entry.busy}/>
+      </div>
+
+      <div className="pin-foot">
+        <button type="button" className="pin-link" onClick={forgot}>
+          <i className="fa-solid fa-circle-question"></i> ลืม PIN — เข้าด้วยรหัสผ่าน
+        </button>
+        <div className="pin-note">ล็อกอินค้างไว้ได้ถาวร ไม่มีหมดอายุ · ปลดล็อกด้วย PIN เท่านั้น</div>
+      </div>
+    </div>
+  );
+}
+
+// ---- ตั้งค่า PIN ----------------------------------------------------------
+function PinSetupModal({user,onClose}){
+  const on = window.__PIN.enabled();
+  // menu = มี PIN อยู่แล้ว · current = ยืนยัน PIN เดิม · new = ตั้ง PIN ใหม่ · confirm = กรอกซ้ำ
+  const [mode,setMode] = React.useState(on ? "menu" : "new");
+  const [pending,setPending] = React.useState("");     // PIN ใหม่ที่รอกรอกยืนยัน
+  const [after,setAfter] = React.useState("");         // ยืนยัน PIN เดิมเสร็จแล้วจะไปทำอะไร
+  const [msg,setMsg] = React.useState("");
+
+  const done = (title, text) => {
+    Swal.fire({icon:"success",title,text,timer:2200,showConfirmButton:false});
+    onClose();
+  };
+
+  const entry = usePinEntry(async (pin)=>{
+    if(mode === "current"){
+      if(!(await window.__PIN.verify(pin))){
+        setMsg("PIN เดิมไม่ถูกต้อง");
+        return false;
+      }
+      setMsg("");
+      if(after === "off"){
+        window.__PIN.disable();
+        done("ปิดการใช้ PIN แล้ว","กลับไปใช้การหมดเวลาใช้งาน 15 นาทีตามเดิม");
+        return true;
+      }
+      setMode("new");
+      return true;
+    }
+    if(mode === "new"){
+      setPending(pin);
+      setMsg("");
+      setMode("confirm");
+      return true;
+    }
+    if(mode === "confirm"){
+      if(pin !== pending){
+        setPending("");
+        setMode("new");
+        setMsg("PIN ที่กรอกไม่ตรงกัน ลองตั้งใหม่อีกครั้ง");
+        return false;
+      }
+      await window.__PIN.set(pin, user.id);
+      setPending("");
+      done(on ? "เปลี่ยน PIN แล้ว" : "เปิดใช้ PIN แล้ว","ตั้งแต่นี้ล็อกอินค้างไว้ได้ถาวร ปลดล็อกด้วย PIN");
+      return true;
+    }
+    return true;
+  });
+
+  const heads = {
+    current:{t:"ยืนยัน PIN เดิม", s:"กรอก PIN ที่ใช้อยู่ตอนนี้"},
+    new:{t: on ? "ตั้ง PIN ใหม่" : `ตั้ง PIN ${PIN_LEN} หลัก`, s:"เลือกเลขที่จำได้ แต่คนอื่นเดาไม่ได้"},
+    confirm:{t:"กรอก PIN อีกครั้ง", s:"เพื่อยืนยันว่าไม่ได้กดพลาด"},
+  };
+  const head = heads[mode] || heads.new;
+
+  return (
+    <Modal open={true} onClose={onClose} title="ล็อกแอปด้วย PIN">
+      {mode === "menu" ? (
+        <div style={{display:"grid",gap:10}}>
+          <div style={{display:"flex",gap:10,alignItems:"flex-start",background:"#ECFDF5",border:"1px solid #A7F3D0",
+                       borderRadius:12,padding:"12px 13px",fontSize:13,color:"#065F46"}}>
+            <i className="fa-solid fa-circle-check" style={{marginTop:2}}></i>
+            <span>เปิดใช้ PIN อยู่ · ล็อกอินค้างไว้ได้ถาวร ไม่มีหมดอายุ แอปจะล็อกหน้าจอเมื่อปิดแอปทิ้งไว้ หรือไม่ได้ใช้งานเกิน 15 นาที</span>
+          </div>
+          <button type="button" className="pin-opt" onClick={()=>{setAfter("change");setMsg("");setMode("current");}}>
+            <i className="fa-solid fa-key" style={{background:"var(--accent-soft)",color:"var(--primary)"}}></i>
+            <span>เปลี่ยน PIN<small>ตั้งรหัส {PIN_LEN} หลักใหม่</small></span>
+          </button>
+          <button type="button" className="pin-opt is-danger" onClick={()=>{setAfter("off");setMsg("");setMode("current");}}>
+            <i className="fa-solid fa-lock-open" style={{background:"#FEE2E2",color:"var(--danger)"}}></i>
+            <span>ปิดการใช้ PIN<small>กลับไปเด้งออกเมื่อไม่ได้ใช้งาน 15 นาที</small></span>
+          </button>
+        </div>
+      ) : (
+        <div className="pin-ui on-light">
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:15,fontWeight:500}}>{head.t}</div>
+            <div style={{fontSize:12.5,color:"var(--muted)",marginTop:3}}>{head.s}</div>
+          </div>
+          <PinDots count={entry.pin.length} shake={entry.shake}/>
+          <div className="pin-msg">{msg}</div>
+          <PinPad onDigit={entry.push} onBack={entry.back} disabled={entry.busy}/>
+          {mode === "new" && !on && (
+            <div style={{display:"flex",gap:9,alignItems:"flex-start",marginTop:16,background:"var(--line-soft)",
+                         borderRadius:11,padding:"11px 12px",fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
+              <i className="fa-solid fa-shield-halved" style={{marginTop:2,color:"var(--primary)"}}></i>
+              <span>เปิด PIN แล้วจะไม่ถูกเด้งออกเพราะหมดเวลาอีก · PIN เก็บไว้ในเครื่องนี้เท่านั้น
+                    ถ้ากรอกผิด {PIN_MAX_FAIL} ครั้งระบบจะปิด PIN และให้ล็อกอินด้วยรหัสผ่านใหม่</span>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+window.PinLockScreen = PinLockScreen;
+window.PinSetupModal = PinSetupModal;
+</script>
+
+<script type="text/babel">
+/* ===== สิทธิ์การใช้งาน (ระบบการจัดการ) =====
+   ตั้งได้ 2 ชั้น
+     1) ตามตำแหน่ง (role) — ติ๊กว่าตำแหน่งนี้เข้าฟังก์ชันไหนได้
+     2) รายบุคคล — ยกเว้นเฉพาะคน "เปิดเพิ่ม" หรือ "ปิดกั้น" ทับค่าของตำแหน่ง
+   เก็บที่ /permissions ใน Firebase · ไม่ได้ตั้งไว้ = ใช้ค่าเริ่มต้นใน window.APP_FEATURES
+*/
+function Permissions({user}){
+  const [tab,setTab] = React.useState("role");
+  const [cfg,setCfg] = React.useState(()=>{
+    const p = window.__DATA.permissions || {};
+    return { roles:{...(p.roles||{})}, users:{...(p.users||{})} };
+  });
+  const [dirty,setDirty] = React.useState(false);
+  const [saving,setSaving] = React.useState(false);
+  const [pickUser,setPickUser] = React.useState("");
+
+  const roles = window.APP_ROLES;
+  const features = window.APP_FEATURES;
+  const groups = React.useMemo(()=>[...new Set(features.map(f=>f.group))],[features]);
+  const users = React.useMemo(()=>(window.__DATA.users||[]).slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","th")),[]);
+
+  // ---- ชั้นที่ 1: ตามตำแหน่ง ----
+  const roleAllow = (role) => {
+    const c = cfg.roles[role];
+    return new Set(c && c.set ? (c.allow||[]) : window.defaultPagesFor(role));
+  };
+  const setRoleAllow = (role, s) => {
+    setCfg(c=>({...c, roles:{...c.roles, [role]:{set:true, allow:[...s]}}}));
+    setDirty(true);
+  };
+  const toggleRole = (role, key) => {
+    const s = roleAllow(role);
+    if(s.has(key)) s.delete(key); else s.add(key);
+    setRoleAllow(role, s);
+  };
+  const resetRole = (role) => {
+    setCfg(c=>{ const r = {...c.roles}; delete r[role]; return {...c, roles:r}; });
+    setDirty(true);
+  };
+  const roleTouched = (role) => !!(cfg.roles[role] && cfg.roles[role].set);
+  const allOfGroup = (role, group, on) => {
+    const s = roleAllow(role);
+    features.filter(f=>f.group===group).forEach(f=>{ if(on) s.add(f.key); else s.delete(f.key); });
+    setRoleAllow(role, s);
+  };
+
+  // ---- ชั้นที่ 2: รายบุคคล ----
+  const userState = (uid,key) => {
+    const c = cfg.users[uid] || {};
+    if((c.allow||[]).includes(key)) return "allow";
+    if((c.deny||[]).includes(key)) return "deny";
+    return "role";
+  };
+  const setUserState = (uid,key,st) => {
+    setCfg(c=>{
+      const cur = c.users[uid] || {};
+      const allow = new Set(cur.allow||[]);
+      const deny = new Set(cur.deny||[]);
+      allow.delete(key); deny.delete(key);
+      if(st==="allow") allow.add(key);
+      if(st==="deny") deny.add(key);
+      const next = {...c.users};
+      if(allow.size || deny.size) next[uid] = {allow:[...allow], deny:[...deny]};
+      else delete next[uid];
+      return {...c, users:next};
+    });
+    setDirty(true);
+  };
+  const clearUser = (uid) => {
+    setCfg(c=>{ const u = {...c.users}; delete u[uid]; return {...c, users:u}; });
+    setDirty(true);
+  };
+  const overrideCount = (uid) => {
+    const c = cfg.users[uid] || {};
+    return (c.allow||[]).length + (c.deny||[]).length;
+  };
+
+  const valid = new Set(features.map(f=>f.key));
+  const save = async () => {
+    setSaving(true);
+    try{
+      const clean = {roles:{}, users:{}};
+      Object.entries(cfg.roles).forEach(([r,v])=>{
+        if(!roles.includes(r)) return;
+        clean.roles[r] = { set:true, allow:(v.allow||[]).filter(k=>valid.has(k)) };
+      });
+      Object.entries(cfg.users).forEach(([uid,v])=>{
+        const allow = (v.allow||[]).filter(k=>valid.has(k));
+        const deny = (v.deny||[]).filter(k=>valid.has(k));
+        if(allow.length || deny.length) clean.users[uid] = {allow, deny};
+      });
+      await window.api("savePermissions",{cfg:clean, by:{id:user.id,name:user.name,role:user.role}});
+      window.__DATA.permissions = clean;
+      setDirty(false);
+      const r = await Swal.fire({icon:"success",title:"บันทึกสิทธิ์แล้ว",
+        text:"ผู้ใช้คนอื่นจะเห็นผลเมื่อเข้าสู่ระบบใหม่ · เครื่องนี้ควรโหลดหน้าใหม่เพื่อให้เมนูตรงกับสิทธิ์ล่าสุด",
+        showCancelButton:true, confirmButtonText:"โหลดหน้าใหม่", cancelButtonText:"ไว้ทีหลัง", confirmButtonColor:"#1E40AF"});
+      if(r.isConfirmed) location.reload();
+    }catch(err){
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
+    }finally{
+      setSaving(false);
+    }
+  };
+
+  const chk = {width:17,height:17,accentColor:"#1E40AF",cursor:"pointer"};
+  const segBtn = (on) => ({padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",fontFamily:"Kanit",
+    background:on?"var(--primary)":"transparent",color:on?"#fff":"var(--muted)"});
+
+  const target = users.find(u=>u.id===pickUser) || null;
+  const targetRoleSet = target ? roleAllow(target.role) : null;
+  // คิดจากค่าที่กำลังแก้อยู่ในหน้านี้ (ยังไม่บันทึกก็เห็นผลทันที)
+  const targetAllowed = React.useMemo(()=>{
+    if(!target) return null;
+    const s = new Set(targetRoleSet);
+    const c = cfg.users[target.id] || {};
+    (c.allow||[]).forEach(k=>s.add(k));
+    (c.deny||[]).forEach(k=>s.delete(k));
+    return s;
+  },[target,cfg]);
+
+  return (
+    <>
+      <div className="card" style={{marginBottom:14}}>
+        <div className="card-h">
+          <div>
+            <h3><i className="fa-solid fa-user-shield" style={{color:"var(--primary)",marginRight:8}}></i>สิทธิ์เข้าถึงฟังก์ชัน</h3>
+            <div className="sub">กำหนดว่าตำแหน่งไหนเข้าใช้ฟังก์ชันอะไรได้ · ยกเว้นเป็นรายคนได้ในแท็บ "รายบุคคล"</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{display:"inline-flex",background:"var(--bg)",border:"1px solid var(--line)",borderRadius:10,padding:3}}>
+              <button style={segBtn(tab==="role")} onClick={()=>setTab("role")}><i className="fa-solid fa-user-tag"></i> ตามตำแหน่ง</button>
+              <button style={segBtn(tab==="user")} onClick={()=>setTab("user")}><i className="fa-solid fa-user-pen"></i> รายบุคคล</button>
+            </div>
+            <button className="btn btn-primary" onClick={save} disabled={saving||!dirty}>
+              {saving
+                ? <><div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> กำลังบันทึก...</>
+                : <><i className="fa-solid fa-floppy-disk"></i> {dirty?"บันทึกสิทธิ์":"บันทึกแล้ว"}</>}
+            </button>
+          </div>
+        </div>
+        {dirty && (
+          <div style={{margin:"0 16px 14px",display:"flex",gap:9,alignItems:"flex-start",background:"#FFFBEB",
+                       border:"1px solid #FDE68A",borderRadius:10,padding:"10px 12px",fontSize:12.5,color:"#92400E"}}>
+            <i className="fa-solid fa-triangle-exclamation" style={{marginTop:2}}></i>
+            <span>แก้ไขแล้วยังไม่บันทึก — กด "บันทึกสิทธิ์" ก่อนออกจากหน้านี้ ไม่งั้นค่าที่แก้จะหายไป</span>
+          </div>
+        )}
+      </div>
+
+      {tab==="role" ? (
+        <div className="card">
+          <div className="card-h">
+            <div>
+              <h3>ตารางสิทธิ์ตามตำแหน่ง</h3>
+              <div className="sub">ติ๊ก = เข้าใช้ได้ · ตำแหน่งที่ยังไม่เคยตั้งค่าจะใช้ค่าเริ่มต้นของระบบ</div>
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th style={{minWidth:190}}>ฟังก์ชัน</th>
+                    {roles.map(r=>(
+                      <th key={r} style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                        {r}
+                        <div style={{fontSize:10,fontWeight:400,color:"var(--muted)",marginTop:2}}>
+                          {roleTouched(r)
+                            ? <button onClick={()=>resetRole(r)} title="กลับไปใช้ค่าเริ่มต้นของระบบ"
+                                style={{border:"none",background:"none",color:"var(--primary)",cursor:"pointer",fontSize:10,fontFamily:"Kanit",padding:0}}>
+                                <i className="fa-solid fa-rotate-left"></i> คืนค่าเริ่มต้น
+                              </button>
+                            : "ค่าเริ่มต้น"}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map(g=>(
+                    <React.Fragment key={g}>
+                      <tr>
+                        <td colSpan={roles.length+1} style={{background:"var(--line-soft)"}}>
+                          <span className="group-label" style={{fontWeight:500,fontSize:12.5,color:"var(--primary)"}}>
+                            <i className="fa-solid fa-layer-group" style={{marginRight:7}}></i>{g}
+                          </span>
+                        </td>
+                      </tr>
+                      {features.filter(f=>f.group===g).map(f=>(
+                        <tr key={f.key}>
+                          <td>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <i className={`fa-solid ${f.icon}`} style={{color:"var(--muted)",width:15,textAlign:"center"}}></i>
+                              <span style={{fontSize:13}}>{f.label}</span>
+                            </div>
+                            <div className="mono" style={{fontSize:10.5,color:"var(--muted)",marginTop:2}}>{f.key}</div>
+                          </td>
+                          {roles.map(r=>{
+                            const locked = (r==="Admin" && f.key==="permissions");   // กันล็อกตัวเองออกจากหน้านี้
+                            return (
+                              <td key={r} style={{textAlign:"center"}}>
+                                <input type="checkbox" style={{...chk,cursor:locked?"not-allowed":"pointer"}}
+                                  checked={locked || roleAllow(r).has(f.key)} disabled={locked}
+                                  title={locked?"Admin ต้องเข้าหน้านี้ได้เสมอ":""}
+                                  onChange={()=>toggleRole(r,f.key)} />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                      <tr>
+                        <td style={{fontSize:11.5,color:"var(--muted)"}}>เลือกทั้งกลุ่ม</td>
+                        {roles.map(r=>(
+                          <td key={r} style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                            <button onClick={()=>allOfGroup(r,g,true)} title={`เปิดทุกฟังก์ชันในกลุ่ม ${g}`}
+                              style={{border:"1px solid var(--line)",background:"#fff",borderRadius:5,cursor:"pointer",fontSize:10,padding:"1px 5px",marginRight:3}}>
+                              <i className="fa-solid fa-check" style={{color:"var(--success)"}}></i>
+                            </button>
+                            <button onClick={()=>allOfGroup(r,g,false)} title={`ปิดทุกฟังก์ชันในกลุ่ม ${g}`}
+                              style={{border:"1px solid var(--line)",background:"#fff",borderRadius:5,cursor:"pointer",fontSize:10,padding:"1px 5px"}}>
+                              <i className="fa-solid fa-xmark" style={{color:"var(--danger)"}}></i>
+                            </button>
+                          </td>
+                        ))}
+                      </tr>
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="card-h">
+            <div>
+              <h3>สิทธิ์รายบุคคล</h3>
+              <div className="sub">ใช้เมื่อต้องการให้คนใดคนหนึ่งต่างจากตำแหน่งของเขา · ค่าที่ตั้งที่นี่ทับค่าของตำแหน่งเสมอ</div>
+            </div>
+            <select value={pickUser} onChange={e=>setPickUser(e.target.value)}
+              style={{padding:"9px 11px",border:"1px solid var(--line)",borderRadius:9,fontFamily:"Kanit",fontSize:13,minWidth:230,background:"#fff"}}>
+              <option value="">— เลือกผู้ใช้งาน —</option>
+              {users.map(u=>(
+                <option key={u.id} value={u.id}>
+                  {u.name} · {u.role}{overrideCount(u.id)?` (ยกเว้น ${overrideCount(u.id)})`:""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="card-body">
+            {!target ? (
+              <div className="empty" style={{padding:34}}>
+                <i className="fa-solid fa-user-pen"></i>
+                <div className="t" style={{fontSize:14}}>เลือกผู้ใช้งานที่ต้องการตั้งสิทธิ์เฉพาะคน</div>
+                <div>ไม่ตั้งอะไรไว้ = ใช้สิทธิ์ตามตำแหน่งของเขาตามปกติ</div>
+              </div>
+            ) : (
+              <>
+                <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14,
+                             background:"var(--line-soft)",borderRadius:11,padding:"11px 13px"}}>
+                  <div className="avatar" style={{width:38,height:38,borderRadius:"50%",display:"grid",placeItems:"center",
+                        background:"var(--accent-soft)",color:"var(--primary)",fontWeight:600,fontSize:13}}>
+                    {window.initials(target.name)}
+                  </div>
+                  <div style={{flex:1,minWidth:150}}>
+                    <div style={{fontWeight:500}}>{target.name}</div>
+                    <div style={{fontSize:12,color:"var(--muted)"}}>{target.role}{target.dept?` · ${target.dept}`:""}</div>
+                  </div>
+                  <div style={{fontSize:12.5,color:"var(--muted)"}}>
+                    เข้าใช้ได้ {[...targetAllowed].filter(k=>valid.has(k)).length}/{features.length} ฟังก์ชัน
+                  </div>
+                  {overrideCount(target.id)>0 && (
+                    <button className="btn btn-ghost btn-sm" onClick={()=>clearUser(target.id)}>
+                      <i className="fa-solid fa-rotate-left"></i> ล้างค่ายกเว้นทั้งหมด
+                    </button>
+                  )}
+                </div>
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th style={{minWidth:190}}>ฟังก์ชัน</th>
+                        <th style={{textAlign:"center",whiteSpace:"nowrap"}}>ตามตำแหน่ง ({target.role})</th>
+                        <th style={{textAlign:"center",whiteSpace:"nowrap"}}>ตั้งเฉพาะคนนี้</th>
+                        <th style={{textAlign:"center",whiteSpace:"nowrap"}}>สรุปว่าเข้าได้ไหม</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groups.map(g=>(
+                        <React.Fragment key={g}>
+                          <tr>
+                            <td colSpan="4" style={{background:"var(--line-soft)"}}>
+                              <span className="group-label" style={{fontWeight:500,fontSize:12.5,color:"var(--primary)"}}>
+                                <i className="fa-solid fa-layer-group" style={{marginRight:7}}></i>{g}
+                              </span>
+                            </td>
+                          </tr>
+                          {features.filter(f=>f.group===g).map(f=>{
+                            const st = userState(target.id,f.key);
+                            const byRole = targetRoleSet.has(f.key);
+                            const finalOk = st==="allow" ? true : st==="deny" ? false : byRole;
+                            return (
+                              <tr key={f.key}>
+                                <td>
+                                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                    <i className={`fa-solid ${f.icon}`} style={{color:"var(--muted)",width:15,textAlign:"center"}}></i>
+                                    <span style={{fontSize:13}}>{f.label}</span>
+                                  </div>
+                                </td>
+                                <td style={{textAlign:"center"}}>
+                                  <span className="badge" style={byRole?{background:"#DCFCE7",color:"#166534"}:{background:"#F1F5F9",color:"#64748B"}}>
+                                    {byRole?"เข้าได้":"เข้าไม่ได้"}
+                                  </span>
+                                </td>
+                                <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                                  {[{k:"role",l:"ตามตำแหน่ง"},{k:"allow",l:"เปิดให้"},{k:"deny",l:"ปิดกั้น"}].map(o=>(
+                                    <button key={o.k} onClick={()=>setUserState(target.id,f.key,o.k)}
+                                      style={{fontFamily:"Kanit",fontSize:11,padding:"3px 8px",cursor:"pointer",
+                                              border:"1px solid "+(st===o.k?"var(--primary)":"var(--line)"),
+                                              background:st===o.k?"var(--accent-soft)":"#fff",
+                                              color:st===o.k?"var(--primary)":"var(--muted)",
+                                              borderRadius:o.k==="role"?"7px 0 0 7px":o.k==="deny"?"0 7px 7px 0":0,
+                                              marginLeft:o.k==="role"?0:-1}}>
+                                      {o.l}
+                                    </button>
+                                  ))}
+                                </td>
+                                <td style={{textAlign:"center"}}>
+                                  <i className={`fa-solid ${finalOk?"fa-circle-check":"fa-circle-xmark"}`}
+                                     style={{color:finalOk?"var(--success)":"var(--danger)",fontSize:15}}></i>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+window.Permissions = Permissions;
+</script>
+
+<script type="text/babel">
 // เลือกระบบงานอย่างเดียว — เลือกแล้วเข้าใช้งานทันที ไม่มีขั้นตอนเลือกโครงการ
 // ขอบเขตข้อมูลคุมด้วยสิทธิ์โครงการของบัญชี (user.projects) ผ่าน filterByUserProjects เหมือนเดิม
 function WorkspacePicker({user,onContinue,onLogout}){
@@ -7682,6 +8572,7 @@ function WorkspacePicker({user,onContinue,onLogout}){
     if(sys.id==="assets") return `${stats.assets} รายการ · เชื่อมงานซ่อม ${stats.repairs} ใบงาน`;
     if(sys.id==="production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
     if(sys.id==="consume") return `เตรียมเชื่อมสต๊อก/เบิกจ่าย ${stats.withdrawals} รายการ`;
+    if(sys.id==="manage") return `${stats.users} ผู้ใช้งาน · ${(window.__DATA.projects||[]).length} โครงการ`;
     if(sys.id==="pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
     if(sys.id==="hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
     return "พร้อมเชื่อมข้อมูล";
@@ -7689,7 +8580,8 @@ function WorkspacePicker({user,onContinue,onLogout}){
 
   const selectSystem = (sys) => {
     if(!window.canUseErp(user,sys)){
-      if(sys.status==="ready") Swal.fire({icon:"info",title:"ไม่มีสิทธิ์เข้าใช้ระบบนี้",text:`${sys.name} เปิดใช้เฉพาะ ${(sys.roles||[]).join(" / ")}`});
+      if(sys.status==="ready") Swal.fire({icon:"info",title:"ไม่มีสิทธิ์เข้าใช้ระบบนี้",
+        text:(sys.roles||[]).length ? `${sys.name} เปิดใช้เฉพาะ ${sys.roles.join(" / ")}` : `บัญชีของคุณยังไม่ได้รับสิทธิ์ใช้งาน ${sys.name} · แจ้งผู้ดูแลระบบให้เปิดสิทธิ์ที่ ระบบการจัดการ → สิทธิ์การใช้งาน`});
       else Swal.fire({icon:"info",title:"ระบบนี้รอพัฒนา",text:sys.name});
       return;
     }
@@ -7738,7 +8630,9 @@ function WorkspacePicker({user,onContinue,onLogout}){
                         <span style={{display:"flex",alignItems:"center",gap:8,fontWeight:600}}>
                           {s.name}
                           {restricted
-                            ? <span className="badge" style={{fontSize:11,background:"#E0E7FF",color:"#3730A3"}}>เฉพาะ {(s.roles||[]).join(" / ")}</span>
+                            ? <span className="badge" style={{fontSize:11,background:"#E0E7FF",color:"#3730A3"}}>
+                                {(s.roles||[]).length ? `เฉพาะ ${s.roles.join(" / ")}` : "ยังไม่ได้รับสิทธิ์"}
+                              </span>
                             : !ready && <span className="badge" style={{fontSize:11,background:"#FEF3C7",color:"#92400E"}}>รอพัฒนา</span>}
                         </span>
                         <span style={{display:"block",fontSize:12.5,color:"var(--muted)",marginTop:2}}>{s.desc}</span>
@@ -7929,6 +8823,9 @@ function App(){
   const [sbOpen,setSbOpen] = React.useState(false);
   const [booting,setBooting] = React.useState(true);
   const [bootErr,setBootErr] = React.useState(null);
+  const [locked,setLocked] = React.useState(false);              // ล็อกหน้าจอรอกรอก PIN
+  const [pinOn,setPinOn] = React.useState(()=>window.__PIN.enabled());
+  const [pinSetup,setPinSetup] = React.useState(false);
 
   React.useEffect(()=>{
     (async()=>{
@@ -7945,10 +8842,13 @@ function App(){
   React.useEffect(()=>{
     if(booting) return;
     // ปิดแท็บทิ้งไว้นานเกิน 15 นาที ก็ถือว่าหมดเวลา ไม่ต้องกู้เซสชันคืน
-    if(localStorage.getItem("rms_user") && isSessionExpired()){
+    // ยกเว้นตั้ง PIN ไว้ — เซสชันไม่มีวันหมดอายุ แค่ล็อกหน้าจอรอปลดด้วย PIN
+    const pinKept = window.__PIN.enabled();
+    if(localStorage.getItem("rms_user") && !pinKept && isSessionExpired()){
       clearSession();
       return;
     }
+    if(pinKept && localStorage.getItem("rms_user")) setLocked(window.__PIN.isLocked());
     const s = localStorage.getItem("rms_user");
     if(s){
       try{
@@ -7982,12 +8882,33 @@ function App(){
     window.askNotifyPermission(user);
   },[user && user.id, user && user.role]);
 
+  // ใช้งานบนมือถือครั้งแรก — ชวนตั้ง PIN หนึ่งครั้ง ตอบ "ไว้ก่อน" แล้วไม่ถามซ้ำ
+  React.useEffect(()=>{
+    if(!user || !workspace || locked) return;
+    if(!window.__PIN.available() || window.__PIN.enabled() || window.__PIN.asked()) return;
+    const t = setTimeout(()=>{
+      window.__PIN.markAsked();
+      Swal.fire({icon:"question",title:"ตั้ง PIN ไหม?",
+        html:"ตั้ง PIN 6 หลักไว้ปลดล็อกแอป แล้วจะไม่ถูกเด้งออกเพราะหมดเวลาใช้งานอีก<br/><span style='font-size:13px;color:#64748B'>เปลี่ยนหรือปิดได้ทีหลังที่เมนู <b>ล็อกด้วย PIN</b></span>",
+        showCancelButton:true,confirmButtonText:"ตั้ง PIN เลย",cancelButtonText:"ไว้ก่อน",confirmButtonColor:"#1E40AF"
+      }).then(r=>{ if(r.isConfirmed) setPinSetup(true); });
+    }, 1500);
+    return ()=>clearTimeout(t);
+  },[user && user.id, !!workspace, locked]);
+
   // ไม่มีการใช้งานเกิน 15 นาที → ออกจากระบบอัตโนมัติ
   React.useEffect(()=>{
     if(!user) return;
     touchActivity();
     const checkIdle = () => {
       if(!isSessionExpired()) return;
+      // ตั้ง PIN ไว้ = ไม่ต้องล็อกอินใหม่ แค่ล็อกหน้าจอรอปลดด้วย PIN
+      if(window.__PIN.enabled()){
+        window.__PIN.lockNow();
+        setLocked(true);
+        touchActivity();
+        return;
+      }
       clearSession();
       setUser(null);
       setWorkspace(null);
@@ -8002,19 +8923,32 @@ function App(){
       lastWrite = now;
       touchActivity();
     };
-    const onVisible = () => { if(document.visibilityState === "visible") checkIdle(); };
+    const onAway = () => window.__PIN.markAway();
+    const onVisible = () => {
+      if(document.visibilityState !== "visible"){ onAway(); return; }
+      if(window.__PIN.isLocked()){ setLocked(true); return; }
+      checkIdle();
+    };
     const events = ["mousedown","keydown","touchstart","click","scroll","wheel"];
     events.forEach(ev=>window.addEventListener(ev,onActivity,{passive:true,capture:true}));
     document.addEventListener("visibilitychange",onVisible);
+    window.addEventListener("pagehide",onAway);
     const timer = setInterval(checkIdle, 30000);
     return ()=>{
       events.forEach(ev=>window.removeEventListener(ev,onActivity,{capture:true}));
       document.removeEventListener("visibilitychange",onVisible);
+      window.removeEventListener("pagehide",onAway);
       clearInterval(timer);
     };
   },[user && user.id]);
 
   const login = (u) => {
+    // PIN ผูกกับคนที่ตั้งไว้ — ถ้าคนอื่นมาล็อกอินบนเครื่องนี้ ให้ยกเลิก PIN เดิม
+    const rec = window.__PIN.record();
+    if(rec && rec.uid && rec.uid !== u.id) window.__PIN.disable();
+    window.__PIN.unlock();
+    setLocked(false);
+    setPinOn(window.__PIN.enabled());
     setUser(u); localStorage.setItem("rms_user",JSON.stringify(u));
     setWorkspace(null); localStorage.removeItem("rms_workspace");
     touchActivity();
@@ -8070,22 +9004,24 @@ function App(){
   </div>;
 
   if(!user) return <Login onLogin={login}/>;
+  if(locked) return <PinLockScreen user={user}
+    onUnlock={()=>{ setLocked(false); touchActivity(); }}
+    onForceLogout={()=>{
+      setLocked(false); setPinOn(false); setUser(null); setWorkspace(null);
+      window.__DATA.activeErp = null; window.__DATA.activeProject = "";
+    }}/>;
   if(!workspace) return <WorkspacePicker user={user} onContinue={enterWorkspace} onLogout={()=>{setUser(null);setWorkspace(null);clearSession();window.__DATA.activeErp=null;window.__DATA.activeProject="";}}/>;
 
   const activeUser = {...user, activeErp:workspace.erp, activeProject:workspace.project};
   const systemId = workspace.erp?.id || "repairs";
-  const isSafety = user.role === "Safety Officer";
-  const allowedPages = (systemId==="assets"
-    ? (isSafety
-        ? ["doc-pj2","machines","transfer-history"]                       // จป. เข้าได้เฉพาะงานตรวจสอบ ไม่แตะทะเบียนทรัพย์สิน/ใบส่งของ
-        : ["machines","asset-registry","asset-do","doc-pj2","transfer-history","projects"])
-    : systemId==="consume"
-      ? ["withdrawals"]
-      : (isSafety
-          ? ["dashboard","repairs","spare-parts","machines","r-new"]
-          : ["dashboard","repairs","spare-parts","machines","users","categories","login-logs","r-dashboard","r-new","r-mine"])
-  ).concat("notifications");   // หน้าแจ้งเตือน/อนุมัติลบข้อมูล เปิดได้จากทุกระบบงาน
-  const safePage = allowedPages.includes(page) ? page : (workspace.erp?.startPage || allowedPages[0]);
+  // หน้าที่เข้าได้ = หน้าของระบบงานนี้ ∩ สิทธิ์ของบัญชี (Admin ตั้งได้ที่ ระบบการจัดการ → สิทธิ์การใช้งาน)
+  const myPages = window.allowedPagesFor(activeUser);
+  const allowedPages = (window.SYSTEM_PAGES[systemId] || window.SYSTEM_PAGES.repairs)
+    .filter(k=>myPages.has(k))
+    .concat("notifications");   // หน้าแจ้งเตือน/อนุมัติลบข้อมูล เปิดได้จากทุกระบบงาน
+  const startPage = workspace.erp?.startPage;
+  const fallbackPage = (allowedPages.includes(startPage) ? startPage : allowedPages[0]) || "notifications";
+  const safePage = allowedPages.includes(page) ? page : fallbackPage;
 
   const pageTitles = {
     "dashboard":{t:"แดชบอร์ด",c:"ภาพรวมและสถิติงานซ่อม"},
@@ -8101,6 +9037,7 @@ function App(){
     "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
     "login-logs":{t:"ประวัติการล็อกอิน",c:"บันทึกการเข้าสู่ระบบล่าสุด 100 รายการ · ที่เกินมาระบบลบทิ้งอัตโนมัติ · เฉพาะ Admin"},
     "projects":{t:"โครงการ",c:"Projects · จัดการข้อมูลโครงการทั้งหมด"},
+    "permissions":{t:"สิทธิ์การใช้งาน",c:"กำหนดสิทธิ์เข้าถึงฟังก์ชันตามตำแหน่ง และยกเว้นเป็นรายบุคคล · เฉพาะ Admin"},
     "r-dashboard":{t:"สรุปงานของฉัน",c:"ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},
@@ -8117,10 +9054,11 @@ function App(){
     if(safePage==="machines") return <Machines user={activeUser}/>;
     if(safePage==="asset-registry") return <AssetRegistry user={activeUser}/>;
     if(safePage==="asset-do") return <DeliveryOrders user={activeUser}/>;
-    if(safePage==="withdrawals") return user.role==="Admin" ? <Withdrawals user={activeUser}/> : null;
+    if(safePage==="withdrawals") return <Withdrawals user={activeUser}/>;
     if(safePage==="doc-pj2") return <DocPJ2 user={activeUser}/>;
     if(safePage==="transfer-history") return <MachineTransferHistory user={activeUser}/>;
-    if(safePage==="login-logs") return user.role==="Admin" ? <LoginLogs /> : null;
+    if(safePage==="login-logs") return <LoginLogs />;
+    if(safePage==="permissions") return <Permissions user={activeUser}/>;
     if(safePage==="projects") return <Projects user={activeUser}/>;
     if(safePage==="r-dashboard") return <ReporterDashboard user={activeUser} goTo={setPage}/>;
     if(safePage==="r-new") return <NewRequest user={activeUser} goTo={setPage}/>;
@@ -8132,7 +9070,8 @@ function App(){
   return (
     <div className="shell">
       <button className="sidebar-toggle" onClick={()=>setSbOpen(true)}><i className="fa-solid fa-bars"></i></button>
-      <Sidebar user={activeUser} active={safePage} onNav={setPage} onLogout={logout} open={sbOpen} onClose={()=>setSbOpen(false)}/>
+      <Sidebar user={activeUser} active={safePage} onNav={setPage} onLogout={logout} open={sbOpen} onClose={()=>setSbOpen(false)}
+        pinOn={pinOn} onOpenPin={()=>setPinSetup(true)} onLockNow={()=>{ window.__PIN.lockNow(); setLocked(true); }}/>
       <main className="main">
         <div className="topbar">
           <div className="title"><h1>{pt.t}</h1><div className="crumb">{pt.c}</div></div>
@@ -8148,6 +9087,7 @@ function App(){
         </div>
         {renderPage()}
       </main>
+      {pinSetup && <PinSetupModal user={activeUser} onClose={()=>{ setPinSetup(false); setPinOn(window.__PIN.enabled()); }}/>}
     </div>
   );
 }
