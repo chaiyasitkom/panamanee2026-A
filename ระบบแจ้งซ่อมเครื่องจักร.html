@@ -1057,6 +1057,7 @@ async function api(action, payload = {}) {
         name: user.name || "",
         role: user.role || "",
         dept: user.dept || "",
+        via: 'password',
         when: new Date().toISOString()
       });
       // ตัดประวัติที่เกิน 100 รายการทิ้ง — ไม่ await เพราะไม่ควรทำให้การล็อกอินช้าหรือล้มเหลว
@@ -1064,6 +1065,25 @@ async function api(action, payload = {}) {
       const safe = { ...user };
       delete safe.password;
       return safe;
+    }
+
+    // ปลดล็อกหน้าจอด้วย PIN บนเครื่องที่ค้างล็อกอินไว้ — นับเป็นการเข้าใช้งานครั้งใหม่ ต้องขึ้นประวัติเหมือนล็อกอินปกติ
+    case 'logUnlock': {
+      const u = payload.user || {};
+      if (!u.id) throw new Error('ไม่พบบัญชีผู้ใช้');
+      const logRef = _db.ref('/loginLogs').push();
+      await logRef.set({
+        id: logRef.key,
+        userId: u.id,
+        username: u.username || '',
+        name: u.name || '',
+        role: u.role || '',
+        dept: u.dept || '',
+        via: payload.via === 'pin' ? 'pin' : 'password',
+        when: new Date().toISOString(),
+      });
+      _pruneLoginLogs();
+      return { logged: true };
     }
 
     // ยืนยันตัวตนซ้ำก่อนทำงานสำคัญ (เช่น Admin ลบข้อมูล) — ไม่บันทึกลงประวัติล็อกอิน เพราะไม่ใช่การเข้าใช้งานใหม่
@@ -2162,10 +2182,157 @@ window.__DELREQ = {
   },
 };
 
-// ขอสิทธิ์แจ้งเตือนของเบราว์เซอร์ (เฉพาะ Admin — คนที่ต้องรับทราบคำขอ)
+</script>
+
+<script type="text/babel">
+/* ═══ แจ้งเตือนงานซ่อม (Admin / ช่าง) ═══════════════════════════════════
+   · มีใบแจ้งซ่อมใหม่เข้าระบบ → เด้งเตือนทันที (ฟัง Firebase แบบเรียลไทม์)
+   · เตือนสรุปงานที่ยังค้างอยู่ทุกวัน เวลา 08:00 / 11:00 / 13:00 / 17:00
+   ทำงานบนเครื่องที่เปิดเว็บ/แอปค้างไว้ (ไม่ใช่ push จากเซิร์ฟเวอร์)
+   เปิดแอปหลังเวลาที่กำหนด จะได้สรุปของรอบล่าสุดที่ยังไม่เคยเตือนในวันนั้น
+   ────────────────────────────────────────────────────────────────── */
+const JOBALERT_ROLES  = ["Admin","Technician"];
+const JOBALERT_HOURS  = [8,11,13,17];
+const JOBALERT_SEEN   = "rms_jobalert_seen";    // รอบสรุปที่เตือนไปแล้วของวันนี้
+const JOBALERT_KNOWN  = "rms_jobalert_known";   // ใบงานที่เคยเห็นแล้ว กันเตือนซ้ำตอนโหลดหน้าใหม่
+
+window.__JOBALERT = {
+  user: null,
+  _ref: null,
+  _timer: null,
+  _known: null,
+  _first: true,
+
+  enabledFor(user){ return !!user && JOBALERT_ROLES.includes(user.role); },
+
+  start(user){
+    if(!this.enabledFor(user)){ this.stop(); return; }
+    if(this._ref && this.user && this.user.id === user.id){ this.user = user; return; }
+    this.stop();
+    this.user = user;
+    this._known = this._loadKnown();
+    this._first = true;
+    try{
+      this._ref = firebase.database().ref("/repairs").limitToLast(80);
+      this._ref.on("value", (snap)=>{
+        const arr = Object.values(snap.val() || {}).filter(Boolean);
+        if(this._first){
+          // รอบแรกคือใบงานที่มีอยู่ก่อนแล้ว — ไม่เตือนย้อนหลัง
+          arr.forEach(r=>this._known.add(String(r.id)));
+          this._saveKnown();
+          this._first = false;
+          return;
+        }
+        arr.forEach(r=>{
+          const id = String(r.id||"");
+          if(!id || this._known.has(id)) return;
+          this._known.add(id);
+          if(this._inScope(r) && String(r.reporterId||"") !== String(this.user.id)) this._announceNew(r);
+        });
+        this._saveKnown();
+      }, (err)=>console.warn("[jobAlert] ฟังใบแจ้งซ่อมไม่สำเร็จ:", err && err.message));
+    }catch(e){ console.warn("[jobAlert]", e); }
+
+    this._timer = setInterval(()=>this._checkDigest(), 60000);
+    this._checkDigest();
+  },
+
+  stop(){
+    if(this._ref){ try{ this._ref.off(); }catch(e){} }
+    if(this._timer){ clearInterval(this._timer); }
+    this._ref = null; this._timer = null; this._known = null; this.user = null; this._first = true;
+  },
+
+  // ── ขอบเขตข้อมูลที่คนนี้เห็นได้ (สิทธิ์โครงการเดิมของระบบ) ──
+  _inScope(r){
+    try{ return window.userCanSeeProject(this.user, r && r.project); }catch(e){ return true; }
+  },
+
+  _loadKnown(){
+    try{ return new Set(JSON.parse(localStorage.getItem(JOBALERT_KNOWN) || "[]")); }
+    catch(e){ return new Set(); }
+  },
+  _saveKnown(){
+    try{
+      const arr = [...this._known];
+      localStorage.setItem(JOBALERT_KNOWN, JSON.stringify(arr.slice(-300)));   // เก็บแค่ล่าสุดพอ
+    }catch(e){}
+  },
+
+  // ── ใบแจ้งซ่อมใหม่ ──
+  _announceNew(r){
+    const problems = window.getProblems ? window.getProblems(r) : [];
+    const what = (problems[0] && problems[0].text) || r.title || "ไม่ระบุอาการ";
+    const title = "มีใบแจ้งซ่อมใหม่ " + (r.running || r.id || "");
+    const text  = `${what} · ${r.machineCode || "ไม่ระบุเครื่องจักร"} · ${r.project ? window.projectShort(r.project) : "ไม่ระบุโครงการ"}`;
+    if(window.Swal) Swal.fire({toast:true,position:"top-end",icon:"info",title,text,
+      showConfirmButton:false,timer:8000,timerProgressBar:true});
+    this._beep();
+    this._push(title, text, "rms-new-repair");
+  },
+
+  // ── สรุปงานค้างตามรอบเวลา ──
+  _dayKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; },
+
+  _checkDigest(){
+    if(!this.user) return;
+    const now = new Date();
+    const key = `${JOBALERT_SEEN}:${this.user.id}:${this._dayKey(now)}`;
+    let done = [];
+    try{ done = JSON.parse(localStorage.getItem(key) || "[]"); }catch(e){}
+    const due = JOBALERT_HOURS.filter(hr => now.getHours() >= hr && !done.includes(hr));
+    if(!due.length) return;
+    // เปิดแอปตอนเย็นหลังพลาดมาหลายรอบ — เตือนแค่รอบล่าสุดรอบเดียว ไม่ถล่มทีละ 4 อัน
+    try{ localStorage.setItem(key, JSON.stringify(done.concat(due))); }catch(e){}
+    this._announceDigest(due[due.length-1]);
+  },
+
+  _announceDigest(hr){
+    const open = (window.__DATA.repairs || []).filter(r =>
+      r && r.status !== "done" && r.status !== "cancel" && this._inScope(r));
+    if(!open.length) return;                      // ไม่มีงานค้าง ก็ไม่ต้องกวน
+    const byStatus = {};
+    open.forEach(r=>{ byStatus[r.status] = (byStatus[r.status]||0) + 1; });
+    const parts = (window.__DATA.statuses||[])
+      .filter(s=>byStatus[s.key])
+      .map(s=>`${s.label} ${byStatus[s.key]}`);
+    const mine = open.filter(r=>String(r.assignedId||"") === String(this.user.id)).length;
+    const title = `งานซ่อมค้าง ${open.length} ใบ (รอบ ${String(hr).padStart(2,"0")}:00)`;
+    const text  = parts.join(" · ") + (mine ? ` · ที่คุณรับผิดชอบ ${mine} ใบ` : "");
+    if(window.Swal) Swal.fire({toast:true,position:"top-end",icon:"warning",title,text,
+      showConfirmButton:false,timer:10000,timerProgressBar:true});
+    this._beep();
+    this._push(title, text, "rms-job-digest");
+  },
+
+  _push(title, body, tag){
+    try{
+      if(!("Notification" in window) || Notification.permission !== "granted") return;
+      new Notification(title, { body, icon:"logo.png", tag: tag || "rms-job" });
+    }catch(e){}
+  },
+  _beep(){
+    try{
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      const ctx = new Ctx(), osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.value = 740;
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.35);
+      setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 600);
+    }catch(e){}
+  },
+};
+</script>
+
+<script type="text/babel">
+// ขอสิทธิ์แจ้งเตือนของเบราว์เซอร์ — Admin (คำขออนุมัติ) และช่าง (งานซ่อมเข้าใหม่/งานค้าง)
+window.NOTIFY_ROLES = ["Admin","Technician"];
 window.askNotifyPermission = function(user){
   try{
-    if(!user || user.role !== "Admin") return;
+    if(!user || !window.NOTIFY_ROLES.includes(user.role)) return;
     if(!("Notification" in window) || Notification.permission !== "default") return;
     Notification.requestPermission().catch(()=>{});
   }catch(e){}
@@ -2977,6 +3144,9 @@ window.Login = Login;
 
 <script type="text/babel">
 function ChangePasswordModal({user,onClose}){
+  const [name,setName] = React.useState(user.name||"");
+  const [username,setUsername] = React.useState(user.username||"");
+  const [savingProfile,setSavingProfile] = React.useState(false);
   const [oldPw,setOldPw] = React.useState("");
   const [newPw,setNewPw] = React.useState("");
   const [confirmPw,setConfirmPw] = React.useState("");
@@ -2989,13 +3159,35 @@ function ChangePasswordModal({user,onClose}){
       <i className={`fa-solid ${show?"fa-eye-slash":"fa-eye"}`}></i>
     </button>
   );
+  // บันทึกชื่อ/Username แยกจากการเปลี่ยนรหัสผ่าน — แก้แค่ชื่อไม่ต้องกรอกรหัสผ่านเดิม
+  const profileDirty = name.trim() !== String(user.name||"").trim() || username.trim() !== String(user.username||"").trim();
+  const saveProfile = async () => {
+    const nm = name.trim(), un = username.trim();
+    if(!nm || !un){ Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"ชื่อ-นามสกุล และ Username ห้ามเว้นว่าง"}); return; }
+    const taken = (window.__DATA.users||[]).some(u=>u.id!==user.id && String(u.username||"").toLowerCase()===un.toLowerCase());
+    if(taken){ Swal.fire({icon:"warning",title:"Username นี้มีคนใช้แล้ว",text:"กรุณาตั้ง Username อื่น"}); return; }
+    setSavingProfile(true);
+    try{
+      await window.api("updateUser",{id:user.id, patch:{name:nm, username:un}});
+      window.__DATA.users = (window.__DATA.users||[]).map(u=>u.id===user.id?{...u,name:nm,username:un}:u);
+      try{
+        const cur = JSON.parse(localStorage.getItem("rms_user")||"null");
+        if(cur && cur.id===user.id) localStorage.setItem("rms_user", JSON.stringify({...cur,name:nm,username:un}));
+      }catch(e){}
+      window.dispatchEvent(new CustomEvent("rms-user-updated",{detail:{id:user.id}}));
+      Swal.fire({icon:"success",title:"บันทึกข้อมูลบัญชีแล้ว",timer:1600,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
+    }finally{ setSavingProfile(false); }
+  };
+
   const submit = async () => {
     if(!oldPw||!newPw||!confirmPw){ Swal.fire({icon:"warning",title:"กรุณากรอกข้อมูลให้ครบทุกช่อง"}); return; }
     if(newPw.length<6){ Swal.fire({icon:"warning",title:"รหัสผ่านใหม่สั้นเกินไป",text:"ต้องมีอย่างน้อย 6 ตัวอักษร"}); return; }
     if(newPw!==confirmPw){ Swal.fire({icon:"warning",title:"รหัสผ่านใหม่ไม่ตรงกัน",text:"กรุณากรอกรหัสผ่านใหม่และยืนยันให้ตรงกัน"}); return; }
     setLoading(true);
     try{
-      await window.api("login",{username:user.username,password:oldPw});
+      await window.api("login",{username:username.trim()||user.username,password:oldPw});
       await window.api("updateUser",{id:user.id,patch:{password:newPw}});
       setLoading(false); onClose();
       Swal.fire({icon:"success",title:"เปลี่ยนรหัสผ่านสำเร็จ",timer:1800,showConfirmButton:false,toast:true,position:"top-end"});
@@ -3006,11 +3198,37 @@ function ChangePasswordModal({user,onClose}){
     }
   };
   return (
-    <Modal open={true} onClose={onClose} title={<><i className="fa-solid fa-key" style={{color:"var(--primary)",marginRight:8}}></i>เปลี่ยนรหัสผ่าน</>} size="sm"
+    <Modal open={true} onClose={onClose} title={<><i className="fa-solid fa-gear" style={{color:"var(--primary)",marginRight:8}}></i>ตั้งค่าบัญชี</>} size="sm"
       footer={<><button className="btn btn-ghost" onClick={onClose} disabled={loading}>ยกเลิก</button><button className="btn btn-primary" onClick={submit} disabled={loading}>{loading?<><div className="spinner" style={{width:14,height:14,borderWidth:2}}></div> กำลังบันทึก...</>:<><i className="fa-solid fa-check"></i> เปลี่ยนรหัสผ่าน</>}</button></>}>
       <div style={{display:"grid",gap:14}}>
         <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#1E40AF"}}>
-          <i className="fa-solid fa-user" style={{marginRight:6}}></i>บัญชี: <strong>{user.username}</strong> · {user.name}
+          <i className="fa-solid fa-user" style={{marginRight:6}}></i>บัญชี: <strong>{user.username}</strong> · {user.role}{user.dept ? " · " + user.dept : ""}
+        </div>
+
+        <div style={{border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
+          <div style={{fontWeight:500,fontSize:13.5,marginBottom:10}}>
+            <i className="fa-solid fa-id-card" style={{color:"var(--primary)",marginRight:7}}></i>ข้อมูลผู้ใช้งาน
+          </div>
+          <div style={{display:"grid",gap:11}}>
+            <div>
+              <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>ชื่อ-นามสกุล <span style={{color:"#EF4444"}}>*</span></label>
+              <input style={{...inSt,paddingRight:12}} value={name} onChange={e=>setName(e.target.value)} placeholder="ชื่อที่แสดงในระบบ" />
+            </div>
+            <div>
+              <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>Username (ชื่อที่ใช้เข้าสู่ระบบ) <span style={{color:"#EF4444"}}>*</span></label>
+              <input style={{...inSt,paddingRight:12}} value={username} onChange={e=>setUsername(e.target.value)} placeholder="เช่น somchai" autoComplete="username" />
+              <div style={{fontSize:11.5,color:"var(--muted)",marginTop:4}}>เปลี่ยนแล้วต้องใช้ Username ใหม่ในการเข้าสู่ระบบครั้งถัดไป</div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={saveProfile} disabled={savingProfile||!profileDirty} style={{justifySelf:"start"}}>
+              {savingProfile
+                ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังบันทึก...</>
+                : <><i className="fa-solid fa-floppy-disk"></i> {profileDirty?"บันทึกข้อมูลผู้ใช้งาน":"ยังไม่มีการแก้ไข"}</>}
+            </button>
+          </div>
+        </div>
+
+        <div style={{fontWeight:500,fontSize:13.5,marginTop:2}}>
+          <i className="fa-solid fa-key" style={{color:"var(--primary)",marginRight:7}}></i>เปลี่ยนรหัสผ่าน
         </div>
         <div>
           <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>รหัสผ่านเดิม <span style={{color:"#EF4444"}}>*</span></label>
@@ -3661,6 +3879,11 @@ function Dashboard({user,goTo}){
   const [loading,setLoading] = React.useState(true);
   const [costView,setCostView] = React.useState("category");
   const [dashDetail,setDashDetail] = React.useState(null);
+  // แก้ไข/อัปเดตใบแจ้งซ่อมได้จากแดชบอร์ดโดยตรง ไม่ต้องย้ายไปหน้ารายการแจ้งซ่อม
+  const [editFor,setEditFor] = React.useState(null);
+  const [editPartsFor,setEditPartsFor] = React.useState(null);
+  const [assessFor,setAssessFor] = React.useState(null);
+  const [saving,setSaving] = React.useState(false);
   const [tick,setTick] = React.useState(0);
   const [mapProject,setMapProject] = React.useState("");   // โครงการที่เลือกจากหมุดบนแผนที่
   const [jobStatus,setJobStatus] = React.useState("all");
@@ -3681,6 +3904,61 @@ function Dashboard({user,goTo}){
   const repairs = React.useMemo(()=>{
     return window.filterByUserProjects(user, window.__DATA.repairs, "project");
   },[user,tick]);
+
+  // ---- แก้ไขใบแจ้งซ่อมจากแดชบอร์ด (ชุดเดียวกับหน้ารายการแจ้งซ่อม) ----
+  const canEditRepairs = ["Admin","Officer","Engineer"].includes(user.role);
+  const applyRepair = (updated) => {
+    window.__DATA.repairs = window.__DATA.repairs.map(x=>x.id===updated.id?updated:x);
+    setDashDetail(d => (d && d.id===updated.id) ? updated : d);
+    setTick(t=>t+1);
+  };
+  const quickAction = async (r, next, actionLabel) => {
+    if(next==="assess"){ setDashDetail(null); setAssessFor(r); return; }
+    let cost = r.cost;
+    if(next==="progress"){
+      const { value, isConfirmed } = await Swal.fire({
+        title:"อนุมัติซ่อม",
+        input:"number",inputLabel:"ค่าใช้จ่ายโดยประมาณ (บาท)",inputValue:cost||"",inputPlaceholder:"เช่น 5000",
+        showCancelButton:true,confirmButtonText:"อนุมัติและเริ่มซ่อม",cancelButtonText:"ยกเลิก",confirmButtonColor:"#1E40AF"
+      });
+      if(!isConfirmed) return;
+      cost = Number(value)||cost;
+    }
+    if(next==="done"){
+      const { isConfirmed } = await Swal.fire({title:"ปิดงานนี้หรือไม่?",text:"ยืนยันว่างานซ่อมเสร็จสมบูรณ์แล้ว",icon:"question",showCancelButton:true,confirmButtonText:"ใช่, ปิดงาน",cancelButtonText:"ยกเลิก",confirmButtonColor:"#10B981"});
+      if(!isConfirmed) return;
+    }
+    setSaving(true);
+    try{
+      await window.api("updateRepairStatus",{id:r.id,status:next,by:user.name,note:actionLabel,cost});
+      applyRepair({...r,status:next,cost,timeline:[...(r.timeline||[]),{status:next,when:new Date(),by:user.name,note:actionLabel}]});
+      Swal.fire({icon:"success",title:"อัปเดตสถานะสำเร็จ",text:actionLabel,timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+    finally{ setSaving(false); }
+  };
+  const saveDashEdit = async (r, patch) => {
+    setSaving(true);
+    try{
+      await window.api("updateRepair",{id:r.id, patch, by:user.name});
+      applyRepair({...r,...patch,timeline:[...(r.timeline||[]),{status:patch.status||r.status,when:new Date(),by:user.name,note:"แก้ไขข้อมูลจากแดชบอร์ด"}]});
+      setEditFor(null);
+      Swal.fire({icon:"success",title:"บันทึกการแก้ไขแล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+    finally{ setSaving(false); }
+  };
+  const saveDashParts = async (r, {parts, laborCost, cost}, mode) => {
+    const isAssess = mode==="assess";
+    const note = isAssess ? "เริ่มประเมินราคา" : "แก้ไขรายการอะไหล่";
+    setSaving(true);
+    try{
+      await window.api("updateRepairStatus",{id:r.id,status:isAssess?"assess":r.status,by:user.name,note,cost,patch:{parts,laborCost}});
+      applyRepair({...r,status:isAssess?"assess":r.status,cost,parts,laborCost,
+        timeline:[...(r.timeline||[]),{status:isAssess?"assess":r.status,when:new Date(),by:user.name,note}]});
+      setAssessFor(null); setEditPartsFor(null);
+      Swal.fire({icon:"success",title:isAssess?"บันทึกการประเมินแล้ว":"บันทึกรายการอะไหล่แล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+    finally{ setSaving(false); }
+  };
 
   // ── งานที่ยังไม่เสร็จสมบูรณ์ (ทุกสถานะยกเว้น done) สำหรับแผนที่และการ์ด ──
   const openJobs = React.useMemo(()=>(
@@ -4158,7 +4436,15 @@ function Dashboard({user,goTo}){
           </div>
         </div>
       </>}
-      {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user} onQuick={null} onProblems={()=>setTick(t=>t+1)} onEdit={null} onEditParts={null}/>}
+      <Loading show={saving} text="กำลังบันทึก..."/>
+      {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user}
+        onQuick={quickAction}
+        onProblems={()=>setTick(t=>t+1)}
+        onEdit={canEditRepairs?(r)=>{setDashDetail(null);setEditFor(r);}:null}
+        onEditParts={canEditRepairs?(r)=>{setDashDetail(null);setEditPartsFor(r);}:null}/>}
+      {editFor && <window.EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveDashEdit}/>}
+      {assessFor && <window.AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={(r,v)=>saveDashParts(r,v,"assess")}/>}
+      {editPartsFor && <window.AssessModal r={editPartsFor} mode="edit" onClose={()=>setEditPartsFor(null)} onSave={(r,v)=>saveDashParts(r,v,"edit")}/>}
     </>
   );
 }
@@ -4365,7 +4651,86 @@ function Repairs({user}){
   );
 }
 
+// ข้อมูลเครื่องจักรแบบย่อ — เปิดจากใบแจ้งซ่อม (กดที่รหัสเครื่องจักร)
+// อ่านอย่างเดียว ไม่มีปุ่มแก้ไข เพื่อไม่ให้ซ้อนโมดัลวนกับประวัติแจ้งซ่อมในทะเบียนเครื่องจักร
+function MachineQuickView({code,onClose}){
+  const m = (window.__DATA.machines||[]).find(x=>x.code===code) || null;
+  const jobs = (window.__DATA.repairs||[]).filter(r=>r.machineCode===code);
+  const openJobs = jobs.filter(r=>r.status!=="done" && r.status!=="cancel");
+  const cost = jobs.reduce((s,r)=>s+(Number(r.cost)||0),0);
+  const statusColor = ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[m&&m.status]||"#64748B";
+  const cat = m ? window.getCategory(m.categoryId) : null;
+  const row = (k,v) => (<div><div className="k">{k}</div><div className="v">{v || <span style={{color:"var(--muted)"}}>—</span>}</div></div>);
+
+  return (
+    <Modal open={true} onClose={onClose} size="lg"
+      title={<><i className="fa-solid fa-industry" style={{color:"var(--primary)",marginRight:8}}></i>ข้อมูลเครื่องจักร <span className="mono" style={{marginLeft:6}}>{code||"—"}</span></>}
+      footer={<button className="btn btn-ghost" onClick={onClose}>ปิด</button>}>
+      {!m ? (
+        <div className="empty" style={{padding:30}}>
+          <i className="fa-solid fa-circle-question"></i>
+          <div className="t" style={{fontSize:14}}>ไม่พบรหัส "{code||"—"}" ในทะเบียนเครื่องจักร</div>
+          <div>ใบแจ้งซ่อมอาจพิมพ์รหัสไว้เอง หรือเครื่องจักรถูกลบออกจากทะเบียนแล้ว</div>
+        </div>
+      ) : (
+        <>
+          <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
+            <span style={{width:44,height:44,borderRadius:12,display:"grid",placeItems:"center",background:"var(--accent-soft)",color:"var(--primary)",fontSize:18,flexShrink:0}}>
+              <i className={`fa-solid ${m.icon||"fa-gears"}`}></i>
+            </span>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontWeight:600,fontSize:16}}>{m.name||"—"}</div>
+              <div style={{fontSize:12.5,color:"var(--muted)"}}>{[m.brand,m.model].filter(Boolean).join(" ")||"ไม่ระบุยี่ห้อ/รุ่น"}</div>
+            </div>
+            <span style={{padding:"3px 11px",borderRadius:999,fontSize:12,fontWeight:600,background:statusColor+"18",color:statusColor}}>{m.status||"—"}</span>
+          </div>
+
+          <div className="detail-grid">
+            {row("รหัสเครื่องจักร", <span className="mono">{m.code}</span>)}
+            {row("หมวดหมู่", cat ? <CategoryChip categoryId={m.categoryId}/> : null)}
+            {row("โครงการ/หน่วยงาน", <><ProjectLabel name={m.project}/>{m.subSite && <SubSiteTag value={m.subSite} project={m.project} style={{marginLeft:6}}/>}</>)}
+            {row("ซีเรียล", <span className="mono">{m.serial}</span>)}
+            {row("ปีที่ผลิต", m.year)}
+            {row("ขนาด", m.size)}
+            {row("กรรมสิทธิ์", m.ownership)}
+            {row("พนักงานขับ / ผู้ควบคุม", m.driverName)}
+            {row("เลขชั่วโมงใช้งาน", m.hours ? Number(m.hours).toLocaleString("th-TH") : null)}
+            {row("วันที่ตรวจสอบล่าสุด", m.inspectionDate ? window.fmtDateTH(m.inspectionDate) : null)}
+            {row("ตรวจสอบครั้งถัดไป", m.nextInspectionDate ? window.fmtDateTH(m.nextInspectionDate) : null)}
+            {row("ที่ตั้ง/จุดจอด", m.location)}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginTop:16}}>
+            {[{l:"ใบแจ้งซ่อมทั้งหมด",v:jobs.length.toLocaleString("th-TH"),c:"#1E40AF",i:"fa-clipboard-list"},
+              {l:"ที่ยังไม่เสร็จ",v:openJobs.length.toLocaleString("th-TH"),c:openJobs.length?"#B45309":"#10B981",i:"fa-screwdriver-wrench"},
+              {l:"ค่าใช้จ่ายรวม (บาท)",v:cost.toLocaleString("th-TH"),c:"#047857",i:"fa-coins"}].map(s=>(
+              <div key={s.l} style={{border:"1px solid var(--line)",borderRadius:10,padding:"11px 13px",background:"#fff"}}>
+                <div style={{fontSize:11.5,color:"var(--muted)",marginBottom:3}}><i className={`fa-solid ${s.i}`} style={{marginRight:5,color:s.c}}></i>{s.l}</div>
+                <div style={{fontWeight:600,fontSize:17,color:s.c}}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+
+          {m.note && (
+            <div style={{marginTop:14,padding:12,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,fontSize:13}}>
+              <div style={{fontWeight:500,color:"#92400E",marginBottom:4}}><i className="fa-solid fa-note-sticky"></i> หมายเหตุ</div>
+              <div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div>
+            </div>
+          )}
+
+          <div style={{marginTop:14,fontSize:12,color:"var(--muted)"}}>
+            <i className="fa-solid fa-circle-info" style={{marginRight:6}}></i>
+            แก้ไขข้อมูลเครื่องจักรได้ที่ ระบบ Asset → ทะเบียนเครื่องจักร
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+window.MachineQuickView = MachineQuickView;
+
 function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
+  const [machineView,setMachineView] = React.useState(false);
   const canAct = ["Admin","Officer","Technician"].includes(user.role) && !!onQuick;
   const [probs,setProbs] = React.useState(()=>window.getProblems(r));
   const setProbStatus = async (i, st) => {
@@ -4381,7 +4746,11 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
     }catch(err){ setProbs(probs); Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
   };
   const doneCount = probs.filter(p=>p.status==="done").length;
+  // ชื่อเครื่องจักรจากทะเบียน — ใบแจ้งซ่อมเก็บแค่รหัสไว้ จึงต้องไปดึงชื่อมาแสดงคู่กัน
+  const linkedMachine = (window.__DATA.machines||[]).find(x=>x.code===r.machineCode) || null;
+  const machineCard = linkedMachine ? [linkedMachine.name,[linkedMachine.brand,linkedMachine.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ") : "";
   return (
+    <>
     <Modal open={true} onClose={onClose} title={<>ใบแจ้งซ่อม <span className="ticket-id" style={{marginLeft:6}}>{r.running}</span></>} size="lg"
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
@@ -4415,7 +4784,17 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         </div>
         {r.repairNote && <div className="full"><div className="k" style={{color:"var(--primary)"}}><i className="fa-solid fa-screwdriver-wrench" style={{marginRight:5}}></i>รายละเอียดการซ่อม</div><div className="v" style={{fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"10px 12px",marginTop:4}}>{r.repairNote}</div></div>}
         <div><div className="k">เลขที่ไซต์งาน</div><div className="v mono">{r.siteId||"—"}</div></div>
-        <div><div className="k">รหัสเครื่องจักร</div><div className="v mono">{r.machineCode||"—"}</div></div>
+        <div><div className="k">รหัสเครื่องจักร</div><div className="v">
+          {r.machineCode ? (
+            <button type="button" onClick={()=>setMachineView(true)} title="ดูข้อมูลเครื่องจักร"
+              style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",borderRadius:7,cursor:"pointer",
+                      background:"#EFF6FF",border:"1px solid #BFDBFE",color:"#1E40AF",fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>
+              {r.machineCode}
+              <i className="fa-solid fa-arrow-up-right-from-square" style={{fontSize:9,opacity:.65}}></i>
+            </button>
+          ) : <span className="mono">—</span>}
+          {machineCard && <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{machineCard}</div>}
+        </div></div>
         <div><div className="k">เลขมิเตอร์กิโลเมตร</div><div className="v">{r.odometerKm ? Number(r.odometerKm).toLocaleString("th-TH") : "—"}</div></div>
         <div><div className="k">เลขมิเตอร์ชั่วโมง</div><div className="v">{r.hourMeter ? Number(r.hourMeter).toLocaleString("th-TH") : "—"}</div></div>
         <div><div className="k">พนักงานขับ / ผู้ควบคุม</div><div className="v">{r.driverName||"—"}</div></div>
@@ -4487,6 +4866,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         {r.status==="parts" && <button className="quick-action" onClick={()=>onQuick(r,"progress","อะไหล่พร้อม กลับมาดำเนินการ")}><i className="fa-solid fa-play"></i> กลับมาดำเนินการ</button>}
       </div>}
     </Modal>
+    {machineView && <MachineQuickView code={r.machineCode} onClose={()=>setMachineView(false)}/>}
+    </>
   );
 }
 
@@ -4911,6 +5292,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
 window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
+window.AssessModal = AssessModal;
 </script>
 
 <script type="text/babel">
@@ -5564,9 +5946,13 @@ function Machines({user}){
     if(done){ setRows(rows.filter(x=>x.id!==m.id)); setDetail(null); }   // applyDeleteLocally จัดการแคชกลางให้แล้ว
   };
 
-  const handleTransfer = async (machine, {toProject, toSubSite, note}) => {
+  const handleTransfer = async (machine, {toProject, toSubSite, note, moveDate}) => {
     // ไซต์งานย่อยผูกกับโครงการ — ย้ายโครงการแล้วต้องเปลี่ยนตาม (ไม่เลือก = ทั้งโครงการ)
-    const entry = {from:machine.project||"ไม่ระบุ", to:toProject, fromSubSite:machine.subSite||"", toSubSite:toSubSite||"", when:new Date().toISOString(), by:user.name, note:note||""};
+    // when = วันที่ย้ายที่ผู้ใช้ระบุ (ย้อนหลังได้) · recordedAt = เวลาที่กดบันทึกจริง
+    const now = new Date();
+    const when = moveDate ? new Date(moveDate + "T" + String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + ":00") : now;
+    const entry = {from:machine.project||"ไม่ระบุ", to:toProject, fromSubSite:machine.subSite||"", toSubSite:toSubSite||"",
+                   when:when.toISOString(), recordedAt:now.toISOString(), by:user.name, note:note||""};
     const transferHistory = [...(machine.transferHistory||[]), entry];
     const patch = {project:toProject, subSite:toSubSite||"", transferHistory};
     try{
@@ -5737,11 +6123,17 @@ function TransferMachineModal({m,user,onClose,onSave}){
   const [toProject,setToProject] = React.useState("");
   const [toSubSite,setToSubSite] = React.useState("");
   const [note,setNote] = React.useState("");
+  // วันที่ย้ายจริง — บางครั้งมาบันทึกย้อนหลัง จึงไม่ผูกกับเวลาที่กดบันทึก
+  const [moveDate,setMoveDate] = React.useState(()=>{
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  });
   const toSites = window.projectSites(toProject);
   const inSt = {width:"100%",padding:"9px 11px",border:"1px solid var(--line)",borderRadius:8,fontFamily:"Kanit",fontSize:13.5,background:"#fff"};
   const submit = () => {
     if(!toProject){ Swal.fire({icon:"warning",title:"กรุณาเลือกโครงการปลายทาง"}); return; }
-    onSave({toProject,toSubSite,note});
+    if(!moveDate){ Swal.fire({icon:"warning",title:"กรุณาระบุวันที่ย้าย"}); return; }
+    onSave({toProject,toSubSite,note,moveDate});
   };
   return (
     <Modal open={true} onClose={onClose} title={<><i className="fa-solid fa-right-left" style={{color:"#7C3AED",marginRight:8}}></i>ย้ายโครงการ</>} size="sm"
@@ -5770,6 +6162,13 @@ function TransferMachineModal({m,user,onClose,onSave}){
             </select>
           </div>
         )}
+        <div>
+          <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>
+            <i className="fa-solid fa-calendar-day" style={{marginRight:5}}></i>วันที่ย้าย <span style={{color:"#EF4444"}}>*</span>
+          </label>
+          <input type="date" style={inSt} value={moveDate} onChange={e=>setMoveDate(e.target.value)} />
+          <div style={{fontSize:11.5,color:"var(--muted)",marginTop:4}}>บันทึกย้อนหลังได้ — วันที่นี้คือวันที่ขึ้นในประวัติการย้ายโครงการ</div>
+        </div>
         <div>
           <label style={{fontSize:12,color:"var(--muted)",display:"block",marginBottom:5}}>เหตุผล / หมายเหตุ</label>
           <textarea style={{...inSt,resize:"vertical"}} rows="3" value={note} onChange={e=>setNote(e.target.value)} placeholder="เช่น ย้ายตามแผนปรับโครงสร้าง, ส่งมอบให้โครงการ B..." />
@@ -6038,7 +6437,8 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
       <div style={{borderTop:"1px dashed var(--line)",paddingTop:16}}>
         <div style={{fontWeight:500,marginBottom:10,fontSize:14}}><i className="fa-solid fa-clock-rotate-left" style={{color:"var(--primary)",marginRight:6}}></i>ประวัติการแจ้งซ่อม ({relatedRows.length})</div>
         {relatedRows.length>0 ? (
-          <table className="data" style={{border:"1px solid var(--line)",borderRadius:8}}>
+          <div className="table-wrap" style={{border:"1px solid var(--line)",borderRadius:8}}>
+          <table className="data">
             <thead><tr><th>เลขที่</th><th>วันที่</th><th>อาการ</th><th>สถานะ</th>{canEditRepairs&&<th>จัดการ</th>}</tr></thead>
             <tbody>
               {relatedRows.map(r=>(
@@ -6052,6 +6452,7 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
               ))}
             </tbody>
           </table>
+          </div>
         ) : <div style={{color:"var(--muted)",fontSize:13,padding:"12px 0"}}>ยังไม่มีประวัติการซ่อม</div>}
       </div>
     </Modal>
@@ -6372,6 +6773,7 @@ function LoginLogs(){
   const [q, setQ] = React.useState("");
   const [filterRole, setFilterRole] = React.useState("all");
   const [filterUser, setFilterUser] = React.useState("all");
+  const [filterVia, setFilterVia] = React.useState("all");   // รหัสผ่าน / PIN
 
   const fetchLogs = () => {
     setLoading(true); setErr(null);
@@ -6397,15 +6799,20 @@ function LoginLogs(){
   const userNames = React.useMemo(()=>[...new Set(logs.map(l=>l.username).filter(Boolean))].sort(),[logs]);
   const roles = React.useMemo(()=>[...new Set(logs.map(l=>l.role).filter(Boolean))].sort(),[logs]);
 
+  // ประวัติเก่าที่บันทึกก่อนมีฟีเจอร์ PIN ไม่มีฟิลด์ via — ถือว่าเข้าด้วยรหัสผ่าน
+  const viaOf = (l) => (l && l.via === "pin") ? "pin" : "password";
+  const pinCount = React.useMemo(()=>logs.filter(l=>viaOf(l)==="pin").length,[logs]);
+
   const filtered = React.useMemo(()=>logs.filter(l=>{
     if(filterRole!=="all" && l.role!==filterRole) return false;
     if(filterUser!=="all" && l.username!==filterUser) return false;
+    if(filterVia!=="all" && viaOf(l)!==filterVia) return false;
     if(q){
       const qq=q.toLowerCase();
       if(![l.username,l.name,l.role,l.dept].map(x=>(x||"").toLowerCase()).join(" ").includes(qq)) return false;
     }
     return true;
-  }),[logs,q,filterRole,filterUser]);
+  }),[logs,q,filterRole,filterUser,filterVia]);
 
   const fmtWhen = (iso) => {
     if(!iso) return "—";
@@ -6420,6 +6827,7 @@ function LoginLogs(){
     {label:"ล็อกอินวันนี้",val:todayLogs.length,icon:"fa-calendar-day",color:"#10B981"},
     {label:"ผู้ใช้ที่ active วันนี้",val:uniqueToday,icon:"fa-user-check",color:"#8B5CF6"},
     {label:"ผู้ใช้ทั้งหมด",val:userNames.length,icon:"fa-users",color:"#F59E0B"},
+    {label:"ปลดล็อกด้วย PIN",val:pinCount,icon:"fa-shield-halved",color:"#0EA5E9"},
   ];
 
   return (
@@ -6437,6 +6845,11 @@ function LoginLogs(){
         <select value={filterRole} onChange={e=>setFilterRole(e.target.value)}>
           <option value="all">ทุก Role</option>
           {roles.map(r=>(<option key={r} value={r}>{r}</option>))}
+        </select>
+        <select value={filterVia} onChange={e=>setFilterVia(e.target.value)} title="วิธีเข้าใช้งาน">
+          <option value="all">ทุกวิธีเข้าใช้</option>
+          <option value="password">ด้วยรหัสผ่าน</option>
+          <option value="pin">ด้วย PIN</option>
         </select>
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
@@ -6476,6 +6889,7 @@ function LoginLogs(){
               <th>เวลาที่ล็อกอิน</th>
               <th>ชื่อ-สกุล</th>
               <th>Username</th>
+              <th>วิธีเข้าใช้</th>
               <th>Role</th>
               <th>แผนก</th>
             </tr></thead>
@@ -6494,12 +6908,17 @@ function LoginLogs(){
                     </td>
                     <td><div style={{fontWeight:500,fontSize:13}}>{l.name||"—"}</div></td>
                     <td><span className="mono" style={{fontSize:12,padding:"2px 7px",background:"#F1F5F9",borderRadius:5}}>{l.username||"—"}</span></td>
+                    <td style={{whiteSpace:"nowrap"}}>
+                      {viaOf(l)==="pin"
+                        ? <span style={{padding:"2px 9px",borderRadius:999,fontSize:11,fontWeight:600,background:"#E0F2FE",color:"#0369A1"}}><i className="fa-solid fa-shield-halved" style={{marginRight:4}}></i>PIN</span>
+                        : <span style={{padding:"2px 9px",borderRadius:999,fontSize:11,fontWeight:600,background:"#F1F5F9",color:"#475569"}}><i className="fa-solid fa-key" style={{marginRight:4}}></i>รหัสผ่าน</span>}
+                    </td>
                     <td><span style={{padding:"2px 9px",borderRadius:999,fontSize:11,fontWeight:600,background:rc+"18",color:rc}}>{l.role||"—"}</span></td>
                     <td style={{fontSize:13,color:"var(--muted)"}}>{l.dept||"—"}</td>
                   </tr>
                 );
               })}
-              {filtered.length===0&&(<tr><td colSpan="6"><div className="empty"><i className="fa-solid fa-magnifying-glass"></i><div className="t">ไม่พบข้อมูลที่ค้นหา</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
+              {filtered.length===0&&(<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-magnifying-glass"></i><div className="t">ไม่พบข้อมูลที่ค้นหา</div><div>ลองเปลี่ยนเงื่อนไขการค้นหา</div></div></td></tr>)}
             </tbody>
           </table>
         </div>
@@ -6880,6 +7299,50 @@ Object.assign(window,{ReporterDashboard,NewRequest,MyRepairs});
 
 <script type="text/babel">
 // ทะเบียนทรัพย์สิน — ข้อมูลจาก Firebase project "panamanee-3a15a" (/assets)
+// ส่งออกทะเบียนทรัพย์สิน (รวมเครื่องจักรที่แสดงอยู่) เป็นไฟล์ Excel
+async function exportAssetsExcel(list){
+  if(!list || list.length===0){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
+  try{
+    Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+    const XLSX = await ensureXLSX();
+    const data = list.map((r,i)=>{
+      const photos = (r.photos||[]).filter(Boolean);
+      return {
+        "ลำดับ": i+1,
+        "แหล่งข้อมูล": r.__src==="machine" ? "ทะเบียนเครื่องจักร" : "ทะเบียนทรัพย์สิน",
+        "รหัสทรัพย์สิน": r.assetCode || r.id || "",
+        "ชื่อทรัพย์สิน": r.name || "",
+        "ยี่ห้อ": r.brand || "",
+        "รุ่น": r.model || "",
+        "Serial No.": r.serial || "",
+        "ขนาด": r.size || "",
+        "จำนวน": Number(r.quantity) || 0,
+        "หน่วย": r.unit || "",
+        "กรรมสิทธิ์": r.ownership || "",
+        "ผู้ถือครอง": r.holder || "",
+        "สถานที่ (โครงการ)": r.site || "",
+        "ไซต์งานย่อย": r.subSite || "",
+        "วันที่รับเข้า": String(r.receivedAt||"").slice(0,10),
+        "จำนวนรูป": photos.length,
+        "ลิงก์รูปที่ 1": photos[0] || "",
+        "ลิงก์รูปที่ 2": photos[1] || "",
+        "ลิงก์รูปที่ 3": photos[2] || "",
+        "หมายเหตุ": r.note || "",
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = Object.keys(data[0]).map(k=>({wch: Math.min(42, Math.max(k.length+4, ...data.map(r=>String(r[k]??"").length+2)))}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ทะเบียนทรัพย์สิน");
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+    XLSX.writeFile(wb, `ทะเบียนทรัพย์สิน_${stamp}.xlsx`);
+    Swal.fire({icon:"success",title:`ส่งออกแล้ว ${data.length} รายการ`,timer:1500,showConfirmButton:false,toast:true,position:"top-end"});
+  }catch(err){
+    Swal.fire({icon:"error",title:"ส่งออกไม่สำเร็จ",text:err.message});
+  }
+}
+
 function AssetRegistry({user}){
   const canEdit = ["Admin","Officer","Engineer"].includes(window.effectiveRole(user));
   const [rows,setRows] = React.useState(()=>window.__DATA.assetRegistry || null);
@@ -6892,6 +7355,8 @@ function AssetRegistry({user}){
   const [collapsed,setCollapsed] = React.useState({});   // เก็บกลุ่มที่ถูกย่อ
   const [edit,setEdit] = React.useState(null);   // {mode:"add"|"edit", data:{...}}
   const [history,setHistory] = React.useState(null);   // ทรัพย์สินที่กำลังดูประวัติการย้าย
+  const [src,setSrc] = React.useState("all");          // all | asset | machine — แหล่งข้อมูลที่แสดง
+  const [machineView,setMachineView] = React.useState("");   // รหัสเครื่องจักรที่กำลังดูข้อมูล
 
   // คำขอแก้ไขทะเบียนทรัพย์สินที่ตัวเองส่งไว้ — ขึ้นป้าย "รออนุมัติ" และโหลดค่าใหม่หลังอนุมัติ
   const { mine: myReqs } = window.useDeleteRequests(user);
@@ -6917,8 +7382,30 @@ function AssetRegistry({user}){
     return ()=>{ alive = false; };
   },[rows]);
 
+  // เครื่องจักรจากทะเบียนเครื่องจักร — แปลงให้อยู่ในรูปแบบเดียวกับทรัพย์สิน เพื่อแสดงรวมในตารางเดียว
+  // (อ่านอย่างเดียวที่หน้านี้ · แก้ไขจริงที่เมนู "ทะเบียนเครื่องจักร")
+  const machineRows = React.useMemo(()=>(window.__DATA.machines||[]).map(m=>({
+    key: "MC:" + m.id,
+    __src: "machine",
+    machineCode: m.code || "",
+    assetCode: m.code || "",
+    name: m.name || "",
+    brand: m.brand || "", model: m.model || "", serial: m.serial || "", size: m.size || "",
+    quantity: 1, unit: "เครื่อง",
+    ownership: m.ownership || "", holder: m.driverName || "",
+    site: m.project || "", subSite: m.subSite || "",
+    note: m.note || "",
+    photos: [m.drivePhoto].filter(Boolean),
+    transferHistory: m.transferHistory || [],
+  })),[rows]);
+
   // ทรัพย์สินผูกกับโครงการผ่านฟิลด์ site — กรองตามสิทธิ์โครงการก่อนเสมอ
-  const scoped = React.useMemo(()=>window.filterByUserProjects(user, rows||[], "site"),[rows,user]);
+  const merged = React.useMemo(()=>{
+    const assets = src==="machine" ? [] : (rows||[]);
+    const machines = src==="asset" ? [] : machineRows;
+    return assets.concat(machines);
+  },[rows,machineRows,src]);
+  const scoped = React.useMemo(()=>window.filterByUserProjects(user, merged, "site"),[merged,user]);
   const sites = React.useMemo(()=>[...new Set(scoped.map(r=>r.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[scoped]);
   const owners = React.useMemo(()=>[...new Set(scoped.map(r=>r.ownership).filter(Boolean))].sort(),[scoped]);
   // ไซต์งานย่อยที่เลือกได้ = ไซต์ของโครงการที่กรองอยู่ (ไม่ได้กรองโครงการ = ทุกไซต์ที่มีในข้อมูล)
@@ -6967,9 +7454,21 @@ function AssetRegistry({user}){
     <tr key={r.key}>
       <td>
         <span className="ticket-id">{r.assetCode||r.id||"—"}</span>
+        {r.__src==="machine" && (
+          <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#EDE9FE",color:"#6D28D9",fontSize:10.5,fontWeight:600}} title="ข้อมูลจากทะเบียนเครื่องจักร">
+            <i className="fa-solid fa-industry"></i> เครื่องจักร
+          </div>
+        )}
         {pendingEditKeys.has(String(r.key)) && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#FEF3C7",color:"#B45309",fontSize:10.5,fontWeight:600}} title="ส่งคำขอแก้ไขแล้ว รอผู้ดูแลระบบอนุมัติ"><i className="fa-solid fa-hourglass-half"></i> รออนุมัติแก้ไข</div>}
       </td>
-      <td><div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div></td>
+      <td>
+        <div className="cell-title">{r.name||"—"}{r.serial&&<div className="desc"><span className="mono">S/N {r.serial}</span></div>}</div>
+        {(r.photos||[]).filter(Boolean).length>0 && (
+          <div style={{display:"flex",gap:4,marginTop:5,flexWrap:"wrap"}}>
+            {(r.photos||[]).filter(Boolean).slice(0,3).map((url,i)=><PhotoThumb key={i} url={url} size={38} />)}
+          </div>
+        )}
+      </td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
       <td style={{whiteSpace:"nowrap"}}>{(Number(r.quantity)||0).toLocaleString("th-TH")} {r.unit||""}</td>
@@ -6978,15 +7477,19 @@ function AssetRegistry({user}){
       <td style={{fontSize:13}}>
         {r.site ? <ProjectLabel name={r.site}/> : <span style={{color:"var(--muted)"}}>—</span>}
         {r.subSite && <div style={{marginTop:3}}><SubSiteTag value={r.subSite} project={r.site}/></div>}
-        {(r.transferHistory||[]).length>0 && (
+        {(r.transferHistory||[]).length>0 && r.__src!=="machine" && (
           <button className="ia" title="ประวัติการย้าย" onClick={()=>setHistory(r)} style={{color:"#7C3AED",marginLeft:4}}>
             <i className="fa-solid fa-clock-rotate-left"></i>
           </button>
         )}
       </td>
       {canEdit && <td><div className="row-actions">
-        <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
-        <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
+        {r.__src==="machine" ? (
+          <button className="ia" title="ดูข้อมูลเครื่องจักร" onClick={()=>setMachineView(r.machineCode)} style={{color:"#6D28D9"}}><i className="fa-solid fa-eye"></i></button>
+        ) : (<>
+          <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
+          <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
+        </>)}
       </div></td>}
     </tr>
   );
@@ -7024,7 +7527,7 @@ function AssetRegistry({user}){
     if(done) commit((rows||[]).filter(x=>x.key!==r.key));
   };
 
-  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",subSite:"",receivedAt:"",note:""};
+  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",subSite:"",receivedAt:"",note:"",photos:[]};
 
   if(err) return (
     <div className="card"><div className="card-body">
@@ -7059,6 +7562,11 @@ function AssetRegistry({user}){
           <option value="">ทุกกรรมสิทธิ์</option>
           {owners.map(o=><option key={o} value={o}>{o}</option>)}
         </select>
+        <select value={src} onChange={e=>setSrc(e.target.value)} title="แหล่งข้อมูลที่แสดง">
+          <option value="all">ทรัพย์สิน + เครื่องจักร</option>
+          <option value="asset">เฉพาะทะเบียนทรัพย์สิน</option>
+          <option value="machine">เฉพาะทะเบียนเครื่องจักร</option>
+        </select>
         <select value={groupBy} onChange={e=>setGroupBy(e.target.value)} title="จัดกลุ่มทรัพย์สิน">
           <option value="none">ไม่จัดกลุ่ม</option>
           <option value="site">จัดกลุ่มตามสถานที่</option>
@@ -7070,6 +7578,9 @@ function AssetRegistry({user}){
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
           {filtered.length.toLocaleString("th-TH")} / {scoped.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
         </div>
+        <button className="btn btn-ghost" onClick={()=>exportAssetsExcel(filtered)} title="ส่งออกข้อมูลที่แสดงอยู่เป็นไฟล์ Excel">
+          <i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel
+        </button>
         <button className="btn btn-ghost" title="โหลดข้อมูลล่าสุดจากฐานข้อมูล (เช่น หลังออก/ยกเลิกใบส่งของ)" onClick={()=>{ window.__DATA.assetRegistry=null; setRows(null); }}>
           <i className="fa-solid fa-rotate"></i> รีเฟรช
         </button>
@@ -7115,6 +7626,7 @@ function AssetRegistry({user}){
     </div>
     {edit && <AssetForm mode={edit.mode} initial={edit.data} sites={sites} owners={owners} user={user} onClose={()=>setEdit(null)} onSave={save}/>}
     {history && <AssetHistoryModal asset={history} onClose={()=>setHistory(null)}/>}
+    {machineView && <window.MachineQuickView code={machineView} onClose={()=>setMachineView("")}/>}
     </>
   );
 }
@@ -7457,6 +7969,12 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
           <div className="form-field full">
             <label>หมายเหตุ</label>
             <textarea rows="2" value={f.note||""} onChange={e=>up("note",e.target.value)}></textarea>
+          </div>
+          <div className="form-field full">
+            <label><i className="fa-solid fa-images" style={{color:"var(--primary)",marginRight:6}}></i>รูปภาพทรัพย์สิน <span style={{fontWeight:400,color:"var(--muted)"}}>(สูงสุด 3 รูป)</span></label>
+            <PhotosField value={f.photos} onChange={v=>up("photos",v)} max={3}
+              uploadAction="uploadPartPhoto" folder={window.PART_PHOTOS_FOLDER}
+              uploadContext={{running:[f.assetCode,f.name].filter(Boolean).join(" ")||"asset"}} />
           </div>
         </div>
       </form>
@@ -8043,6 +8561,8 @@ function PinLockScreen({user,onUnlock,onForceLogout}){
   const entry = usePinEntry(async (pin)=>{
     if(await window.__PIN.verify(pin)){
       window.__PIN.unlock();
+      // ปลดล็อกได้ = เข้าใช้งานครั้งใหม่ บันทึกลงประวัติล็อกอิน (ถ้าเน็ตล่มก็ไม่ขวางการใช้งาน)
+      window.api("logUnlock",{user, via:"pin"}).catch(()=>{});
       onUnlock();
       return true;
     }
@@ -8877,10 +9397,22 @@ function App(){
 
   // เริ่มฟังคำขออนุมัติลบข้อมูลทันทีที่รู้ว่าใครล็อกอินอยู่ (Admin จะได้เห็นแจ้งเตือนแบบเรียลไทม์)
   React.useEffect(()=>{
-    if(!user){ window.__DELREQ.stop(); return; }
+    if(!user){ window.__DELREQ.stop(); window.__JOBALERT.stop(); return; }
     window.__DELREQ.start(user);
+    window.__JOBALERT.start(user);     // Admin/ช่าง: เตือนใบแจ้งซ่อมใหม่ + สรุปงานค้างตามรอบเวลา
     window.askNotifyPermission(user);
   },[user && user.id, user && user.role]);
+
+  // แก้ชื่อ/Username ของตัวเองที่หน้าตั้งค่า แล้วให้ทั้งแอปเห็นค่าใหม่ทันที ไม่ต้องล็อกอินใหม่
+  React.useEffect(()=>{
+    if(!user) return;
+    const onUserUpdated = () => {
+      const fresh = (window.__DATA.users||[]).find(x=>x.id===user.id);
+      if(fresh) setUser(fresh);
+    };
+    window.addEventListener("rms-user-updated", onUserUpdated);
+    return ()=>window.removeEventListener("rms-user-updated", onUserUpdated);
+  },[user && user.id]);
 
   // ใช้งานบนมือถือครั้งแรก — ชวนตั้ง PIN หนึ่งครั้ง ตอบ "ไว้ก่อน" แล้วไม่ถามซ้ำ
   React.useEffect(()=>{

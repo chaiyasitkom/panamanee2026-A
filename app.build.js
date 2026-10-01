@@ -569,6 +569,7 @@ async function api(action, payload = {}) {
           name: user.name || "",
           role: user.role || "",
           dept: user.dept || "",
+          via: 'password',
           when: new Date().toISOString()
         });
         _pruneLoginLogs();
@@ -577,6 +578,26 @@ async function api(action, payload = {}) {
         };
         delete safe.password;
         return safe;
+      }
+    case 'logUnlock':
+      {
+        const u = payload.user || {};
+        if (!u.id) throw new Error('ไม่พบบัญชีผู้ใช้');
+        const logRef = _db.ref('/loginLogs').push();
+        await logRef.set({
+          id: logRef.key,
+          userId: u.id,
+          username: u.username || '',
+          name: u.name || '',
+          role: u.role || '',
+          dept: u.dept || '',
+          via: payload.via === 'pin' ? 'pin' : 'password',
+          when: new Date().toISOString()
+        });
+        _pruneLoginLogs();
+        return {
+          logged: true
+        };
       }
     case 'verifyPassword':
       {
@@ -1430,7 +1451,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1610) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1630) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2196,7 +2217,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2037) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2057) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2350,9 +2371,192 @@ window.__DELREQ = {
     } catch (e) {}
   }
 };
+
+/* ---- block 4 (ต้นฉบับบรรทัด 2187) ---- */
+const JOBALERT_ROLES = ["Admin", "Technician"];
+const JOBALERT_HOURS = [8, 11, 13, 17];
+const JOBALERT_SEEN = "rms_jobalert_seen";
+const JOBALERT_KNOWN = "rms_jobalert_known";
+window.__JOBALERT = {
+  user: null,
+  _ref: null,
+  _timer: null,
+  _known: null,
+  _first: true,
+  enabledFor(user) {
+    return !!user && JOBALERT_ROLES.includes(user.role);
+  },
+  start(user) {
+    if (!this.enabledFor(user)) {
+      this.stop();
+      return;
+    }
+    if (this._ref && this.user && this.user.id === user.id) {
+      this.user = user;
+      return;
+    }
+    this.stop();
+    this.user = user;
+    this._known = this._loadKnown();
+    this._first = true;
+    try {
+      this._ref = firebase.database().ref("/repairs").limitToLast(80);
+      this._ref.on("value", snap => {
+        const arr = Object.values(snap.val() || {}).filter(Boolean);
+        if (this._first) {
+          arr.forEach(r => this._known.add(String(r.id)));
+          this._saveKnown();
+          this._first = false;
+          return;
+        }
+        arr.forEach(r => {
+          const id = String(r.id || "");
+          if (!id || this._known.has(id)) return;
+          this._known.add(id);
+          if (this._inScope(r) && String(r.reporterId || "") !== String(this.user.id)) this._announceNew(r);
+        });
+        this._saveKnown();
+      }, err => console.warn("[jobAlert] ฟังใบแจ้งซ่อมไม่สำเร็จ:", err && err.message));
+    } catch (e) {
+      console.warn("[jobAlert]", e);
+    }
+    this._timer = setInterval(() => this._checkDigest(), 60000);
+    this._checkDigest();
+  },
+  stop() {
+    if (this._ref) {
+      try {
+        this._ref.off();
+      } catch (e) {}
+    }
+    if (this._timer) {
+      clearInterval(this._timer);
+    }
+    this._ref = null;
+    this._timer = null;
+    this._known = null;
+    this.user = null;
+    this._first = true;
+  },
+  _inScope(r) {
+    try {
+      return window.userCanSeeProject(this.user, r && r.project);
+    } catch (e) {
+      return true;
+    }
+  },
+  _loadKnown() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(JOBALERT_KNOWN) || "[]"));
+    } catch (e) {
+      return new Set();
+    }
+  },
+  _saveKnown() {
+    try {
+      const arr = [...this._known];
+      localStorage.setItem(JOBALERT_KNOWN, JSON.stringify(arr.slice(-300)));
+    } catch (e) {}
+  },
+  _announceNew(r) {
+    const problems = window.getProblems ? window.getProblems(r) : [];
+    const what = problems[0] && problems[0].text || r.title || "ไม่ระบุอาการ";
+    const title = "มีใบแจ้งซ่อมใหม่ " + (r.running || r.id || "");
+    const text = `${what} · ${r.machineCode || "ไม่ระบุเครื่องจักร"} · ${r.project ? window.projectShort(r.project) : "ไม่ระบุโครงการ"}`;
+    if (window.Swal) Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: "info",
+      title,
+      text,
+      showConfirmButton: false,
+      timer: 8000,
+      timerProgressBar: true
+    });
+    this._beep();
+    this._push(title, text, "rms-new-repair");
+  },
+  _dayKey(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  },
+  _checkDigest() {
+    if (!this.user) return;
+    const now = new Date();
+    const key = `${JOBALERT_SEEN}:${this.user.id}:${this._dayKey(now)}`;
+    let done = [];
+    try {
+      done = JSON.parse(localStorage.getItem(key) || "[]");
+    } catch (e) {}
+    const due = JOBALERT_HOURS.filter(hr => now.getHours() >= hr && !done.includes(hr));
+    if (!due.length) return;
+    try {
+      localStorage.setItem(key, JSON.stringify(done.concat(due)));
+    } catch (e) {}
+    this._announceDigest(due[due.length - 1]);
+  },
+  _announceDigest(hr) {
+    const open = (window.__DATA.repairs || []).filter(r => r && r.status !== "done" && r.status !== "cancel" && this._inScope(r));
+    if (!open.length) return;
+    const byStatus = {};
+    open.forEach(r => {
+      byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+    });
+    const parts = (window.__DATA.statuses || []).filter(s => byStatus[s.key]).map(s => `${s.label} ${byStatus[s.key]}`);
+    const mine = open.filter(r => String(r.assignedId || "") === String(this.user.id)).length;
+    const title = `งานซ่อมค้าง ${open.length} ใบ (รอบ ${String(hr).padStart(2, "0")}:00)`;
+    const text = parts.join(" · ") + (mine ? ` · ที่คุณรับผิดชอบ ${mine} ใบ` : "");
+    if (window.Swal) Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: "warning",
+      title,
+      text,
+      showConfirmButton: false,
+      timer: 10000,
+      timerProgressBar: true
+    });
+    this._beep();
+    this._push(title, text, "rms-job-digest");
+  },
+  _push(title, body, tag) {
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      new Notification(title, {
+        body,
+        icon: "logo.png",
+        tag: tag || "rms-job"
+      });
+    } catch (e) {}
+  },
+  _beep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx(),
+        osc = ctx.createOscillator(),
+        gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 740;
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+      setTimeout(() => {
+        try {
+          ctx.close();
+        } catch (e) {}
+      }, 600);
+    } catch (e) {}
+  }
+};
+
+/* ---- block 5 (ต้นฉบับบรรทัด 2330) ---- */
+window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
-    if (!user || user.role !== "Admin") return;
+    if (!user || !window.NOTIFY_ROLES.includes(user.role)) return;
     if (!("Notification" in window) || Notification.permission !== "default") return;
     Notification.requestPermission().catch(() => {});
   } catch (e) {}
@@ -2849,7 +3053,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2456) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2623) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -3339,7 +3543,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2692) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2859) ---- */
 const {
   useState,
   useEffect,
@@ -3588,7 +3792,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2795) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2962) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -3816,11 +4020,14 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2978) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3145) ---- */
 function ChangePasswordModal({
   user,
   onClose
 }) {
+  const [name, setName] = React.useState(user.name || "");
+  const [username, setUsername] = React.useState(user.username || "");
+  const [savingProfile, setSavingProfile] = React.useState(false);
   const [oldPw, setOldPw] = React.useState("");
   const [newPw, setNewPw] = React.useState("");
   const [confirmPw, setConfirmPw] = React.useState("");
@@ -3855,6 +4062,72 @@ function ChangePasswordModal({
   }, React.createElement("i", {
     className: `fa-solid ${show ? "fa-eye-slash" : "fa-eye"}`
   }));
+  const profileDirty = name.trim() !== String(user.name || "").trim() || username.trim() !== String(user.username || "").trim();
+  const saveProfile = async () => {
+    const nm = name.trim(),
+      un = username.trim();
+    if (!nm || !un) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรอกข้อมูลไม่ครบ",
+        text: "ชื่อ-นามสกุล และ Username ห้ามเว้นว่าง"
+      });
+      return;
+    }
+    const taken = (window.__DATA.users || []).some(u => u.id !== user.id && String(u.username || "").toLowerCase() === un.toLowerCase());
+    if (taken) {
+      Swal.fire({
+        icon: "warning",
+        title: "Username นี้มีคนใช้แล้ว",
+        text: "กรุณาตั้ง Username อื่น"
+      });
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      await window.api("updateUser", {
+        id: user.id,
+        patch: {
+          name: nm,
+          username: un
+        }
+      });
+      window.__DATA.users = (window.__DATA.users || []).map(u => u.id === user.id ? {
+        ...u,
+        name: nm,
+        username: un
+      } : u);
+      try {
+        const cur = JSON.parse(localStorage.getItem("rms_user") || "null");
+        if (cur && cur.id === user.id) localStorage.setItem("rms_user", JSON.stringify({
+          ...cur,
+          name: nm,
+          username: un
+        }));
+      } catch (e) {}
+      window.dispatchEvent(new CustomEvent("rms-user-updated", {
+        detail: {
+          id: user.id
+        }
+      }));
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกข้อมูลบัญชีแล้ว",
+        timer: 1600,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSavingProfile(false);
+    }
+  };
   const submit = async () => {
     if (!oldPw || !newPw || !confirmPw) {
       Swal.fire({
@@ -3882,7 +4155,7 @@ function ChangePasswordModal({
     setLoading(true);
     try {
       await window.api("login", {
-        username: user.username,
+        username: username.trim() || user.username,
         password: oldPw
       });
       await window.api("updateUser", {
@@ -3915,12 +4188,12 @@ function ChangePasswordModal({
     open: true,
     onClose: onClose,
     title: React.createElement(React.Fragment, null, React.createElement("i", {
-      className: "fa-solid fa-key",
+      className: "fa-solid fa-gear",
       style: {
         color: "var(--primary)",
         marginRight: 8
       }
-    }), "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19"),
+    }), "\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E1A\u0E31\u0E0D\u0E0A\u0E35"),
     size: "sm",
     footer: React.createElement(React.Fragment, null, React.createElement("button", {
       className: "btn btn-ghost",
@@ -3959,7 +4232,103 @@ function ChangePasswordModal({
     style: {
       marginRight: 6
     }
-  }), "\u0E1A\u0E31\u0E0D\u0E0A\u0E35: ", React.createElement("strong", null, user.username), " \xB7 ", user.name), React.createElement("div", null, React.createElement("label", {
+  }), "\u0E1A\u0E31\u0E0D\u0E0A\u0E35: ", React.createElement("strong", null, user.username), " \xB7 ", user.role, user.dept ? " · " + user.dept : ""), React.createElement("div", {
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: "12px 14px"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 13.5,
+      marginBottom: 10
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-id-card",
+    style: {
+      color: "var(--primary)",
+      marginRight: 7
+    }
+  }), "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19"), React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 11
+    }
+  }, React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      display: "block",
+      marginBottom: 5
+    }
+  }, "\u0E0A\u0E37\u0E48\u0E2D-\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25 ", React.createElement("span", {
+    style: {
+      color: "#EF4444"
+    }
+  }, "*")), React.createElement("input", {
+    style: {
+      ...inSt,
+      paddingRight: 12
+    },
+    value: name,
+    onChange: e => setName(e.target.value),
+    placeholder: "\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E35\u0E48\u0E41\u0E2A\u0E14\u0E07\u0E43\u0E19\u0E23\u0E30\u0E1A\u0E1A"
+  })), React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      display: "block",
+      marginBottom: 5
+    }
+  }, "Username (\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A) ", React.createElement("span", {
+    style: {
+      color: "#EF4444"
+    }
+  }, "*")), React.createElement("input", {
+    style: {
+      ...inSt,
+      paddingRight: 12
+    },
+    value: username,
+    onChange: e => setUsername(e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 somchai",
+    autoComplete: "username"
+  }), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E41\u0E25\u0E49\u0E27\u0E15\u0E49\u0E2D\u0E07\u0E43\u0E0A\u0E49 Username \u0E43\u0E2B\u0E21\u0E48\u0E43\u0E19\u0E01\u0E32\u0E23\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E39\u0E48\u0E23\u0E30\u0E1A\u0E1A\u0E04\u0E23\u0E31\u0E49\u0E07\u0E16\u0E31\u0E14\u0E44\u0E1B")), React.createElement("button", {
+    className: "btn btn-primary btn-sm",
+    onClick: saveProfile,
+    disabled: savingProfile || !profileDirty,
+    style: {
+      justifySelf: "start"
+    }
+  }, savingProfile ? React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 13,
+      height: 13,
+      borderWidth: 2
+    }
+  }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-floppy-disk"
+  }), " ", profileDirty ? "บันทึกข้อมูลผู้ใช้งาน" : "ยังไม่มีการแก้ไข")))), React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 13.5,
+      marginTop: 2
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-key",
+    style: {
+      color: "var(--primary)",
+      marginRight: 7
+    }
+  }), "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19"), React.createElement("div", null, React.createElement("label", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -4319,7 +4688,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3160) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3378) ---- */
 function Projects({
   user
 }) {
@@ -4956,7 +5325,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3413) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3631) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -5353,7 +5722,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3659) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3877) ---- */
 function Dashboard({
   user,
   goTo
@@ -5361,6 +5730,10 @@ function Dashboard({
   const [loading, setLoading] = React.useState(true);
   const [costView, setCostView] = React.useState("category");
   const [dashDetail, setDashDetail] = React.useState(null);
+  const [editFor, setEditFor] = React.useState(null);
+  const [editPartsFor, setEditPartsFor] = React.useState(null);
+  const [assessFor, setAssessFor] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
   const [tick, setTick] = React.useState(0);
   const [mapProject, setMapProject] = React.useState("");
   const [jobStatus, setJobStatus] = React.useState("all");
@@ -5379,6 +5752,180 @@ function Dashboard({
   const repairs = React.useMemo(() => {
     return window.filterByUserProjects(user, window.__DATA.repairs, "project");
   }, [user, tick]);
+  const canEditRepairs = ["Admin", "Officer", "Engineer"].includes(user.role);
+  const applyRepair = updated => {
+    window.__DATA.repairs = window.__DATA.repairs.map(x => x.id === updated.id ? updated : x);
+    setDashDetail(d => d && d.id === updated.id ? updated : d);
+    setTick(t => t + 1);
+  };
+  const quickAction = async (r, next, actionLabel) => {
+    if (next === "assess") {
+      setDashDetail(null);
+      setAssessFor(r);
+      return;
+    }
+    let cost = r.cost;
+    if (next === "progress") {
+      const {
+        value,
+        isConfirmed
+      } = await Swal.fire({
+        title: "อนุมัติซ่อม",
+        input: "number",
+        inputLabel: "ค่าใช้จ่ายโดยประมาณ (บาท)",
+        inputValue: cost || "",
+        inputPlaceholder: "เช่น 5000",
+        showCancelButton: true,
+        confirmButtonText: "อนุมัติและเริ่มซ่อม",
+        cancelButtonText: "ยกเลิก",
+        confirmButtonColor: "#1E40AF"
+      });
+      if (!isConfirmed) return;
+      cost = Number(value) || cost;
+    }
+    if (next === "done") {
+      const {
+        isConfirmed
+      } = await Swal.fire({
+        title: "ปิดงานนี้หรือไม่?",
+        text: "ยืนยันว่างานซ่อมเสร็จสมบูรณ์แล้ว",
+        icon: "question",
+        showCancelButton: true,
+        confirmButtonText: "ใช่, ปิดงาน",
+        cancelButtonText: "ยกเลิก",
+        confirmButtonColor: "#10B981"
+      });
+      if (!isConfirmed) return;
+    }
+    setSaving(true);
+    try {
+      await window.api("updateRepairStatus", {
+        id: r.id,
+        status: next,
+        by: user.name,
+        note: actionLabel,
+        cost
+      });
+      applyRepair({
+        ...r,
+        status: next,
+        cost,
+        timeline: [...(r.timeline || []), {
+          status: next,
+          when: new Date(),
+          by: user.name,
+          note: actionLabel
+        }]
+      });
+      Swal.fire({
+        icon: "success",
+        title: "อัปเดตสถานะสำเร็จ",
+        text: actionLabel,
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveDashEdit = async (r, patch) => {
+    setSaving(true);
+    try {
+      await window.api("updateRepair", {
+        id: r.id,
+        patch,
+        by: user.name
+      });
+      applyRepair({
+        ...r,
+        ...patch,
+        timeline: [...(r.timeline || []), {
+          status: patch.status || r.status,
+          when: new Date(),
+          by: user.name,
+          note: "แก้ไขข้อมูลจากแดชบอร์ด"
+        }]
+      });
+      setEditFor(null);
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกการแก้ไขแล้ว",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveDashParts = async (r, {
+    parts,
+    laborCost,
+    cost
+  }, mode) => {
+    const isAssess = mode === "assess";
+    const note = isAssess ? "เริ่มประเมินราคา" : "แก้ไขรายการอะไหล่";
+    setSaving(true);
+    try {
+      await window.api("updateRepairStatus", {
+        id: r.id,
+        status: isAssess ? "assess" : r.status,
+        by: user.name,
+        note,
+        cost,
+        patch: {
+          parts,
+          laborCost
+        }
+      });
+      applyRepair({
+        ...r,
+        status: isAssess ? "assess" : r.status,
+        cost,
+        parts,
+        laborCost,
+        timeline: [...(r.timeline || []), {
+          status: isAssess ? "assess" : r.status,
+          when: new Date(),
+          by: user.name,
+          note
+        }]
+      });
+      setAssessFor(null);
+      setEditPartsFor(null);
+      Swal.fire({
+        icon: "success",
+        title: isAssess ? "บันทึกการประเมินแล้ว" : "บันทึกรายการอะไหล่แล้ว",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
   const openJobs = React.useMemo(() => repairs.filter(r => r.status !== "done").slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)), [repairs]);
   const jobsByProject = React.useMemo(() => {
     const map = {};
@@ -6525,19 +7072,41 @@ function Dashboard({
     }
   }), React.createElement("div", {
     className: "t"
-  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07\u0E2D\u0E22\u0E39\u0E48"), React.createElement("div", null, "\u0E07\u0E32\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C\u0E41\u0E25\u0E49\u0E27"))))))))), dashDetail && React.createElement(window.RepairDetail, {
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07\u0E2D\u0E22\u0E39\u0E48"), React.createElement("div", null, "\u0E07\u0E32\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E2A\u0E21\u0E1A\u0E39\u0E23\u0E13\u0E4C\u0E41\u0E25\u0E49\u0E27"))))))))), React.createElement(Loading, {
+    show: saving,
+    text: "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01..."
+  }), dashDetail && React.createElement(window.RepairDetail, {
     r: dashDetail,
     onClose: () => setDashDetail(null),
     user: user,
-    onQuick: null,
+    onQuick: quickAction,
     onProblems: () => setTick(t => t + 1),
-    onEdit: null,
-    onEditParts: null
+    onEdit: canEditRepairs ? r => {
+      setDashDetail(null);
+      setEditFor(r);
+    } : null,
+    onEditParts: canEditRepairs ? r => {
+      setDashDetail(null);
+      setEditPartsFor(r);
+    } : null
+  }), editFor && React.createElement(window.EditRepairModal, {
+    r: editFor,
+    onClose: () => setEditFor(null),
+    onSave: saveDashEdit
+  }), assessFor && React.createElement(window.AssessModal, {
+    r: assessFor,
+    onClose: () => setAssessFor(null),
+    onSave: (r, v) => saveDashParts(r, v, "assess")
+  }), editPartsFor && React.createElement(window.AssessModal, {
+    r: editPartsFor,
+    mode: "edit",
+    onClose: () => setEditPartsFor(null),
+    onSave: (r, v) => saveDashParts(r, v, "edit")
   }));
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 4168) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4454) ---- */
 function Repairs({
   user
 }) {
@@ -7031,6 +7600,207 @@ function Repairs({
     onSave: saveEditParts
   }));
 }
+function MachineQuickView({
+  code,
+  onClose
+}) {
+  const m = (window.__DATA.machines || []).find(x => x.code === code) || null;
+  const jobs = (window.__DATA.repairs || []).filter(r => r.machineCode === code);
+  const openJobs = jobs.filter(r => r.status !== "done" && r.status !== "cancel");
+  const cost = jobs.reduce((s, r) => s + (Number(r.cost) || 0), 0);
+  const statusColor = {
+    "ใช้งาน": "#10B981",
+    "ซ่อม": "#EF4444",
+    "รอซ่อม": "#F59E0B"
+  }[m && m.status] || "#64748B";
+  const cat = m ? window.getCategory(m.categoryId) : null;
+  const row = (k, v) => React.createElement("div", null, React.createElement("div", {
+    className: "k"
+  }, k), React.createElement("div", {
+    className: "v"
+  }, v || React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u2014")));
+  return React.createElement(Modal, {
+    open: true,
+    onClose: onClose,
+    size: "lg",
+    title: React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-industry",
+      style: {
+        color: "var(--primary)",
+        marginRight: 8
+      }
+    }), "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 ", React.createElement("span", {
+      className: "mono",
+      style: {
+        marginLeft: 6
+      }
+    }, code || "—")),
+    footer: React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: onClose
+    }, "\u0E1B\u0E34\u0E14")
+  }, !m ? React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-question"
+  }), React.createElement("div", {
+    className: "t",
+    style: {
+      fontSize: 14
+    }
+  }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E23\u0E2B\u0E31\u0E2A \"", code || "—", "\" \u0E43\u0E19\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("div", null, "\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E2D\u0E32\u0E08\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E23\u0E2B\u0E31\u0E2A\u0E44\u0E27\u0E49\u0E40\u0E2D\u0E07 \u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E16\u0E39\u0E01\u0E25\u0E1A\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E41\u0E25\u0E49\u0E27")) : React.createElement(React.Fragment, null, React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 12,
+      alignItems: "center",
+      flexWrap: "wrap",
+      marginBottom: 14
+    }
+  }, React.createElement("span", {
+    style: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      display: "grid",
+      placeItems: "center",
+      background: "var(--accent-soft)",
+      color: "var(--primary)",
+      fontSize: 18,
+      flexShrink: 0
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${m.icon || "fa-gears"}`
+  })), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 160
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 16
+    }
+  }, m.name || "—"), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, [m.brand, m.model].filter(Boolean).join(" ") || "ไม่ระบุยี่ห้อ/รุ่น")), React.createElement("span", {
+    style: {
+      padding: "3px 11px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 600,
+      background: statusColor + "18",
+      color: statusColor
+    }
+  }, m.status || "—")), React.createElement("div", {
+    className: "detail-grid"
+  }, row("รหัสเครื่องจักร", React.createElement("span", {
+    className: "mono"
+  }, m.code)), row("หมวดหมู่", cat ? React.createElement(CategoryChip, {
+    categoryId: m.categoryId
+  }) : null), row("โครงการ/หน่วยงาน", React.createElement(React.Fragment, null, React.createElement(ProjectLabel, {
+    name: m.project
+  }), m.subSite && React.createElement(SubSiteTag, {
+    value: m.subSite,
+    project: m.project,
+    style: {
+      marginLeft: 6
+    }
+  }))), row("ซีเรียล", React.createElement("span", {
+    className: "mono"
+  }, m.serial)), row("ปีที่ผลิต", m.year), row("ขนาด", m.size), row("กรรมสิทธิ์", m.ownership), row("พนักงานขับ / ผู้ควบคุม", m.driverName), row("เลขชั่วโมงใช้งาน", m.hours ? Number(m.hours).toLocaleString("th-TH") : null), row("วันที่ตรวจสอบล่าสุด", m.inspectionDate ? window.fmtDateTH(m.inspectionDate) : null), row("ตรวจสอบครั้งถัดไป", m.nextInspectionDate ? window.fmtDateTH(m.nextInspectionDate) : null), row("ที่ตั้ง/จุดจอด", m.location)), React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
+      gap: 10,
+      marginTop: 16
+    }
+  }, [{
+    l: "ใบแจ้งซ่อมทั้งหมด",
+    v: jobs.length.toLocaleString("th-TH"),
+    c: "#1E40AF",
+    i: "fa-clipboard-list"
+  }, {
+    l: "ที่ยังไม่เสร็จ",
+    v: openJobs.length.toLocaleString("th-TH"),
+    c: openJobs.length ? "#B45309" : "#10B981",
+    i: "fa-screwdriver-wrench"
+  }, {
+    l: "ค่าใช้จ่ายรวม (บาท)",
+    v: cost.toLocaleString("th-TH"),
+    c: "#047857",
+    i: "fa-coins"
+  }].map(s => React.createElement("div", {
+    key: s.l,
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: "11px 13px",
+      background: "#fff"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginBottom: 3
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${s.i}`,
+    style: {
+      marginRight: 5,
+      color: s.c
+    }
+  }), s.l), React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 17,
+      color: s.c
+    }
+  }, s.v)))), m.note && React.createElement("div", {
+    style: {
+      marginTop: 14,
+      padding: 12,
+      background: "#FFFBEB",
+      border: "1px solid #FDE68A",
+      borderRadius: 10,
+      fontSize: 13
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      color: "#92400E",
+      marginBottom: 4
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-note-sticky"
+  }), " \u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("div", {
+    style: {
+      color: "#78350F",
+      whiteSpace: "pre-wrap"
+    }
+  }, m.note)), React.createElement("div", {
+    style: {
+      marginTop: 14,
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-info",
+    style: {
+      marginRight: 6
+    }
+  }), "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 \u0E23\u0E30\u0E1A\u0E1A Asset \u2192 \u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")));
+}
+window.MachineQuickView = MachineQuickView;
 function RepairDetail({
   r,
   onClose,
@@ -7040,6 +7810,7 @@ function RepairDetail({
   onEditParts,
   onProblems
 }) {
+  const [machineView, setMachineView] = React.useState(false);
   const canAct = ["Admin", "Officer", "Technician"].includes(user.role) && !!onQuick;
   const [probs, setProbs] = React.useState(() => window.getProblems(r));
   const setProbStatus = async (i, st) => {
@@ -7075,7 +7846,9 @@ function RepairDetail({
     }
   };
   const doneCount = probs.filter(p => p.status === "done").length;
-  return React.createElement(Modal, {
+  const linkedMachine = (window.__DATA.machines || []).find(x => x.code === r.machineCode) || null;
+  const machineCard = linkedMachine ? [linkedMachine.name, [linkedMachine.brand, linkedMachine.model].filter(Boolean).join(" ")].filter(Boolean).join(" · ") : "";
+  return React.createElement(React.Fragment, null, React.createElement(Modal, {
     open: true,
     onClose: onClose,
     title: React.createElement(React.Fragment, null, "\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 ", React.createElement("span", {
@@ -7230,8 +8003,39 @@ function RepairDetail({
   }, r.siteId || "—")), React.createElement("div", null, React.createElement("div", {
     className: "k"
   }, "\u0E23\u0E2B\u0E31\u0E2A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("div", {
-    className: "v mono"
-  }, r.machineCode || "—")), React.createElement("div", null, React.createElement("div", {
+    className: "v"
+  }, r.machineCode ? React.createElement("button", {
+    type: "button",
+    onClick: () => setMachineView(true),
+    title: "\u0E14\u0E39\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23",
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "3px 10px",
+      borderRadius: 7,
+      cursor: "pointer",
+      background: "#EFF6FF",
+      border: "1px solid #BFDBFE",
+      color: "#1E40AF",
+      fontFamily: "JetBrains Mono,monospace",
+      fontSize: 12.5
+    }
+  }, r.machineCode, React.createElement("i", {
+    className: "fa-solid fa-arrow-up-right-from-square",
+    style: {
+      fontSize: 9,
+      opacity: .65
+    }
+  })) : React.createElement("span", {
+    className: "mono"
+  }, "\u2014"), machineCard && React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, machineCard))), React.createElement("div", null, React.createElement("div", {
     className: "k"
   }, "\u0E40\u0E25\u0E02\u0E21\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E01\u0E34\u0E42\u0E25\u0E40\u0E21\u0E15\u0E23"), React.createElement("div", {
     className: "v"
@@ -7537,7 +8341,10 @@ function RepairDetail({
     onClick: () => onQuick(r, "progress", "อะไหล่พร้อม กลับมาดำเนินการ")
   }, React.createElement("i", {
     className: "fa-solid fa-play"
-  }), " \u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23")));
+  }), " \u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E14\u0E33\u0E40\u0E19\u0E34\u0E19\u0E01\u0E32\u0E23"))), machineView && React.createElement(MachineQuickView, {
+    code: r.machineCode,
+    onClose: () => setMachineView(false)
+  }));
 }
 window.getProblems = function (r) {
   if (Array.isArray(r.problems) && r.problems.length) {
@@ -8653,8 +9460,9 @@ function AssessModal({
 window.Repairs = Repairs;
 window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
+window.AssessModal = AssessModal;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4916) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 5298) ---- */
 function Users({
   user
 }) {
@@ -9192,7 +10000,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 5092) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5474) ---- */
 function Categories({
   user
 }) {
@@ -9455,7 +10263,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 5180) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5562) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -10388,14 +11196,18 @@ function Machines({
   const handleTransfer = async (machine, {
     toProject,
     toSubSite,
-    note
+    note,
+    moveDate
   }) => {
+    const now = new Date();
+    const when = moveDate ? new Date(moveDate + "T" + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0") + ":00") : now;
     const entry = {
       from: machine.project || "ไม่ระบุ",
       to: toProject,
       fromSubSite: machine.subSite || "",
       toSubSite: toSubSite || "",
-      when: new Date().toISOString(),
+      when: when.toISOString(),
+      recordedAt: now.toISOString(),
       by: user.name,
       note: note || ""
     };
@@ -11076,6 +11888,10 @@ function TransferMachineModal({
   const [toProject, setToProject] = React.useState("");
   const [toSubSite, setToSubSite] = React.useState("");
   const [note, setNote] = React.useState("");
+  const [moveDate, setMoveDate] = React.useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const toSites = window.projectSites(toProject);
   const inSt = {
     width: "100%",
@@ -11094,10 +11910,18 @@ function TransferMachineModal({
       });
       return;
     }
+    if (!moveDate) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาระบุวันที่ย้าย"
+      });
+      return;
+    }
     onSave({
       toProject,
       toSubSite,
-      note
+      note,
+      moveDate
     });
   };
   return React.createElement(Modal, {
@@ -11214,6 +12038,33 @@ function TransferMachineModal({
     key: s,
     value: s
   }, s)))), React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      display: "block",
+      marginBottom: 5
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-calendar-day",
+    style: {
+      marginRight: 5
+    }
+  }), "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E22\u0E49\u0E32\u0E22 ", React.createElement("span", {
+    style: {
+      color: "#EF4444"
+    }
+  }, "*")), React.createElement("input", {
+    type: "date",
+    style: inSt,
+    value: moveDate,
+    onChange: e => setMoveDate(e.target.value)
+  }), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E22\u0E49\u0E2D\u0E19\u0E2B\u0E25\u0E31\u0E07\u0E44\u0E14\u0E49 \u2014 \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E19\u0E35\u0E49\u0E04\u0E37\u0E2D\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E02\u0E36\u0E49\u0E19\u0E43\u0E19\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23")), React.createElement("div", null, React.createElement("label", {
     style: {
       fontSize: 12,
       color: "var(--muted)",
@@ -12173,12 +13024,14 @@ function MachineDetail({
       color: "var(--primary)",
       marginRight: 6
     }
-  }), "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 (", relatedRows.length, ")"), relatedRows.length > 0 ? React.createElement("table", {
-    className: "data",
+  }), "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 (", relatedRows.length, ")"), relatedRows.length > 0 ? React.createElement("div", {
+    className: "table-wrap",
     style: {
       border: "1px solid var(--line)",
       borderRadius: 8
     }
+  }, React.createElement("table", {
+    className: "data"
   }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E2D\u0E32\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), canEditRepairs && React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, relatedRows.map(r => React.createElement("tr", {
     key: r.id,
     style: {
@@ -12228,7 +13081,7 @@ function MachineDetail({
     }
   }, React.createElement("i", {
     className: "fa-solid fa-user-pen"
-  }))))))) : React.createElement("div", {
+  })))))))) : React.createElement("div", {
     style: {
       color: "var(--muted)",
       fontSize: 13,
@@ -12260,7 +13113,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 6067) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6468) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -13279,6 +14132,7 @@ function LoginLogs() {
   const [q, setQ] = React.useState("");
   const [filterRole, setFilterRole] = React.useState("all");
   const [filterUser, setFilterUser] = React.useState("all");
+  const [filterVia, setFilterVia] = React.useState("all");
   const fetchLogs = () => {
     setLoading(true);
     setErr(null);
@@ -13317,15 +14171,18 @@ function LoginLogs() {
   const uniqueToday = new Set(todayLogs.map(l => l.userId)).size;
   const userNames = React.useMemo(() => [...new Set(logs.map(l => l.username).filter(Boolean))].sort(), [logs]);
   const roles = React.useMemo(() => [...new Set(logs.map(l => l.role).filter(Boolean))].sort(), [logs]);
+  const viaOf = l => l && l.via === "pin" ? "pin" : "password";
+  const pinCount = React.useMemo(() => logs.filter(l => viaOf(l) === "pin").length, [logs]);
   const filtered = React.useMemo(() => logs.filter(l => {
     if (filterRole !== "all" && l.role !== filterRole) return false;
     if (filterUser !== "all" && l.username !== filterUser) return false;
+    if (filterVia !== "all" && viaOf(l) !== filterVia) return false;
     if (q) {
       const qq = q.toLowerCase();
       if (![l.username, l.name, l.role, l.dept].map(x => (x || "").toLowerCase()).join(" ").includes(qq)) return false;
     }
     return true;
-  }), [logs, q, filterRole, filterUser]);
+  }), [logs, q, filterRole, filterUser, filterVia]);
   const fmtWhen = iso => {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -13353,6 +14210,11 @@ function LoginLogs() {
     val: userNames.length,
     icon: "fa-users",
     color: "#F59E0B"
+  }, {
+    label: "ปลดล็อกด้วย PIN",
+    val: pinCount,
+    icon: "fa-shield-halved",
+    color: "#0EA5E9"
   }];
   return React.createElement(React.Fragment, null, React.createElement("div", {
     className: "stat-grid",
@@ -13402,7 +14264,17 @@ function LoginLogs() {
   }, "\u0E17\u0E38\u0E01 Role"), roles.map(r => React.createElement("option", {
     key: r,
     value: r
-  }, r))), React.createElement("div", {
+  }, r))), React.createElement("select", {
+    value: filterVia,
+    onChange: e => setFilterVia(e.target.value),
+    title: "\u0E27\u0E34\u0E18\u0E35\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19"
+  }, React.createElement("option", {
+    value: "all"
+  }, "\u0E17\u0E38\u0E01\u0E27\u0E34\u0E18\u0E35\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49"), React.createElement("option", {
+    value: "password"
+  }, "\u0E14\u0E49\u0E27\u0E22\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19"), React.createElement("option", {
+    value: "pin"
+  }, "\u0E14\u0E49\u0E27\u0E22 PIN")), React.createElement("div", {
     className: "spacer"
   }), React.createElement("div", {
     style: {
@@ -13514,7 +14386,7 @@ function LoginLogs() {
     style: {
       width: 36
     }
-  }, "#"), React.createElement("th", null, "\u0E40\u0E27\u0E25\u0E32\u0E17\u0E35\u0E48\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D-\u0E2A\u0E01\u0E38\u0E25"), React.createElement("th", null, "Username"), React.createElement("th", null, "Role"), React.createElement("th", null, "\u0E41\u0E1C\u0E19\u0E01"))), React.createElement("tbody", null, filtered.map((l, i) => {
+  }, "#"), React.createElement("th", null, "\u0E40\u0E27\u0E25\u0E32\u0E17\u0E35\u0E48\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D-\u0E2A\u0E01\u0E38\u0E25"), React.createElement("th", null, "Username"), React.createElement("th", null, "\u0E27\u0E34\u0E18\u0E35\u0E40\u0E02\u0E49\u0E32\u0E43\u0E0A\u0E49"), React.createElement("th", null, "Role"), React.createElement("th", null, "\u0E41\u0E1C\u0E19\u0E01"))), React.createElement("tbody", null, filtered.map((l, i) => {
     const rc = roleColor[l.role] || "#64748B";
     const isToday = (l.when || "").slice(0, 10) === todayStr;
     return React.createElement("tr", {
@@ -13555,7 +14427,39 @@ function LoginLogs() {
         background: "#F1F5F9",
         borderRadius: 5
       }
-    }, l.username || "—")), React.createElement("td", null, React.createElement("span", {
+    }, l.username || "—")), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, viaOf(l) === "pin" ? React.createElement("span", {
+      style: {
+        padding: "2px 9px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        background: "#E0F2FE",
+        color: "#0369A1"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-shield-halved",
+      style: {
+        marginRight: 4
+      }
+    }), "PIN") : React.createElement("span", {
+      style: {
+        padding: "2px 9px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        background: "#F1F5F9",
+        color: "#475569"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-key",
+      style: {
+        marginRight: 4
+      }
+    }), "\u0E23\u0E2B\u0E31\u0E2A\u0E1C\u0E48\u0E32\u0E19")), React.createElement("td", null, React.createElement("span", {
       style: {
         padding: "2px 9px",
         borderRadius: 999,
@@ -13571,7 +14475,7 @@ function LoginLogs() {
       }
     }, l.dept || "—"));
   }), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
-    colSpan: "6"
+    colSpan: "7"
   }, React.createElement("div", {
     className: "empty"
   }, React.createElement("i", {
@@ -13747,7 +14651,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6574) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6993) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -14846,7 +15750,72 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6881) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7300) ---- */
+async function exportAssetsExcel(list) {
+  if (!list || list.length === 0) {
+    Swal.fire({
+      icon: "info",
+      title: "ไม่มีข้อมูลให้ส่งออก"
+    });
+    return;
+  }
+  try {
+    Swal.fire({
+      title: "กำลังสร้างไฟล์ Excel...",
+      allowOutsideClick: false,
+      didOpen: () => Swal.showLoading()
+    });
+    const XLSX = await ensureXLSX();
+    const data = list.map((r, i) => {
+      const photos = (r.photos || []).filter(Boolean);
+      return {
+        "ลำดับ": i + 1,
+        "แหล่งข้อมูล": r.__src === "machine" ? "ทะเบียนเครื่องจักร" : "ทะเบียนทรัพย์สิน",
+        "รหัสทรัพย์สิน": r.assetCode || r.id || "",
+        "ชื่อทรัพย์สิน": r.name || "",
+        "ยี่ห้อ": r.brand || "",
+        "รุ่น": r.model || "",
+        "Serial No.": r.serial || "",
+        "ขนาด": r.size || "",
+        "จำนวน": Number(r.quantity) || 0,
+        "หน่วย": r.unit || "",
+        "กรรมสิทธิ์": r.ownership || "",
+        "ผู้ถือครอง": r.holder || "",
+        "สถานที่ (โครงการ)": r.site || "",
+        "ไซต์งานย่อย": r.subSite || "",
+        "วันที่รับเข้า": String(r.receivedAt || "").slice(0, 10),
+        "จำนวนรูป": photos.length,
+        "ลิงก์รูปที่ 1": photos[0] || "",
+        "ลิงก์รูปที่ 2": photos[1] || "",
+        "ลิงก์รูปที่ 3": photos[2] || "",
+        "หมายเหตุ": r.note || ""
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = Object.keys(data[0]).map(k => ({
+      wch: Math.min(42, Math.max(k.length + 4, ...data.map(r => String(r[k] ?? "").length + 2)))
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ทะเบียนทรัพย์สิน");
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    XLSX.writeFile(wb, `ทะเบียนทรัพย์สิน_${stamp}.xlsx`);
+    Swal.fire({
+      icon: "success",
+      title: `ส่งออกแล้ว ${data.length} รายการ`,
+      timer: 1500,
+      showConfirmButton: false,
+      toast: true,
+      position: "top-end"
+    });
+  } catch (err) {
+    Swal.fire({
+      icon: "error",
+      title: "ส่งออกไม่สำเร็จ",
+      text: err.message
+    });
+  }
+}
 function AssetRegistry({
   user
 }) {
@@ -14861,6 +15830,8 @@ function AssetRegistry({
   const [collapsed, setCollapsed] = React.useState({});
   const [edit, setEdit] = React.useState(null);
   const [history, setHistory] = React.useState(null);
+  const [src, setSrc] = React.useState("all");
+  const [machineView, setMachineView] = React.useState("");
   const {
     mine: myReqs
   } = window.useDeleteRequests(user);
@@ -14884,7 +15855,32 @@ function AssetRegistry({
       alive = false;
     };
   }, [rows]);
-  const scoped = React.useMemo(() => window.filterByUserProjects(user, rows || [], "site"), [rows, user]);
+  const machineRows = React.useMemo(() => (window.__DATA.machines || []).map(m => ({
+    key: "MC:" + m.id,
+    __src: "machine",
+    machineCode: m.code || "",
+    assetCode: m.code || "",
+    name: m.name || "",
+    brand: m.brand || "",
+    model: m.model || "",
+    serial: m.serial || "",
+    size: m.size || "",
+    quantity: 1,
+    unit: "เครื่อง",
+    ownership: m.ownership || "",
+    holder: m.driverName || "",
+    site: m.project || "",
+    subSite: m.subSite || "",
+    note: m.note || "",
+    photos: [m.drivePhoto].filter(Boolean),
+    transferHistory: m.transferHistory || []
+  })), [rows]);
+  const merged = React.useMemo(() => {
+    const assets = src === "machine" ? [] : rows || [];
+    const machines = src === "asset" ? [] : machineRows;
+    return assets.concat(machines);
+  }, [rows, machineRows, src]);
+  const scoped = React.useMemo(() => window.filterByUserProjects(user, merged, "site"), [merged, user]);
   const sites = React.useMemo(() => [...new Set(scoped.map(r => r.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [scoped]);
   const owners = React.useMemo(() => [...new Set(scoped.map(r => r.ownership).filter(Boolean))].sort(), [scoped]);
   const subSites = React.useMemo(() => {
@@ -14954,7 +15950,23 @@ function AssetRegistry({
     key: r.key
   }, React.createElement("td", null, React.createElement("span", {
     className: "ticket-id"
-  }, r.assetCode || r.id || "—"), pendingEditKeys.has(String(r.key)) && React.createElement("div", {
+  }, r.assetCode || r.id || "—"), r.__src === "machine" && React.createElement("div", {
+    style: {
+      marginTop: 3,
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "1px 7px",
+      borderRadius: 999,
+      background: "#EDE9FE",
+      color: "#6D28D9",
+      fontSize: 10.5,
+      fontWeight: 600
+    },
+    title: "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E08\u0E32\u0E01\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"
+  }, React.createElement("i", {
+    className: "fa-solid fa-industry"
+  }), " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), pendingEditKeys.has(String(r.key)) && React.createElement("div", {
     style: {
       marginTop: 3,
       display: "inline-flex",
@@ -14976,7 +15988,18 @@ function AssetRegistry({
     className: "desc"
   }, React.createElement("span", {
     className: "mono"
-  }, "S/N ", r.serial)))), React.createElement("td", {
+  }, "S/N ", r.serial))), (r.photos || []).filter(Boolean).length > 0 && React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      marginTop: 5,
+      flexWrap: "wrap"
+    }
+  }, (r.photos || []).filter(Boolean).slice(0, 3).map((url, i) => React.createElement(PhotoThumb, {
+    key: i,
+    url: url,
+    size: 38
+  })))), React.createElement("td", {
     className: "hide-on-mobile",
     style: {
       fontSize: 13
@@ -15017,7 +16040,7 @@ function AssetRegistry({
   }, React.createElement(SubSiteTag, {
     value: r.subSite,
     project: r.site
-  })), (r.transferHistory || []).length > 0 && React.createElement("button", {
+  })), (r.transferHistory || []).length > 0 && r.__src !== "machine" && React.createElement("button", {
     className: "ia",
     title: "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22",
     onClick: () => setHistory(r),
@@ -15029,7 +16052,16 @@ function AssetRegistry({
     className: "fa-solid fa-clock-rotate-left"
   }))), canEdit && React.createElement("td", null, React.createElement("div", {
     className: "row-actions"
-  }, React.createElement("button", {
+  }, r.__src === "machine" ? React.createElement("button", {
+    className: "ia",
+    title: "\u0E14\u0E39\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23",
+    onClick: () => setMachineView(r.machineCode),
+    style: {
+      color: "#6D28D9"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-eye"
+  })) : React.createElement(React.Fragment, null, React.createElement("button", {
     className: "ia",
     title: "\u0E41\u0E01\u0E49\u0E44\u0E02",
     onClick: () => setEdit({
@@ -15046,7 +16078,7 @@ function AssetRegistry({
     onClick: () => remove(r)
   }, React.createElement("i", {
     className: "fa-solid fa-trash"
-  })))));
+  }))))));
   const sortRows = list => list.slice().sort((a, b) => String(a.assetCode || a.id || "").localeCompare(String(b.assetCode || b.id || ""), "th"));
   const commit = list => {
     const sorted = sortRows(list);
@@ -15117,7 +16149,8 @@ function AssetRegistry({
     site: "",
     subSite: "",
     receivedAt: "",
-    note: ""
+    note: "",
+    photos: []
   };
   if (err) return React.createElement("div", {
     className: "card"
@@ -15189,6 +16222,16 @@ function AssetRegistry({
     key: o,
     value: o
   }, o))), React.createElement("select", {
+    value: src,
+    onChange: e => setSrc(e.target.value),
+    title: "\u0E41\u0E2B\u0E25\u0E48\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E35\u0E48\u0E41\u0E2A\u0E14\u0E07"
+  }, React.createElement("option", {
+    value: "all"
+  }, "\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19 + \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("option", {
+    value: "asset"
+  }, "\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"), React.createElement("option", {
+    value: "machine"
+  }, "\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("select", {
     value: groupBy,
     onChange: e => setGroupBy(e.target.value),
     title: "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"
@@ -15211,6 +16254,15 @@ function AssetRegistry({
       alignSelf: "center"
     }
   }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => exportAssetsExcel(filtered),
+    title: "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E35\u0E48\u0E41\u0E2A\u0E14\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E44\u0E1F\u0E25\u0E4C Excel"
+  }, React.createElement("i", {
+    className: "fa-solid fa-file-excel",
+    style: {
+      color: "#1D6F42"
+    }
+  }), " \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel"), React.createElement("button", {
     className: "btn btn-ghost",
     title: "\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E08\u0E32\u0E01\u0E10\u0E32\u0E19\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E40\u0E0A\u0E48\u0E19 \u0E2B\u0E25\u0E31\u0E07\u0E2D\u0E2D\u0E01/\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07)",
     onClick: () => {
@@ -15298,6 +16350,9 @@ function AssetRegistry({
   }), history && React.createElement(AssetHistoryModal, {
     asset: history,
     onClose: () => setHistory(null)
+  }), machineView && React.createElement(window.MachineQuickView, {
+    code: machineView,
+    onClose: () => setMachineView("")
   }));
 }
 function AssetHistoryModal({
@@ -16032,6 +17087,28 @@ function AssetForm({
     rows: "2",
     value: f.note || "",
     onChange: e => up("note", e.target.value)
+  })), React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", null, React.createElement("i", {
+    className: "fa-solid fa-images",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), "\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19 ", React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      color: "var(--muted)"
+    }
+  }, "(\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14 3 \u0E23\u0E39\u0E1B)")), React.createElement(PhotosField, {
+    value: f.photos,
+    onChange: v => up("photos", v),
+    max: 3,
+    uploadAction: "uploadPartPhoto",
+    folder: window.PART_PHOTOS_FOLDER,
+    uploadContext: {
+      running: [f.assetCode, f.name].filter(Boolean).join(" ") || "asset"
+    }
   })))));
 }
 const DO_LOGO_SVG = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
@@ -16919,7 +17996,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 7871) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8389) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -17143,6 +18220,10 @@ function PinLockScreen({
   const entry = usePinEntry(async pin => {
     if (await window.__PIN.verify(pin)) {
       window.__PIN.unlock();
+      window.api("logUnlock", {
+        user,
+        via: "pin"
+      }).catch(() => {});
       onUnlock();
       return true;
     }
@@ -17388,7 +18469,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 8204) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8724) ---- */
 function Permissions({
   user
 }) {
@@ -18006,7 +19087,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8556) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 9076) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -18694,11 +19775,22 @@ function App() {
   React.useEffect(() => {
     if (!user) {
       window.__DELREQ.stop();
+      window.__JOBALERT.stop();
       return;
     }
     window.__DELREQ.start(user);
+    window.__JOBALERT.start(user);
     window.askNotifyPermission(user);
   }, [user && user.id, user && user.role]);
+  React.useEffect(() => {
+    if (!user) return;
+    const onUserUpdated = () => {
+      const fresh = (window.__DATA.users || []).find(x => x.id === user.id);
+      if (fresh) setUser(fresh);
+    };
+    window.addEventListener("rms-user-updated", onUserUpdated);
+    return () => window.removeEventListener("rms-user-updated", onUserUpdated);
+  }, [user && user.id]);
   React.useEffect(() => {
     if (!user || !workspace || locked) return;
     if (!window.__PIN.available() || window.__PIN.enabled() || window.__PIN.asked()) return;
