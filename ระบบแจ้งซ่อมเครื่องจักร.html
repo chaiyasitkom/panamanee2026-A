@@ -69,6 +69,7 @@ if("serviceWorker" in navigator){
 <!-- ไลบรารีที่ต้องใช้ตั้งแต่เปิดหน้า — defer ทุกตัวเพื่อไม่ให้บล็อกการแสดงผล (ทำงานตามลำดับที่เขียน) -->
 <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/sweetalert2@11.10.5/dist/sweetalert2.all.min.js"></script>
 <script defer src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script defer src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
@@ -2276,6 +2277,7 @@ window.__JOBALERT = {
 
   _checkDigest(){
     if(!this.user) return;
+    if(window.__FCM && window.__FCM.wanted()) return;   // เปิด push ไว้แล้ว ฝั่งเซิร์ฟเวอร์ส่งสรุปให้เอง
     const now = new Date();
     const key = `${JOBALERT_SEEN}:${this.user.id}:${this._dayKey(now)}`;
     let done = [];
@@ -2307,6 +2309,7 @@ window.__JOBALERT = {
 
   _push(title, body, tag){
     try{
+      if(window.__FCM && window.__FCM.wanted()) return;   // กันเด้งซ้ำกับ push ที่เซิร์ฟเวอร์ส่งมา
       if(!("Notification" in window) || Notification.permission !== "granted") return;
       new Notification(title, { body, icon:"logo.png", tag: tag || "rms-job" });
     }catch(e){}
@@ -2323,6 +2326,136 @@ window.__JOBALERT = {
       osc.start(); osc.stop(ctx.currentTime + 0.35);
       setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 600);
     }catch(e){}
+  },
+};
+</script>
+
+<script type="text/babel">
+</script>
+
+<script type="text/babel">
+/* ═══ แจ้งเตือนแบบ Push (Firebase Cloud Messaging) ════════════════════════
+   ต่างจาก __JOBALERT ตรงที่ "ปิดแอปแล้วยังเตือนได้" เพราะเซิร์ฟเวอร์เป็นคนยิงมา
+   · เครื่องนี้ขอ token จาก FCM แล้วเก็บไว้ที่ /fcmTokens/{userId}/{token}
+   · ฝั่งส่ง = Google Apps Script (backend/Notify.gs) อ่าน token แล้วยิงเข้า FCM
+   · ตัวรับตอนปิดแอปอยู่ใน sw.js (onBackgroundMessage)
+   ตั้งค่าครั้งเดียวตาม backend/FCM-SETUP.md — ต้องมี VAPID key จาก Firebase Console
+   ────────────────────────────────────────────────────────────────────── */
+const FCM_VAPID_KEY = "";          // ใส่ Web Push certificate ตรงนี้ก็ได้ (เว้นว่าง = อ่านจาก /config/fcmVapidKey)
+const FCM_ON_KEY = "rms_fcm_on";   // จำว่าเครื่องนี้เปิดรับ push ไว้
+
+window.__FCM = {
+  _msg: null,
+  _vapid: null,
+  _listening: false,
+
+  supported(){
+    try{
+      return !!(window.firebase && firebase.messaging && "serviceWorker" in navigator
+                && "Notification" in window && "PushManager" in window);
+    }catch(e){ return false; }
+  },
+
+  // เปิดรับ push ไว้บนเครื่องนี้หรือเปล่า
+  wanted(){ try{ return localStorage.getItem(FCM_ON_KEY) === "1"; }catch(e){ return false; } },
+
+  messaging(){
+    if(this._msg) return this._msg;
+    this._msg = firebase.messaging();
+    return this._msg;
+  },
+
+  async getVapid(){
+    if(this._vapid !== null) return this._vapid;
+    if(FCM_VAPID_KEY){ this._vapid = FCM_VAPID_KEY; return this._vapid; }
+    try{
+      const snap = await firebase.database().ref("/config/fcmVapidKey").get();
+      this._vapid = String(snap.val() || "").trim();
+    }catch(e){ this._vapid = ""; }
+    return this._vapid;
+  },
+
+  // token มีอักขระที่ใช้เป็น key ใน Realtime Database ไม่ได้ ต้องแปลงก่อน
+  _key(token){ return String(token).replace(/[.#$\[\]\/]/g, "_"); },
+
+  // สถานะสำหรับแสดงในหน้าตั้งค่า
+  async status(){
+    if(!this.supported()) return {code:"unsupported", text:"อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนแบบ push"};
+    if(!(await this.getVapid())) return {code:"no-vapid", text:"ยังไม่ได้ตั้งค่า VAPID key ของ Firebase (ดู backend/FCM-SETUP.md)"};
+    if(Notification.permission === "denied") return {code:"denied", text:"เบราว์เซอร์ถูกตั้งให้บล็อกการแจ้งเตือนไว้ ต้องไปปลดที่การตั้งค่าเบราว์เซอร์"};
+    if(this.wanted() && Notification.permission === "granted") return {code:"on", text:"เปิดอยู่ — ปิดแอปแล้วยังได้รับแจ้งเตือน"};
+    return {code:"off", text:"ยังไม่ได้เปิดบนเครื่องนี้"};
+  },
+
+  // ขอ token แล้วบันทึกไว้ให้ฝั่งเซิร์ฟเวอร์ยิงเข้ามาได้
+  async register(user, {ask=false} = {}){
+    if(!this.supported() || !user) return {ok:false, reason:"unsupported"};
+    const vapid = await this.getVapid();
+    if(!vapid) return {ok:false, reason:"no-vapid"};
+    if(Notification.permission === "denied") return {ok:false, reason:"denied"};
+    if(Notification.permission !== "granted"){
+      if(!ask) return {ok:false, reason:"not-asked"};
+      let p = "denied";
+      try{ p = await Notification.requestPermission(); }catch(e){}
+      if(p !== "granted") return {ok:false, reason:"denied"};
+    }
+    try{
+      const reg = await navigator.serviceWorker.ready;       // ใช้ sw.js ตัวเดิม ไม่ลงทะเบียน service worker ซ้อน
+      const token = await this.messaging().getToken({vapidKey:vapid, serviceWorkerRegistration:reg});
+      if(!token) return {ok:false, reason:"no-token"};
+      await firebase.database().ref("/fcmTokens/" + user.id + "/" + this._key(token)).set({
+        token,
+        userId: user.id,
+        name: user.name || "",
+        role: user.role || "",
+        updatedAt: new Date().toISOString(),
+        ua: String(navigator.userAgent || "").slice(0,180),
+      });
+      try{ localStorage.setItem(FCM_ON_KEY, "1"); }catch(e){}
+      this.listen();
+      return {ok:true, token};
+    }catch(err){
+      console.warn("[fcm] ขอ token ไม่สำเร็จ:", err && err.message);
+      return {ok:false, reason:"error", error:err};
+    }
+  },
+
+  async unregister(user){
+    try{
+      const vapid = await this.getVapid();
+      const reg = await navigator.serviceWorker.ready;
+      const token = await this.messaging().getToken({vapidKey:vapid, serviceWorkerRegistration:reg});
+      if(token && user) await firebase.database().ref("/fcmTokens/" + user.id + "/" + this._key(token)).remove();
+      await this.messaging().deleteToken();
+    }catch(e){ /* ลบไม่ได้ก็ไม่เป็นไร token จะหมดอายุเอง */ }
+    try{ localStorage.removeItem(FCM_ON_KEY); }catch(e){}
+    return {ok:true};
+  },
+
+  // เปิดแอปค้างไว้แล้วมี push เข้ามา — เบราว์เซอร์ไม่เด้งให้ ต้องโชว์เอง
+  listen(){
+    if(this._listening || !this.supported()) return;
+    try{
+      this.messaging().onMessage((payload)=>{
+        const d = (payload && payload.data) || {};
+        if(window.Swal) Swal.fire({
+          toast:true, position:"top-end",
+          icon: d.kind === "digest" ? "warning" : "info",
+          title: d.title || "แจ้งเตือน", text: d.body || "",
+          showConfirmButton:false, timer:8000, timerProgressBar:true,
+        });
+      });
+      this._listening = true;
+    }catch(e){}
+  },
+
+  // เรียกตอนล็อกอิน — ต่ออายุ token ให้อัตโนมัติ ไม่ต้องให้ผู้ใช้มากดเอง
+  async autoStart(user){
+    if(!this.supported() || !user) return;
+    if(!(window.NOTIFY_ROLES||[]).includes(user.role)) return;
+    if(Notification.permission === "granted" || this.wanted()){
+      await this.register(user, {ask:false});
+    }
   },
 };
 </script>
@@ -3181,6 +3314,33 @@ function ChangePasswordModal({user,onClose}){
     }finally{ setSavingProfile(false); }
   };
 
+  // ── แจ้งเตือนแบบ push (ปิดแอปแล้วยังเตือนได้) ──
+  const [pushState,setPushState] = React.useState(null);
+  const [pushBusy,setPushBusy] = React.useState(false);
+  const refreshPush = React.useCallback(()=>{
+    window.__FCM.status().then(setPushState).catch(()=>setPushState({code:"error",text:"ตรวจสอบสถานะไม่สำเร็จ"}));
+  },[]);
+  React.useEffect(()=>{ refreshPush(); },[refreshPush]);
+  const togglePush = async () => {
+    setPushBusy(true);
+    try{
+      if(pushState && pushState.code==="on"){
+        await window.__FCM.unregister(user);
+        Swal.fire({icon:"info",title:"ปิดการแจ้งเตือนบนเครื่องนี้แล้ว",timer:1600,showConfirmButton:false,toast:true,position:"top-end"});
+      }else{
+        const res = await window.__FCM.register(user,{ask:true});
+        if(res.ok) Swal.fire({icon:"success",title:"เปิดการแจ้งเตือนแล้ว",text:"เครื่องนี้จะได้รับแจ้งเตือนแม้ปิดแอป",timer:2200,showConfirmButton:false,toast:true,position:"top-end"});
+        else if(res.reason==="denied") Swal.fire({icon:"warning",title:"เบราว์เซอร์บล็อกการแจ้งเตือนไว้",text:"เปิดสิทธิ์แจ้งเตือนของเว็บนี้ในการตั้งค่าเบราว์เซอร์ก่อน แล้วลองใหม่"});
+        else if(res.reason==="no-vapid") Swal.fire({icon:"info",title:"ยังตั้งค่าระบบแจ้งเตือนไม่เสร็จ",text:"ผู้ดูแลระบบต้องใส่ VAPID key ของ Firebase ก่อน (ดู backend/FCM-SETUP.md)"});
+        else if(res.reason==="unsupported") Swal.fire({icon:"info",title:"อุปกรณ์นี้ไม่รองรับ",text:"iPhone/iPad ต้องติดตั้งเป็นแอป (Add to Home Screen) ก่อนจึงจะรับแจ้งเตือนได้"});
+        else Swal.fire({icon:"error",title:"เปิดไม่สำเร็จ",text:(res.error&&res.error.message)||"ลองใหม่อีกครั้ง"});
+      }
+    }finally{
+      setPushBusy(false);
+      refreshPush();
+    }
+  };
+
   const submit = async () => {
     if(!oldPw||!newPw||!confirmPw){ Swal.fire({icon:"warning",title:"กรุณากรอกข้อมูลให้ครบทุกช่อง"}); return; }
     if(newPw.length<6){ Swal.fire({icon:"warning",title:"รหัสผ่านใหม่สั้นเกินไป",text:"ต้องมีอย่างน้อย 6 ตัวอักษร"}); return; }
@@ -3224,6 +3384,34 @@ function ChangePasswordModal({user,onClose}){
                 ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังบันทึก...</>
                 : <><i className="fa-solid fa-floppy-disk"></i> {profileDirty?"บันทึกข้อมูลผู้ใช้งาน":"ยังไม่มีการแก้ไข"}</>}
             </button>
+          </div>
+        </div>
+
+        <div style={{border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
+          <div style={{fontWeight:500,fontSize:13.5,marginBottom:4}}>
+            <i className="fa-solid fa-bell" style={{color:"var(--primary)",marginRight:7}}></i>การแจ้งเตือนบนเครื่องนี้
+          </div>
+          <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:10,lineHeight:1.6}}>
+            งานซ่อมใหม่เข้าระบบ และสรุปงานค้าง 08:00 / 11:00 / 13:00 / 17:00 — เปิดแล้วจะเตือนแม้ปิดแอปไปแล้ว
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span className="badge" style={
+              !pushState ? {background:"var(--line-soft)",color:"var(--muted)"}
+              : pushState.code==="on" ? {background:"#DCFCE7",color:"#166534"}
+              : pushState.code==="denied" || pushState.code==="unsupported" ? {background:"#FEE2E2",color:"#B91C1C"}
+              : {background:"#FEF3C7",color:"#92400E"}}>
+              {pushState ? (pushState.code==="on" ? "เปิดอยู่" : "ปิดอยู่") : "กำลังตรวจสอบ..."}
+            </span>
+            <span style={{fontSize:12,color:"var(--muted)",flex:1,minWidth:150}}>{pushState?pushState.text:""}</span>
+            {pushState && pushState.code!=="unsupported" && pushState.code!=="no-vapid" && (
+              <button className={`btn btn-sm ${pushState.code==="on"?"btn-ghost":"btn-primary"}`} onClick={togglePush} disabled={pushBusy}>
+                {pushBusy
+                  ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังทำงาน...</>
+                  : pushState.code==="on"
+                    ? <><i className="fa-solid fa-bell-slash"></i> ปิดการแจ้งเตือน</>
+                    : <><i className="fa-solid fa-bell"></i> เปิดการแจ้งเตือน</>}
+              </button>
+            )}
           </div>
         </div>
 
@@ -4654,8 +4842,12 @@ function Repairs({user}){
 // ข้อมูลเครื่องจักรแบบย่อ — เปิดจากใบแจ้งซ่อม (กดที่รหัสเครื่องจักร)
 // อ่านอย่างเดียว ไม่มีปุ่มแก้ไข เพื่อไม่ให้ซ้อนโมดัลวนกับประวัติแจ้งซ่อมในทะเบียนเครื่องจักร
 function MachineQuickView({code,onClose}){
+  const [jobLimit,setJobLimit] = React.useState(12);   // ใบงานเยอะ ๆ ทยอยแสดง
   const m = (window.__DATA.machines||[]).find(x=>x.code===code) || null;
-  const jobs = (window.__DATA.repairs||[]).filter(r=>r.machineCode===code);
+  const jobs = React.useMemo(()=>(window.__DATA.repairs||[])
+    .filter(r=>r.machineCode===code)
+    .slice()
+    .sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt)),[code]);
   const openJobs = jobs.filter(r=>r.status!=="done" && r.status!=="cancel");
   const cost = jobs.reduce((s,r)=>s+(Number(r.cost)||0),0);
   const statusColor = ({"ใช้งาน":"#10B981","ซ่อม":"#EF4444","รอซ่อม":"#F59E0B"})[m&&m.status]||"#64748B";
@@ -4717,6 +4909,50 @@ function MachineQuickView({code,onClose}){
               <div style={{color:"#78350F",whiteSpace:"pre-wrap"}}>{m.note}</div>
             </div>
           )}
+
+          {/* ประวัติการแจ้งซ่อมของเครื่องนี้ — อ่านอย่างเดียว กันเปิดใบงานซ้อนใบงานวนไปมา */}
+          <div style={{marginTop:18,borderTop:"1px dashed var(--line)",paddingTop:14}}>
+            <div style={{fontWeight:500,fontSize:14,marginBottom:10}}>
+              <i className="fa-solid fa-clock-rotate-left" style={{color:"var(--primary)",marginRight:7}}></i>
+              ประวัติการแจ้งซ่อม ({jobs.length.toLocaleString("th-TH")})
+            </div>
+            {jobs.length===0 ? (
+              <div style={{color:"var(--muted)",fontSize:13,padding:"10px 0"}}>ยังไม่มีประวัติการแจ้งซ่อมของเครื่องจักรนี้</div>
+            ) : (
+              <>
+                <div className="table-wrap" style={{border:"1px solid var(--line)",borderRadius:8}}>
+                  <table className="data">
+                    <thead><tr>
+                      <th>เลขที่</th><th>วันที่แจ้ง</th><th>อาการ/ปัญหา</th>
+                      <th className="hide-on-mobile">ผู้แจ้ง</th><th>สถานะ</th>
+                      <th className="hide-on-mobile">ค่าใช้จ่าย</th>
+                    </tr></thead>
+                    <tbody>
+                      {jobs.slice(0,jobLimit).map(r=>(
+                        <tr key={r.id}>
+                          <td><span className="ticket-id">{r.running||r.id}</span></td>
+                          <td style={{color:"var(--muted)",whiteSpace:"nowrap"}}>{window.fmtDateTH(r.createdAt)}</td>
+                          <td style={{fontSize:13}}><div className="cell-title"><ProblemLines title={r.title} max={3}/></div></td>
+                          <td className="hide-on-mobile" style={{fontSize:13,color:"var(--muted)"}}>{r.reporterName||"—"}</td>
+                          <td><Badge status={r.status}/></td>
+                          <td className="hide-on-mobile" style={{whiteSpace:"nowrap",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>
+                            {r.cost ? "฿"+Number(r.cost).toLocaleString("th-TH") : <span style={{color:"var(--muted)"}}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {jobs.length>jobLimit && (
+                  <div style={{textAlign:"center",marginTop:10}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>setJobLimit(x=>x+20)}>
+                      <i className="fa-solid fa-chevron-down"></i> แสดงเพิ่ม (เหลืออีก {(jobs.length-jobLimit).toLocaleString("th-TH")} ใบ)
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           <div style={{marginTop:14,fontSize:12,color:"var(--muted)"}}>
             <i className="fa-solid fa-circle-info" style={{marginRight:6}}></i>
@@ -7299,6 +7535,28 @@ Object.assign(window,{ReporterDashboard,NewRequest,MyRepairs});
 
 <script type="text/babel">
 // ทะเบียนทรัพย์สิน — ข้อมูลจาก Firebase project "panamanee-3a15a" (/assets)
+const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
+const fmtQtyUnits = (byUnit)=>Object.entries(byUnit).map(([u,n])=>`${n.toLocaleString("th-TH")}${u?" "+u:""}`).join(" + ") || "0";
+// สรุปทรัพย์สินแยกตามชื่อ — ใช้ทั้งหน้าจอสรุปและชีตสรุปในไฟล์ Excel
+function summarizeAssetsByName(list){
+  const map = new Map();
+  (list||[]).forEach(r=>{
+    const name = String(r.name||"").trim() || ASSET_NO_NAME;
+    if(!map.has(name)) map.set(name,{name,count:0,qty:0,byUnit:{},bySite:{},byOwner:{},machines:0});
+    const g = map.get(name);
+    const n = Number(r.quantity)||0;
+    const unit = String(r.unit||"").trim();
+    g.count++; g.qty += n;
+    g.byUnit[unit] = (g.byUnit[unit]||0) + n;
+    const s = String(r.site||"").trim() || "ไม่ระบุสถานที่";
+    g.bySite[s] = (g.bySite[s]||0) + n;
+    const o = String(r.ownership||"").trim() || "ไม่ระบุ";
+    g.byOwner[o] = (g.byOwner[o]||0) + n;
+    if(r.__src==="machine") g.machines++;
+  });
+  return [...map.values()].sort((a,b)=>b.qty-a.qty || a.name.localeCompare(b.name,"th",{numeric:true}));
+}
+
 // ส่งออกทะเบียนทรัพย์สิน (รวมเครื่องจักรที่แสดงอยู่) เป็นไฟล์ Excel
 async function exportAssetsExcel(list){
   if(!list || list.length===0){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
@@ -7334,6 +7592,20 @@ async function exportAssetsExcel(list){
     ws["!cols"] = Object.keys(data[0]).map(k=>({wch: Math.min(42, Math.max(k.length+4, ...data.map(r=>String(r[k]??"").length+2)))}));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "ทะเบียนทรัพย์สิน");
+    // ชีตสรุปแยกตามชื่อทรัพย์สิน
+    const sum = summarizeAssetsByName(list).map((g,i)=>({
+      "ลำดับ": i+1,
+      "ชื่อทรัพย์สิน": g.name,
+      "จำนวนรายการ": g.count,
+      "จำนวนรวม": g.qty,
+      "จำนวนรวม (แยกหน่วย)": fmtQtyUnits(g.byUnit),
+      "จำนวนสถานที่": Object.keys(g.bySite).length,
+      "แยกตามสถานที่": Object.entries(g.bySite).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`${s}: ${n}`).join(", "),
+      "แยกตามกรรมสิทธิ์": Object.entries(g.byOwner).sort((a,b)=>b[1]-a[1]).map(([s,n])=>`${s}: ${n}`).join(", "),
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(sum);
+    ws2["!cols"] = Object.keys(sum[0]).map(k=>({wch: Math.min(60, Math.max(k.length+4, ...sum.map(r=>String(r[k]??"").length+2)))}));
+    XLSX.utils.book_append_sheet(wb, ws2, "สรุปตามชื่อทรัพย์สิน");
     const d = new Date();
     const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
     XLSX.writeFile(wb, `ทะเบียนทรัพย์สิน_${stamp}.xlsx`);
@@ -7351,6 +7623,8 @@ function AssetRegistry({user}){
   const [site,setSite] = React.useState("");
   const [subSite,setSubSite] = React.useState("");
   const [owner,setOwner] = React.useState("");
+  const [nameF,setNameF] = React.useState("");          // กรองตามชื่อทรัพย์สิน
+  const [view,setView] = React.useState("list");        // list | summary — ตารางรายการ / สรุปตามชื่อทรัพย์สิน
   const [groupBy,setGroupBy] = React.useState("site");   // none | site | ownership | name
   const [collapsed,setCollapsed] = React.useState({});   // เก็บกลุ่มที่ถูกย่อ
   const [edit,setEdit] = React.useState(null);   // {mode:"add"|"edit", data:{...}}
@@ -7414,19 +7688,30 @@ function AssetRegistry({user}){
     return [...new Set(pool.map(r=>r.subSite).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th",{numeric:true}));
   },[scoped,site]);
 
+  // ชื่อทรัพย์สินที่เลือกได้ = ชื่อที่มีในโครงการ/ไซต์ที่กรองอยู่
+  const names = React.useMemo(()=>{
+    const pool = scoped.filter(r=>(!site || r.site===site) && (!subSite || (r.subSite||"")===subSite));
+    return [...new Set(pool.map(r=>String(r.name||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"th",{numeric:true}));
+  },[scoped,site,subSite]);
+
   const filtered = React.useMemo(()=>{
     const kw = q.trim().toLowerCase();
     return scoped.filter(r=>{
       if(site && r.site!==site) return false;
       if(subSite && (r.subSite||"")!==subSite) return false;
       if(owner && r.ownership!==owner) return false;
+      if(nameF && String(r.name||"").trim()!==nameF) return false;
       if(!kw) return true;
       return [r.assetCode,r.name,r.brand,r.model,r.serial,r.site,r.subSite,r.holder,r.note]
         .some(v=>String(v||"").toLowerCase().includes(kw));
     });
-  },[scoped,q,site,subSite,owner]);
+  },[scoped,q,site,subSite,owner,nameF]);
 
   const totalQty = React.useMemo(()=>filtered.reduce((s,r)=>s+(Number(r.quantity)||0),0),[filtered]);
+
+  // สรุปแยกตามชื่อทรัพย์สิน — จำนวนรายการ, จำนวนรวม (แยกหน่วย), กระจายตามสถานที่/กรรมสิทธิ์
+  const nameSummary = React.useMemo(()=>summarizeAssetsByName(filtered),[filtered]);
+  const openName = (n)=>{ setNameF(n===ASSET_NO_NAME ? "" : n); setView("list"); };
 
   const GROUP_META = {
     site:      { label:"สถานที่ (โครงการ)", empty:"— ไม่ระบุสถานที่ —", field:r=>r.site },
@@ -7562,18 +7847,22 @@ function AssetRegistry({user}){
           <option value="">ทุกกรรมสิทธิ์</option>
           {owners.map(o=><option key={o} value={o}>{o}</option>)}
         </select>
+        <select value={nameF} onChange={e=>setNameF(e.target.value)} title="แยกตามชื่อทรัพย์สิน" style={{maxWidth:220}}>
+          <option value="">ทุกชื่อทรัพย์สิน ({names.length.toLocaleString("th-TH")})</option>
+          {(nameF && !names.includes(nameF) ? [nameF].concat(names) : names).map(n=><option key={n} value={n}>{n}</option>)}
+        </select>
         <select value={src} onChange={e=>setSrc(e.target.value)} title="แหล่งข้อมูลที่แสดง">
           <option value="all">ทรัพย์สิน + เครื่องจักร</option>
           <option value="asset">เฉพาะทะเบียนทรัพย์สิน</option>
           <option value="machine">เฉพาะทะเบียนเครื่องจักร</option>
         </select>
-        <select value={groupBy} onChange={e=>setGroupBy(e.target.value)} title="จัดกลุ่มทรัพย์สิน">
+        {view==="list" && <select value={groupBy} onChange={e=>setGroupBy(e.target.value)} title="จัดกลุ่มทรัพย์สิน">
           <option value="none">ไม่จัดกลุ่ม</option>
           <option value="site">จัดกลุ่มตามสถานที่</option>
           <option value="subSite">จัดกลุ่มตามไซต์งานย่อย</option>
           <option value="ownership">จัดกลุ่มตามกรรมสิทธิ์</option>
           <option value="name">จัดกลุ่มตามชื่อทรัพย์สิน</option>
-        </select>
+        </select>}
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
           {filtered.length.toLocaleString("th-TH")} / {scoped.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
@@ -7586,7 +7875,74 @@ function AssetRegistry({user}){
         </button>
         {canEdit && <button className="btn btn-primary" onClick={()=>setEdit({mode:"add",data:{...blank}})}><i className="fa-solid fa-plus"></i> เพิ่มทรัพย์สิน</button>}
       </div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"0 16px 12px"}}>
+        <div className="seg" style={{display:"inline-flex",background:"var(--bg)",border:"1px solid var(--line)",borderRadius:10,padding:3}}>
+          {[{k:"list",l:"รายการทรัพย์สิน",i:"fa-list"},{k:"summary",l:"สรุปตามชื่อทรัพย์สิน",i:"fa-chart-simple"}].map(t=>(
+            <button key={t.k} onClick={()=>setView(t.k)}
+              style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",fontFamily:"Kanit",
+                      background:view===t.k?"var(--primary)":"transparent",color:view===t.k?"#fff":"var(--muted)"}}>
+              <i className={`fa-solid ${t.i}`}></i> {t.l}
+            </button>
+          ))}
+        </div>
+        {nameF && (
+          <span style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:999,background:"#DBEAFE",color:"#1E40AF",fontSize:12.5,fontWeight:500}}>
+            <i className="fa-solid fa-tag"></i> {nameF}
+            <button onClick={()=>setNameF("")} title="ล้างตัวกรองชื่อ" style={{border:"none",background:"transparent",color:"inherit",cursor:"pointer",padding:0}}><i className="fa-solid fa-xmark"></i></button>
+          </span>
+        )}
+        {view==="summary" && <span style={{color:"var(--muted)",fontSize:13}}>{nameSummary.length.toLocaleString("th-TH")} ชื่อทรัพย์สิน</span>}
+      </div>
+      {view==="summary" && (
       <div className="table-wrap">
+        <table className="data">
+          <thead><tr>
+            <th>ชื่อทรัพย์สิน</th><th>จำนวนรายการ</th><th>จำนวนรวม</th>
+            <th>แยกตามสถานที่ (โครงการ)</th><th className="hide-on-mobile">แยกตามกรรมสิทธิ์</th><th></th>
+          </tr></thead>
+          <tbody>
+            {nameSummary.map(g=>(
+              <tr key={g.name}>
+                <td>
+                  <div className="cell-title">{g.name}</div>
+                  {g.machines>0 && <div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:4,padding:"1px 7px",borderRadius:999,background:"#EDE9FE",color:"#6D28D9",fontSize:10.5,fontWeight:600}}><i className="fa-solid fa-industry"></i> เครื่องจักร {g.machines}</div>}
+                </td>
+                <td style={{whiteSpace:"nowrap"}}>{g.count.toLocaleString("th-TH")}</td>
+                <td style={{whiteSpace:"nowrap",fontWeight:600}}>{fmtQtyUnits(g.byUnit)}</td>
+                <td style={{fontSize:12.5}}>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {Object.entries(g.bySite).sort((a,b)=>b[1]-a[1]).map(([s,n])=>(
+                      <span key={s} style={{padding:"2px 8px",borderRadius:999,background:"var(--bg)",border:"1px solid var(--line)",whiteSpace:"nowrap"}}>
+                        {s} <b>{n.toLocaleString("th-TH")}</b>
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="hide-on-mobile" style={{fontSize:12.5}}>
+                  {Object.entries(g.byOwner).sort((a,b)=>b[1]-a[1]).map(([o,n])=><div key={o}>{o}: <b>{n.toLocaleString("th-TH")}</b></div>)}
+                </td>
+                <td>
+                  {g.name!==ASSET_NO_NAME && <button className="ia" title="ดูรายการของทรัพย์สินนี้" onClick={()=>openName(g.name)}><i className="fa-solid fa-arrow-right"></i></button>}
+                </td>
+              </tr>
+            ))}
+            {nameSummary.length>0 && (
+              <tr style={{background:"var(--bg)",fontWeight:600}}>
+                <td>รวมทั้งหมด</td>
+                <td>{filtered.length.toLocaleString("th-TH")}</td>
+                <td colSpan={4}>{totalQty.toLocaleString("th-TH")} หน่วย</td>
+              </tr>
+            )}
+            {nameSummary.length===0 && (<tr><td colSpan={6}><div className="empty">
+              <i className="fa-solid fa-boxes-stacked"></i>
+              <div className="t">ไม่พบข้อมูล</div>
+              <div>ลองเปลี่ยนเงื่อนไขการค้นหา</div>
+            </div></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+      )}
+      {view==="list" && <div className="table-wrap">
         <table className="data">
           <thead><tr>
             <th>รหัสทรัพย์สิน</th><th>ชื่อทรัพย์สิน</th>
@@ -7622,7 +7978,7 @@ function AssetRegistry({user}){
             </div></td></tr>)}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
     {edit && <AssetForm mode={edit.mode} initial={edit.data} sites={sites} owners={owners} user={user} onClose={()=>setEdit(null)} onSave={save}/>}
     {history && <AssetHistoryModal asset={history} onClose={()=>setHistory(null)}/>}
@@ -9401,6 +9757,7 @@ function App(){
     window.__DELREQ.start(user);
     window.__JOBALERT.start(user);     // Admin/ช่าง: เตือนใบแจ้งซ่อมใหม่ + สรุปงานค้างตามรอบเวลา
     window.askNotifyPermission(user);
+    window.__FCM.autoStart(user);      // ต่ออายุ token ของ push ให้อัตโนมัติ (เครื่องที่เคยเปิดไว้)
   },[user && user.id, user && user.role]);
 
   // แก้ชื่อ/Username ของตัวเองที่หน้าตั้งค่า แล้วให้ทั้งแอปเห็นค่าใหม่ทันที ไม่ต้องล็อกอินใหม่

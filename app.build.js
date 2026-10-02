@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 626) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 627) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -1451,7 +1451,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1630) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1631) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2217,7 +2217,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2057) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2058) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2372,7 +2372,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2187) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2188) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2481,6 +2481,7 @@ window.__JOBALERT = {
   },
   _checkDigest() {
     if (!this.user) return;
+    if (window.__FCM && window.__FCM.wanted()) return;
     const now = new Date();
     const key = `${JOBALERT_SEEN}:${this.user.id}:${this._dayKey(now)}`;
     let done = [];
@@ -2520,6 +2521,7 @@ window.__JOBALERT = {
   },
   _push(title, body, tag) {
     try {
+      if (window.__FCM && window.__FCM.wanted()) return;
       if (!("Notification" in window) || Notification.permission !== "granted") return;
       new Notification(title, {
         body,
@@ -2552,7 +2554,188 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2330) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2333) ---- */
+
+
+/* ---- block 6 (ต้นฉบับบรรทัด 2336) ---- */
+const FCM_VAPID_KEY = "";
+const FCM_ON_KEY = "rms_fcm_on";
+window.__FCM = {
+  _msg: null,
+  _vapid: null,
+  _listening: false,
+  supported() {
+    try {
+      return !!(window.firebase && firebase.messaging && "serviceWorker" in navigator && "Notification" in window && "PushManager" in window);
+    } catch (e) {
+      return false;
+    }
+  },
+  wanted() {
+    try {
+      return localStorage.getItem(FCM_ON_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  },
+  messaging() {
+    if (this._msg) return this._msg;
+    this._msg = firebase.messaging();
+    return this._msg;
+  },
+  async getVapid() {
+    if (this._vapid !== null) return this._vapid;
+    if (FCM_VAPID_KEY) {
+      this._vapid = FCM_VAPID_KEY;
+      return this._vapid;
+    }
+    try {
+      const snap = await firebase.database().ref("/config/fcmVapidKey").get();
+      this._vapid = String(snap.val() || "").trim();
+    } catch (e) {
+      this._vapid = "";
+    }
+    return this._vapid;
+  },
+  _key(token) {
+    return String(token).replace(/[.#$\[\]\/]/g, "_");
+  },
+  async status() {
+    if (!this.supported()) return {
+      code: "unsupported",
+      text: "อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือนแบบ push"
+    };
+    if (!(await this.getVapid())) return {
+      code: "no-vapid",
+      text: "ยังไม่ได้ตั้งค่า VAPID key ของ Firebase (ดู backend/FCM-SETUP.md)"
+    };
+    if (Notification.permission === "denied") return {
+      code: "denied",
+      text: "เบราว์เซอร์ถูกตั้งให้บล็อกการแจ้งเตือนไว้ ต้องไปปลดที่การตั้งค่าเบราว์เซอร์"
+    };
+    if (this.wanted() && Notification.permission === "granted") return {
+      code: "on",
+      text: "เปิดอยู่ — ปิดแอปแล้วยังได้รับแจ้งเตือน"
+    };
+    return {
+      code: "off",
+      text: "ยังไม่ได้เปิดบนเครื่องนี้"
+    };
+  },
+  async register(user, {
+    ask = false
+  } = {}) {
+    if (!this.supported() || !user) return {
+      ok: false,
+      reason: "unsupported"
+    };
+    const vapid = await this.getVapid();
+    if (!vapid) return {
+      ok: false,
+      reason: "no-vapid"
+    };
+    if (Notification.permission === "denied") return {
+      ok: false,
+      reason: "denied"
+    };
+    if (Notification.permission !== "granted") {
+      if (!ask) return {
+        ok: false,
+        reason: "not-asked"
+      };
+      let p = "denied";
+      try {
+        p = await Notification.requestPermission();
+      } catch (e) {}
+      if (p !== "granted") return {
+        ok: false,
+        reason: "denied"
+      };
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const token = await this.messaging().getToken({
+        vapidKey: vapid,
+        serviceWorkerRegistration: reg
+      });
+      if (!token) return {
+        ok: false,
+        reason: "no-token"
+      };
+      await firebase.database().ref("/fcmTokens/" + user.id + "/" + this._key(token)).set({
+        token,
+        userId: user.id,
+        name: user.name || "",
+        role: user.role || "",
+        updatedAt: new Date().toISOString(),
+        ua: String(navigator.userAgent || "").slice(0, 180)
+      });
+      try {
+        localStorage.setItem(FCM_ON_KEY, "1");
+      } catch (e) {}
+      this.listen();
+      return {
+        ok: true,
+        token
+      };
+    } catch (err) {
+      console.warn("[fcm] ขอ token ไม่สำเร็จ:", err && err.message);
+      return {
+        ok: false,
+        reason: "error",
+        error: err
+      };
+    }
+  },
+  async unregister(user) {
+    try {
+      const vapid = await this.getVapid();
+      const reg = await navigator.serviceWorker.ready;
+      const token = await this.messaging().getToken({
+        vapidKey: vapid,
+        serviceWorkerRegistration: reg
+      });
+      if (token && user) await firebase.database().ref("/fcmTokens/" + user.id + "/" + this._key(token)).remove();
+      await this.messaging().deleteToken();
+    } catch (e) {}
+    try {
+      localStorage.removeItem(FCM_ON_KEY);
+    } catch (e) {}
+    return {
+      ok: true
+    };
+  },
+  listen() {
+    if (this._listening || !this.supported()) return;
+    try {
+      this.messaging().onMessage(payload => {
+        const d = payload && payload.data || {};
+        if (window.Swal) Swal.fire({
+          toast: true,
+          position: "top-end",
+          icon: d.kind === "digest" ? "warning" : "info",
+          title: d.title || "แจ้งเตือน",
+          text: d.body || "",
+          showConfirmButton: false,
+          timer: 8000,
+          timerProgressBar: true
+        });
+      });
+      this._listening = true;
+    } catch (e) {}
+  },
+  async autoStart(user) {
+    if (!this.supported() || !user) return;
+    if (!(window.NOTIFY_ROLES || []).includes(user.role)) return;
+    if (Notification.permission === "granted" || this.wanted()) {
+      await this.register(user, {
+        ask: false
+      });
+    }
+  }
+};
+
+/* ---- block 7 (ต้นฉบับบรรทัด 2463) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3053,7 +3236,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2623) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2756) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -3543,7 +3726,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2859) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 2992) ---- */
 const {
   useState,
   useEffect,
@@ -3792,7 +3975,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2962) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3095) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4020,7 +4203,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3145) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3278) ---- */
 function ChangePasswordModal({
   user,
   onClose
@@ -4126,6 +4309,65 @@ function ChangePasswordModal({
       });
     } finally {
       setSavingProfile(false);
+    }
+  };
+  const [pushState, setPushState] = React.useState(null);
+  const [pushBusy, setPushBusy] = React.useState(false);
+  const refreshPush = React.useCallback(() => {
+    window.__FCM.status().then(setPushState).catch(() => setPushState({
+      code: "error",
+      text: "ตรวจสอบสถานะไม่สำเร็จ"
+    }));
+  }, []);
+  React.useEffect(() => {
+    refreshPush();
+  }, [refreshPush]);
+  const togglePush = async () => {
+    setPushBusy(true);
+    try {
+      if (pushState && pushState.code === "on") {
+        await window.__FCM.unregister(user);
+        Swal.fire({
+          icon: "info",
+          title: "ปิดการแจ้งเตือนบนเครื่องนี้แล้ว",
+          timer: 1600,
+          showConfirmButton: false,
+          toast: true,
+          position: "top-end"
+        });
+      } else {
+        const res = await window.__FCM.register(user, {
+          ask: true
+        });
+        if (res.ok) Swal.fire({
+          icon: "success",
+          title: "เปิดการแจ้งเตือนแล้ว",
+          text: "เครื่องนี้จะได้รับแจ้งเตือนแม้ปิดแอป",
+          timer: 2200,
+          showConfirmButton: false,
+          toast: true,
+          position: "top-end"
+        });else if (res.reason === "denied") Swal.fire({
+          icon: "warning",
+          title: "เบราว์เซอร์บล็อกการแจ้งเตือนไว้",
+          text: "เปิดสิทธิ์แจ้งเตือนของเว็บนี้ในการตั้งค่าเบราว์เซอร์ก่อน แล้วลองใหม่"
+        });else if (res.reason === "no-vapid") Swal.fire({
+          icon: "info",
+          title: "ยังตั้งค่าระบบแจ้งเตือนไม่เสร็จ",
+          text: "ผู้ดูแลระบบต้องใส่ VAPID key ของ Firebase ก่อน (ดู backend/FCM-SETUP.md)"
+        });else if (res.reason === "unsupported") Swal.fire({
+          icon: "info",
+          title: "อุปกรณ์นี้ไม่รองรับ",
+          text: "iPhone/iPad ต้องติดตั้งเป็นแอป (Add to Home Screen) ก่อนจึงจะรับแจ้งเตือนได้"
+        });else Swal.fire({
+          icon: "error",
+          title: "เปิดไม่สำเร็จ",
+          text: res.error && res.error.message || "ลองใหม่อีกครั้ง"
+        });
+      }
+    } finally {
+      setPushBusy(false);
+      refreshPush();
     }
   };
   const submit = async () => {
@@ -4317,6 +4559,75 @@ function ChangePasswordModal({
   }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
     className: "fa-solid fa-floppy-disk"
   }), " ", profileDirty ? "บันทึกข้อมูลผู้ใช้งาน" : "ยังไม่มีการแก้ไข")))), React.createElement("div", {
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: "12px 14px"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 13.5,
+      marginBottom: 4
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-bell",
+    style: {
+      color: "var(--primary)",
+      marginRight: 7
+    }
+  }), "\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E1A\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49"), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 10,
+      lineHeight: 1.6
+    }
+  }, "\u0E07\u0E32\u0E19\u0E0B\u0E48\u0E2D\u0E21\u0E43\u0E2B\u0E21\u0E48\u0E40\u0E02\u0E49\u0E32\u0E23\u0E30\u0E1A\u0E1A \u0E41\u0E25\u0E30\u0E2A\u0E23\u0E38\u0E1B\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07 08:00 / 11:00 / 13:00 / 17:00 \u2014 \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E08\u0E30\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E41\u0E21\u0E49\u0E1B\u0E34\u0E14\u0E41\u0E2D\u0E1B\u0E44\u0E1B\u0E41\u0E25\u0E49\u0E27"), React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("span", {
+    className: "badge",
+    style: !pushState ? {
+      background: "var(--line-soft)",
+      color: "var(--muted)"
+    } : pushState.code === "on" ? {
+      background: "#DCFCE7",
+      color: "#166534"
+    } : pushState.code === "denied" || pushState.code === "unsupported" ? {
+      background: "#FEE2E2",
+      color: "#B91C1C"
+    } : {
+      background: "#FEF3C7",
+      color: "#92400E"
+    }
+  }, pushState ? pushState.code === "on" ? "เปิดอยู่" : "ปิดอยู่" : "กำลังตรวจสอบ..."), React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      flex: 1,
+      minWidth: 150
+    }
+  }, pushState ? pushState.text : ""), pushState && pushState.code !== "unsupported" && pushState.code !== "no-vapid" && React.createElement("button", {
+    className: `btn btn-sm ${pushState.code === "on" ? "btn-ghost" : "btn-primary"}`,
+    onClick: togglePush,
+    disabled: pushBusy
+  }, pushBusy ? React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 13,
+      height: 13,
+      borderWidth: 2
+    }
+  }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19...") : pushState.code === "on" ? React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-bell-slash"
+  }), " \u0E1B\u0E34\u0E14\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19") : React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-bell"
+  }), " \u0E40\u0E1B\u0E34\u0E14\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19")))), React.createElement("div", {
     style: {
       fontWeight: 500,
       fontSize: 13.5,
@@ -4688,7 +4999,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3378) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3566) ---- */
 function Projects({
   user
 }) {
@@ -5325,7 +5636,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3631) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 3819) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -5722,7 +6033,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3877) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4065) ---- */
 function Dashboard({
   user,
   goTo
@@ -7106,7 +7417,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4454) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 4642) ---- */
 function Repairs({
   user
 }) {
@@ -7604,8 +7915,9 @@ function MachineQuickView({
   code,
   onClose
 }) {
+  const [jobLimit, setJobLimit] = React.useState(12);
   const m = (window.__DATA.machines || []).find(x => x.code === code) || null;
-  const jobs = (window.__DATA.repairs || []).filter(r => r.machineCode === code);
+  const jobs = React.useMemo(() => (window.__DATA.repairs || []).filter(r => r.machineCode === code).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)), [code]);
   const openJobs = jobs.filter(r => r.status !== "done" && r.status !== "cancel");
   const cost = jobs.reduce((s, r) => s + (Number(r.cost) || 0), 0);
   const statusColor = {
@@ -7788,6 +8100,89 @@ function MachineQuickView({
       whiteSpace: "pre-wrap"
     }
   }, m.note)), React.createElement("div", {
+    style: {
+      marginTop: 18,
+      borderTop: "1px dashed var(--line)",
+      paddingTop: 14
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 14,
+      marginBottom: 10
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-clock-rotate-left",
+    style: {
+      color: "var(--primary)",
+      marginRight: 7
+    }
+  }), "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 (", jobs.length.toLocaleString("th-TH"), ")"), jobs.length === 0 ? React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13,
+      padding: "10px 0"
+    }
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E02\u0E2D\u0E07\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E19\u0E35\u0E49") : React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 8
+    }
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E41\u0E08\u0E49\u0E07"), React.createElement("th", null, "\u0E2D\u0E32\u0E01\u0E32\u0E23/\u0E1B\u0E31\u0E0D\u0E2B\u0E32"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E1C\u0E39\u0E49\u0E41\u0E08\u0E49\u0E07"), React.createElement("th", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E04\u0E48\u0E32\u0E43\u0E0A\u0E49\u0E08\u0E48\u0E32\u0E22"))), React.createElement("tbody", null, jobs.slice(0, jobLimit).map(r => React.createElement("tr", {
+    key: r.id
+  }, React.createElement("td", null, React.createElement("span", {
+    className: "ticket-id"
+  }, r.running || r.id)), React.createElement("td", {
+    style: {
+      color: "var(--muted)",
+      whiteSpace: "nowrap"
+    }
+  }, window.fmtDateTH(r.createdAt)), React.createElement("td", {
+    style: {
+      fontSize: 13
+    }
+  }, React.createElement("div", {
+    className: "cell-title"
+  }, React.createElement(ProblemLines, {
+    title: r.title,
+    max: 3
+  }))), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      fontSize: 13,
+      color: "var(--muted)"
+    }
+  }, r.reporterName || "—"), React.createElement("td", null, React.createElement(Badge, {
+    status: r.status
+  })), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      whiteSpace: "nowrap",
+      fontFamily: "JetBrains Mono,monospace",
+      fontSize: 12
+    }
+  }, r.cost ? "฿" + Number(r.cost).toLocaleString("th-TH") : React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u2014"))))))), jobs.length > jobLimit && React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 10
+    }
+  }, React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => setJobLimit(x => x + 20)
+  }, React.createElement("i", {
+    className: "fa-solid fa-chevron-down"
+  }), " \u0E41\u0E2A\u0E14\u0E07\u0E40\u0E1E\u0E34\u0E48\u0E21 (\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E2D\u0E35\u0E01 ", (jobs.length - jobLimit).toLocaleString("th-TH"), " \u0E43\u0E1A)")))), React.createElement("div", {
     style: {
       marginTop: 14,
       fontSize: 12,
@@ -9462,7 +9857,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 5298) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5534) ---- */
 function Users({
   user
 }) {
@@ -10000,7 +10395,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5474) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 5710) ---- */
 function Categories({
   user
 }) {
@@ -10263,7 +10658,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5562) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 5798) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -13113,7 +13508,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6468) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 6704) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -14651,7 +15046,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6993) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 7229) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -15750,7 +16145,38 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7300) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 7536) ---- */
+const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
+const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
+function summarizeAssetsByName(list) {
+  const map = new Map();
+  (list || []).forEach(r => {
+    const name = String(r.name || "").trim() || ASSET_NO_NAME;
+    if (!map.has(name)) map.set(name, {
+      name,
+      count: 0,
+      qty: 0,
+      byUnit: {},
+      bySite: {},
+      byOwner: {},
+      machines: 0
+    });
+    const g = map.get(name);
+    const n = Number(r.quantity) || 0;
+    const unit = String(r.unit || "").trim();
+    g.count++;
+    g.qty += n;
+    g.byUnit[unit] = (g.byUnit[unit] || 0) + n;
+    const s = String(r.site || "").trim() || "ไม่ระบุสถานที่";
+    g.bySite[s] = (g.bySite[s] || 0) + n;
+    const o = String(r.ownership || "").trim() || "ไม่ระบุ";
+    g.byOwner[o] = (g.byOwner[o] || 0) + n;
+    if (r.__src === "machine") g.machines++;
+  });
+  return [...map.values()].sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name, "th", {
+    numeric: true
+  }));
+}
 async function exportAssetsExcel(list) {
   if (!list || list.length === 0) {
     Swal.fire({
@@ -15797,6 +16223,21 @@ async function exportAssetsExcel(list) {
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "ทะเบียนทรัพย์สิน");
+    const sum = summarizeAssetsByName(list).map((g, i) => ({
+      "ลำดับ": i + 1,
+      "ชื่อทรัพย์สิน": g.name,
+      "จำนวนรายการ": g.count,
+      "จำนวนรวม": g.qty,
+      "จำนวนรวม (แยกหน่วย)": fmtQtyUnits(g.byUnit),
+      "จำนวนสถานที่": Object.keys(g.bySite).length,
+      "แยกตามสถานที่": Object.entries(g.bySite).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s}: ${n}`).join(", "),
+      "แยกตามกรรมสิทธิ์": Object.entries(g.byOwner).sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s}: ${n}`).join(", ")
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(sum);
+    ws2["!cols"] = Object.keys(sum[0]).map(k => ({
+      wch: Math.min(60, Math.max(k.length + 4, ...sum.map(r => String(r[k] ?? "").length + 2)))
+    }));
+    XLSX.utils.book_append_sheet(wb, ws2, "สรุปตามชื่อทรัพย์สิน");
     const d = new Date();
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
     XLSX.writeFile(wb, `ทะเบียนทรัพย์สิน_${stamp}.xlsx`);
@@ -15826,6 +16267,8 @@ function AssetRegistry({
   const [site, setSite] = React.useState("");
   const [subSite, setSubSite] = React.useState("");
   const [owner, setOwner] = React.useState("");
+  const [nameF, setNameF] = React.useState("");
+  const [view, setView] = React.useState("list");
   const [groupBy, setGroupBy] = React.useState("site");
   const [collapsed, setCollapsed] = React.useState({});
   const [edit, setEdit] = React.useState(null);
@@ -15889,17 +16332,29 @@ function AssetRegistry({
       numeric: true
     }));
   }, [scoped, site]);
+  const names = React.useMemo(() => {
+    const pool = scoped.filter(r => (!site || r.site === site) && (!subSite || (r.subSite || "") === subSite));
+    return [...new Set(pool.map(r => String(r.name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th", {
+      numeric: true
+    }));
+  }, [scoped, site, subSite]);
   const filtered = React.useMemo(() => {
     const kw = q.trim().toLowerCase();
     return scoped.filter(r => {
       if (site && r.site !== site) return false;
       if (subSite && (r.subSite || "") !== subSite) return false;
       if (owner && r.ownership !== owner) return false;
+      if (nameF && String(r.name || "").trim() !== nameF) return false;
       if (!kw) return true;
       return [r.assetCode, r.name, r.brand, r.model, r.serial, r.site, r.subSite, r.holder, r.note].some(v => String(v || "").toLowerCase().includes(kw));
     });
-  }, [scoped, q, site, subSite, owner]);
+  }, [scoped, q, site, subSite, owner, nameF]);
   const totalQty = React.useMemo(() => filtered.reduce((s, r) => s + (Number(r.quantity) || 0), 0), [filtered]);
+  const nameSummary = React.useMemo(() => summarizeAssetsByName(filtered), [filtered]);
+  const openName = n => {
+    setNameF(n === ASSET_NO_NAME ? "" : n);
+    setView("list");
+  };
   const GROUP_META = {
     site: {
       label: "สถานที่ (โครงการ)",
@@ -16222,6 +16677,18 @@ function AssetRegistry({
     key: o,
     value: o
   }, o))), React.createElement("select", {
+    value: nameF,
+    onChange: e => setNameF(e.target.value),
+    title: "\u0E41\u0E22\u0E01\u0E15\u0E32\u0E21\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19",
+    style: {
+      maxWidth: 220
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19 (", names.length.toLocaleString("th-TH"), ")"), (nameF && !names.includes(nameF) ? [nameF].concat(names) : names).map(n => React.createElement("option", {
+    key: n,
+    value: n
+  }, n))), React.createElement("select", {
     value: src,
     onChange: e => setSrc(e.target.value),
     title: "\u0E41\u0E2B\u0E25\u0E48\u0E07\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E35\u0E48\u0E41\u0E2A\u0E14\u0E07"
@@ -16231,7 +16698,7 @@ function AssetRegistry({
     value: "asset"
   }, "\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"), React.createElement("option", {
     value: "machine"
-  }, "\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("select", {
+  }, "\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), view === "list" && React.createElement("select", {
     value: groupBy,
     onChange: e => setGroupBy(e.target.value),
     title: "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"
@@ -16282,6 +16749,158 @@ function AssetRegistry({
   }, React.createElement("i", {
     className: "fa-solid fa-plus"
   }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19")), React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap",
+      padding: "0 16px 12px"
+    }
+  }, React.createElement("div", {
+    className: "seg",
+    style: {
+      display: "inline-flex",
+      background: "var(--bg)",
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: 3
+    }
+  }, [{
+    k: "list",
+    l: "รายการทรัพย์สิน",
+    i: "fa-list"
+  }, {
+    k: "summary",
+    l: "สรุปตามชื่อทรัพย์สิน",
+    i: "fa-chart-simple"
+  }].map(t => React.createElement("button", {
+    key: t.k,
+    onClick: () => setView(t.k),
+    style: {
+      padding: "7px 14px",
+      borderRadius: 7,
+      border: "none",
+      fontSize: 13,
+      cursor: "pointer",
+      fontFamily: "Kanit",
+      background: view === t.k ? "var(--primary)" : "transparent",
+      color: view === t.k ? "#fff" : "var(--muted)"
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${t.i}`
+  }), " ", t.l))), nameF && React.createElement("span", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "4px 10px",
+      borderRadius: 999,
+      background: "#DBEAFE",
+      color: "#1E40AF",
+      fontSize: 12.5,
+      fontWeight: 500
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-tag"
+  }), " ", nameF, React.createElement("button", {
+    onClick: () => setNameF(""),
+    title: "\u0E25\u0E49\u0E32\u0E07\u0E15\u0E31\u0E27\u0E01\u0E23\u0E2D\u0E07\u0E0A\u0E37\u0E48\u0E2D",
+    style: {
+      border: "none",
+      background: "transparent",
+      color: "inherit",
+      cursor: "pointer",
+      padding: 0
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark"
+  }))), view === "summary" && React.createElement("span", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13
+    }
+  }, nameSummary.length.toLocaleString("th-TH"), " \u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19")), view === "summary" && React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E27\u0E21"), React.createElement("th", null, "\u0E41\u0E22\u0E01\u0E15\u0E32\u0E21\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48 (\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23)"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E41\u0E22\u0E01\u0E15\u0E32\u0E21\u0E01\u0E23\u0E23\u0E21\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C"), React.createElement("th", null))), React.createElement("tbody", null, nameSummary.map(g => React.createElement("tr", {
+    key: g.name
+  }, React.createElement("td", null, React.createElement("div", {
+    className: "cell-title"
+  }, g.name), g.machines > 0 && React.createElement("div", {
+    style: {
+      marginTop: 3,
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "1px 7px",
+      borderRadius: 999,
+      background: "#EDE9FE",
+      color: "#6D28D9",
+      fontSize: 10.5,
+      fontWeight: 600
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-industry"
+  }), " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 ", g.machines)), React.createElement("td", {
+    style: {
+      whiteSpace: "nowrap"
+    }
+  }, g.count.toLocaleString("th-TH")), React.createElement("td", {
+    style: {
+      whiteSpace: "nowrap",
+      fontWeight: 600
+    }
+  }, fmtQtyUnits(g.byUnit)), React.createElement("td", {
+    style: {
+      fontSize: 12.5
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      flexWrap: "wrap"
+    }
+  }, Object.entries(g.bySite).sort((a, b) => b[1] - a[1]).map(([s, n]) => React.createElement("span", {
+    key: s,
+    style: {
+      padding: "2px 8px",
+      borderRadius: 999,
+      background: "var(--bg)",
+      border: "1px solid var(--line)",
+      whiteSpace: "nowrap"
+    }
+  }, s, " ", React.createElement("b", null, n.toLocaleString("th-TH")))))), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      fontSize: 12.5
+    }
+  }, Object.entries(g.byOwner).sort((a, b) => b[1] - a[1]).map(([o, n]) => React.createElement("div", {
+    key: o
+  }, o, ": ", React.createElement("b", null, n.toLocaleString("th-TH"))))), React.createElement("td", null, g.name !== ASSET_NO_NAME && React.createElement("button", {
+    className: "ia",
+    title: "\u0E14\u0E39\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E02\u0E2D\u0E07\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E19\u0E35\u0E49",
+    onClick: () => openName(g.name)
+  }, React.createElement("i", {
+    className: "fa-solid fa-arrow-right"
+  }))))), nameSummary.length > 0 && React.createElement("tr", {
+    style: {
+      background: "var(--bg)",
+      fontWeight: 600
+    }
+  }, React.createElement("td", null, "\u0E23\u0E27\u0E21\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"), React.createElement("td", null, filtered.length.toLocaleString("th-TH")), React.createElement("td", {
+    colSpan: 4
+  }, totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22")), nameSummary.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: 6
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-boxes-stacked"
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"), React.createElement("div", null, "\u0E25\u0E2D\u0E07\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E40\u0E07\u0E37\u0E48\u0E2D\u0E19\u0E44\u0E02\u0E01\u0E32\u0E23\u0E04\u0E49\u0E19\u0E2B\u0E32"))))))), view === "list" && React.createElement("div", {
     className: "table-wrap"
   }, React.createElement("table", {
     className: "data"
@@ -17996,7 +18615,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8389) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 8745) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -18469,7 +19088,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8724) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 9080) ---- */
 function Permissions({
   user
 }) {
@@ -19087,7 +19706,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 9076) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 9432) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -19781,6 +20400,7 @@ function App() {
     window.__DELREQ.start(user);
     window.__JOBALERT.start(user);
     window.askNotifyPermission(user);
+    window.__FCM.autoStart(user);
   }, [user && user.id, user && user.role]);
   React.useEffect(() => {
     if (!user) return;

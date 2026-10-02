@@ -6,7 +6,52 @@
  *
  * เวลาแก้ไฟล์นี้ ให้เปลี่ยนเลข CACHE ด้วย เพื่อล้างแคชเก่าทิ้ง
  */
-const CACHE = "rms-v1";
+const CACHE = "rms-v2";
+
+/* ── แจ้งเตือนแบบ push (Firebase Cloud Messaging) ─────────────────────────
+ * รวมไว้ใน service worker ตัวเดียวกัน ไม่แยกเป็น firebase-messaging-sw.js
+ * เพราะ scope ชนกัน (ตัวหลังจะไปแทนที่ตัวนี้ แล้วแคชออฟไลน์จะหาย)
+ * โหลดไลบรารีไม่ได้ (ออฟไลน์/บล็อก) ก็ข้ามไป ส่วนแคชยังทำงานตามปกติ
+ * ────────────────────────────────────────────────────────────────────── */
+try {
+  importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js");
+  importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js");
+  firebase.initializeApp({
+    apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
+    authDomain: "uesr-panamanee.firebaseapp.com",
+    databaseURL: "https://uesr-panamanee-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "uesr-panamanee",
+    storageBucket: "uesr-panamanee.firebasestorage.app",
+    messagingSenderId: "845019270186",
+    appId: "1:845019270186:web:a7c33f347831b422e64753",
+  });
+  // ฝั่งเซิร์ฟเวอร์ส่งมาเป็น data ล้วน เบราว์เซอร์จึงไม่เด้งให้เอง ต้องโชว์ตรงนี้
+  firebase.messaging().onBackgroundMessage(function (payload) {
+    var d = (payload && payload.data) || {};
+    self.registration.showNotification(d.title || "ระบบแจ้งซ่อม", {
+      body: d.body || "",
+      icon: "icon-192.png",
+      badge: "icon-192.png",
+      tag: d.tag || "rms-push",
+      renotify: true,
+      data: { url: d.url || "./" },
+    });
+  });
+} catch (e) {
+  /* ไม่มีเน็ตตอนติดตั้ง SW หรือเบราว์เซอร์ไม่รองรับ — ข้ามส่วนแจ้งเตือนไป */
+}
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
+  );
+});
+
 const ASSETS = [
   "./",
   "./index.html",
