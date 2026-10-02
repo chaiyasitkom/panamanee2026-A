@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 627) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 628) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -280,6 +280,13 @@ const _DELETE_OPS = {
       await _assetDb.ref('/deliveryOrders/' + p.key).remove();
     }
   },
+  deleteStockItem: {
+    label: 'รายการสต๊อกหน้างาน',
+    key: 'key',
+    exec: async p => {
+      await _db.ref('/stockItems/' + p.key).remove();
+    }
+  },
   deleteTransferEntry: {
     label: 'ประวัติการย้ายเครื่องจักร',
     key: 'machineId',
@@ -360,6 +367,7 @@ async function api(action, payload = {}) {
     case 'deleteWithdrawal':
     case 'deleteAssetRegistry':
     case 'deleteDeliveryOrder':
+    case 'deleteStockItem':
     case 'deleteTransferEntry':
       {
         const by = payload.by || {};
@@ -684,6 +692,222 @@ async function api(action, payload = {}) {
           key: cleanKey
         };
       }
+    case 'loadStock':
+      {
+        const [iSnap, mSnap] = await Promise.all([_db.ref('/stockItems').get(), _db.ref('/stockMoves').limitToLast(2000).get()]);
+        const items = Object.entries(iSnap.val() || {}).map(([key, v]) => ({
+          ...v,
+          key
+        }));
+        const moves = Object.entries(mSnap.val() || {}).map(([key, v]) => ({
+          ...v,
+          key
+        }));
+        return {
+          items,
+          moves
+        };
+      }
+    case 'saveStockItem':
+      {
+        const {
+          item,
+          by,
+          byId
+        } = payload;
+        const now = new Date().toISOString();
+        if (item.key) {
+          const {
+            key,
+            qty,
+            ...rest
+          } = item;
+          await _db.ref('/stockItems/' + key).update({
+            ...rest,
+            updatedAt: now
+          });
+          const snap = await _db.ref('/stockItems/' + key).get();
+          return {
+            item: {
+              ...snap.val(),
+              key
+            },
+            move: null
+          };
+        }
+        const ref = _db.ref('/stockItems').push();
+        const qty0 = Math.max(0, Number(item.qty) || 0);
+        const rec = {
+          ...item,
+          qty: qty0,
+          createdAt: now,
+          updatedAt: now
+        };
+        delete rec.key;
+        await ref.set(rec);
+        let move = null;
+        if (qty0 > 0) {
+          const mRef = _db.ref('/stockMoves').push();
+          move = {
+            itemKey: ref.key,
+            itemName: rec.name || '',
+            unit: rec.unit || '',
+            project: rec.project || '',
+            subSite: rec.subSite || '',
+            type: 'in',
+            qty: qty0,
+            balance: qty0,
+            date: now.slice(0, 10),
+            ref: 'ยอดยกมา',
+            note: 'ยอดตั้งต้นตอนเพิ่มรายการ',
+            by: by || '',
+            byId: byId || '',
+            createdAt: now
+          };
+          await mRef.set(move);
+          move = {
+            ...move,
+            key: mRef.key
+          };
+        }
+        return {
+          item: {
+            ...rec,
+            key: ref.key
+          },
+          move
+        };
+      }
+    case 'receiveToStock':
+      {
+        const {
+          project,
+          subSite,
+          name,
+          unit,
+          code,
+          category,
+          qty,
+          date,
+          ref: docRef,
+          receiver,
+          note,
+          by,
+          byId
+        } = payload;
+        if (!project) throw new Error('ใบเบิกไม่ได้ระบุโครงการ');
+        const nm = String(name || '').trim();
+        if (!nm) throw new Error('ไม่มีชื่อรายการ');
+        const all = (await _db.ref('/stockItems').get()).val() || {};
+        const norm = v => String(v || '').trim().toLowerCase();
+        let key = Object.keys(all).find(k => all[k] && all[k].project === project && norm(all[k].name) === norm(nm) && (!unit || !all[k].unit || norm(all[k].unit) === norm(unit)));
+        let createdItem = null;
+        if (!key) {
+          const r = await api('saveStockItem', {
+            item: {
+              project,
+              subSite: subSite || '',
+              name: nm,
+              unit: unit || '',
+              code: code || '',
+              category: category || '',
+              minQty: 0,
+              qty: 0,
+              location: '',
+              note: 'สร้างอัตโนมัติจากใบเบิก ' + (docRef || '')
+            },
+            by,
+            byId
+          });
+          key = r.item.key;
+          createdItem = r.item;
+        }
+        const mv = await api('stockMove', {
+          itemKey: key,
+          type: 'in',
+          qty,
+          date,
+          ref: docRef,
+          receiver,
+          purpose: '',
+          note,
+          by,
+          byId
+        });
+        return {
+          itemKey: key,
+          createdItem,
+          move: mv.move,
+          balance: mv.balance
+        };
+      }
+    case 'stockMove':
+      {
+        const {
+          itemKey,
+          type,
+          qty,
+          date,
+          ref: docRef,
+          receiver,
+          purpose,
+          note,
+          by,
+          byId
+        } = payload;
+        const n = Number(qty) || 0;
+        if (!itemKey) throw new Error('ไม่พบรายการสินค้า');
+        if (type !== 'adjust' && n <= 0) throw new Error('จำนวนต้องมากกว่า 0');
+        const itemRef = _db.ref('/stockItems/' + itemKey);
+        const head = (await itemRef.get()).val();
+        if (!head) throw new Error('ไม่พบรายการสินค้าในคลัง (อาจถูกลบไปแล้ว)');
+        let short = false;
+        const res = await itemRef.child('qty').transaction(cur => {
+          const c = Number(cur) || 0;
+          if (type === 'out') {
+            if (c < n) {
+              short = true;
+              return;
+            }
+            return c - n;
+          }
+          if (type === 'in') return c + n;
+          return Math.max(0, n);
+        });
+        if (!res.committed) throw new Error(short ? `ของไม่พอเบิก: ${head.name || ''} คงเหลือ ${Number(res.snapshot.val()) || 0} ${head.unit || ''}` : 'บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
+        const balance = Number(res.snapshot.val()) || 0;
+        const now = new Date().toISOString();
+        const mRef = _db.ref('/stockMoves').push();
+        const move = {
+          itemKey,
+          itemName: head.name || '',
+          itemCode: head.code || '',
+          unit: head.unit || '',
+          project: head.project || '',
+          subSite: head.subSite || '',
+          type,
+          qty: type === 'adjust' ? balance - (Number(head.qty) || 0) : n,
+          balance,
+          date: date || now.slice(0, 10),
+          ref: docRef || '',
+          receiver: receiver || '',
+          purpose: purpose || '',
+          note: note || '',
+          by: by || '',
+          byId: byId || '',
+          createdAt: now
+        };
+        await Promise.all([mRef.set(move), itemRef.update({
+          updatedAt: now
+        })]);
+        return {
+          move: {
+            ...move,
+            key: mRef.key
+          },
+          balance
+        };
+      }
     case 'createProject':
       {
         const {
@@ -732,6 +956,35 @@ async function api(action, payload = {}) {
         await _db.ref('/users/' + id).update(update);
         return {
           updated: true
+        };
+      }
+    case 'getSignature':
+      {
+        const snap = await _db.ref('/signatures/' + payload.id).get();
+        const v = snap.val() || {};
+        return {
+          dataUrl: v.dataUrl || ""
+        };
+      }
+    case 'saveSignature':
+      {
+        const {
+          id,
+          dataUrl
+        } = payload;
+        if (!id) throw new Error('ไม่พบผู้ใช้งาน');
+        if (!dataUrl) {
+          await _db.ref('/signatures/' + id).remove();
+          return {
+            removed: true
+          };
+        }
+        await _db.ref('/signatures/' + id).set({
+          dataUrl,
+          updatedAt: new Date().toISOString()
+        });
+        return {
+          saved: true
         };
       }
     case 'getUserPassword':
@@ -1451,7 +1704,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1631) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1737) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1506,11 +1759,10 @@ const ERP_SYSTEMS = [{
 }, {
   id: "consume",
   name: "Consume",
-  desc: "เบิกจ่าย/เช็คสต๊อก · เปิดใช้เฉพาะผู้ดูแลระบบ (Admin)",
+  desc: "เบิกจ่าย/เช็คสต๊อก · สต๊อกหน้างาน",
   icon: "fa-box-open",
   status: "ready",
-  startPage: "withdrawals",
-  roles: ["Admin"]
+  startPage: "site-stock"
 }, {
   id: "manage",
   name: "ระบบการจัดการ",
@@ -1695,6 +1947,22 @@ window.APP_FEATURES = [{
   icon: "fa-file-invoice",
   roles: ["Admin"]
 }, {
+  key: "withdrawal-pending",
+  sys: "consume",
+  group: "Consume",
+  label: "รายการรอจัดซื้อ/จัดหา",
+  icon: "fa-cart-shopping",
+  roles: ["Admin"],
+  addedLater: true
+}, {
+  key: "site-stock",
+  sys: "consume",
+  group: "Consume",
+  label: "สต๊อก/เบิกจ่ายหน้างาน",
+  icon: "fa-warehouse",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician"],
+  addedLater: true
+}, {
   key: "projects",
   sys: "manage",
   group: "ระบบการจัดการ",
@@ -1733,15 +2001,21 @@ window.APP_FEATURES = [{
 window.SYSTEM_PAGES = {
   repairs: ["dashboard", "repairs", "spare-parts", "machines", "r-dashboard", "r-new", "r-mine"],
   assets: ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history"],
-  consume: ["withdrawals"],
+  consume: ["withdrawals", "withdrawal-pending", "site-stock"],
   manage: ["projects", "users", "categories", "login-logs", "permissions"]
 };
 window.defaultPagesFor = role => window.APP_FEATURES.filter(f => (f.roles || []).includes(role)).map(f => f.key);
+window.roleAllowList = (role, byRole) => {
+  if (!(byRole && byRole.set)) return window.defaultPagesFor(role);
+  const known = new Set(Array.isArray(byRole.known) ? byRole.known : window.APP_FEATURES.filter(f => !f.addedLater).map(f => f.key));
+  const extra = window.APP_FEATURES.filter(f => !known.has(f.key) && (f.roles || []).includes(role)).map(f => f.key);
+  return [...new Set([...(byRole.allow || []), ...extra])];
+};
 window.allowedPagesFor = user => {
   if (!user) return new Set();
   const cfg = window.__DATA.permissions || {};
   const byRole = (cfg.roles || {})[user.role];
-  const base = byRole && byRole.set ? byRole.allow || [] : window.defaultPagesFor(user.role);
+  const base = window.roleAllowList(user.role, byRole);
   const set = new Set(base);
   const mine = (cfg.users || {})[user.id];
   if (mine) {
@@ -2217,7 +2491,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2058) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2178) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2372,7 +2646,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2188) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2308) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2554,10 +2828,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2333) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2453) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2336) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2456) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -2735,7 +3009,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2463) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2583) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -2766,6 +3040,11 @@ window.applyDeleteLocally = function (action, payload = {}) {
     if (Array.isArray(D.assetRegistry)) D.assetRegistry = byKey(D.assetRegistry);
   } else if (action === "deleteDeliveryOrder") {
     if (Array.isArray(D.deliveryOrders)) D.deliveryOrders = byKey(D.deliveryOrders);
+  } else if (action === "deleteStockItem") {
+    if (D.siteStock) D.siteStock = {
+      ...D.siteStock,
+      items: byKey(D.siteStock.items)
+    };
   } else if (action === "deleteTransferEntry") {
     const m = (D.machines || []).find(x => x.id === payload.machineId);
     if (m) m.transferHistory = (m.transferHistory || []).filter(t => !(String(t.when || "") === String(payload.when || "") && String(t.to || "") === String(payload.to || "")));
@@ -2891,8 +3170,21 @@ window.MACHINE_FIELD_LABELS = {
   driverName: {
     label: "พนักงานขับ / ผู้ควบคุม"
   },
-  drivePhoto: {
-    label: "ลิงก์รูปภาพ"
+  photos: {
+    label: "รูปถ่ายเครื่องจักร",
+    fmt: v => (Array.isArray(v) ? v.filter(Boolean).length : 0) + " รูป"
+  },
+  pmEveryDays: {
+    label: "รอบ PM (วัน)"
+  },
+  pmEveryHours: {
+    label: "รอบ PM (ชั่วโมง)"
+  },
+  lastPmDate: {
+    label: "PM ครั้งล่าสุด"
+  },
+  lastPmHours: {
+    label: "ชั่วโมง ณ PM ล่าสุด"
   },
   driveLink1: {
     label: "ลิงก์เอกสาร (1)"
@@ -2908,6 +3200,107 @@ window.MACHINE_FIELD_LABELS = {
   },
   icon: {
     label: "ไอคอน"
+  }
+};
+window.machinePhotos = function (m) {
+  if (!m) return [];
+  if (Array.isArray(m.photos) && m.photos.filter(Boolean).length) return m.photos.filter(Boolean).slice(0, 3);
+  return m.drivePhoto ? [m.drivePhoto] : [];
+};
+window.PM_SOON_DAYS = 7;
+window.PM_SOON_HOURS = 50;
+window.machinePmStatus = function (m) {
+  const none = {
+    state: "none"
+  };
+  if (!m || m.status === "ส่งคืน") return none;
+  const everyD = Number(m.pmEveryDays) || 0,
+    everyH = Number(m.pmEveryHours) || 0;
+  if (!everyD && !everyH) return none;
+  const out = {
+    state: "ok"
+  };
+  if (everyD) {
+    const base = m.lastPmDate || m.lastService;
+    const b = base ? new Date(base) : null;
+    if (b && !isNaN(b)) {
+      b.setHours(0, 0, 0, 0);
+      const next = new Date(b);
+      next.setDate(next.getDate() + everyD);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      out.nextDate = next;
+      out.daysLeft = Math.round((next - today) / 86400000);
+    } else {
+      out.daysLeft = -1;
+      out.noBase = true;
+    }
+  }
+  if (everyH) {
+    out.nextHours = (Number(m.lastPmHours) || 0) + everyH;
+    out.hoursLeft = out.nextHours - (Number(m.hours) || 0);
+  }
+  const over = out.daysLeft != null && out.daysLeft < 0 || out.hoursLeft != null && out.hoursLeft <= 0;
+  const soon = out.daysLeft != null && out.daysLeft <= window.PM_SOON_DAYS || out.hoursLeft != null && out.hoursLeft <= window.PM_SOON_HOURS;
+  out.state = over ? "overdue" : soon ? "soon" : "ok";
+  const parts = [];
+  if (out.noBase) parts.push("ยังไม่เคยบันทึก PM");else if (out.daysLeft != null) parts.push(out.daysLeft < 0 ? `เลยกำหนด ${-out.daysLeft} วัน` : out.daysLeft === 0 ? "ครบกำหนดวันนี้" : `อีก ${out.daysLeft} วัน`);
+  if (out.hoursLeft != null) parts.push(out.hoursLeft <= 0 ? `เกินรอบ ${Math.abs(out.hoursLeft).toLocaleString("th-TH")} ชม.` : `อีก ${out.hoursLeft.toLocaleString("th-TH")} ชม.`);
+  out.text = parts.join(" · ");
+  return out;
+};
+window.machinesPmDue = function (user) {
+  let list = window.__DATA.machines || [];
+  try {
+    if (user) list = window.filterByUserProjects(user, list, "project");
+  } catch (e) {}
+  const overdue = [],
+    soon = [];
+  list.forEach(m => {
+    const s = window.machinePmStatus(m);
+    if (s.state === "overdue") overdue.push(m);else if (s.state === "soon") soon.push(m);
+  });
+  return {
+    overdue,
+    soon,
+    total: overdue.length + soon.length
+  };
+};
+window.__PMALERT = {
+  ROLES: ["Admin", "Officer", "Engineer", "Technician"],
+  check(user) {
+    try {
+      if (!user || !this.ROLES.includes(user.role)) return;
+      if (window.canAccessPage && !window.canAccessPage(user, "machines")) return;
+      const d = new Date();
+      const key = `rms_pmalert:${user.id}:${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+      if (localStorage.getItem(key)) return;
+      const due = window.machinesPmDue(user);
+      if (!due.total) return;
+      localStorage.setItem(key, "1");
+      const names = due.overdue.concat(due.soon).slice(0, 3).map(m => m.code || m.name).join(", ");
+      const title = `เครื่องจักรต้องทำ PM ${due.total} เครื่อง`;
+      const text = [due.overdue.length ? `เกินกำหนด ${due.overdue.length}` : "", due.soon.length ? `ใกล้ถึง ${due.soon.length}` : ""].filter(Boolean).join(" · ") + (names ? ` — ${names}${due.total > 3 ? " ..." : ""}` : "");
+      if (window.Swal) Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "warning",
+        title,
+        text,
+        showConfirmButton: false,
+        timer: 10000,
+        timerProgressBar: true
+      });
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification(title, {
+            body: text,
+            icon: "logo.png",
+            tag: "rms-pm-due"
+          });
+        } catch (e) {}
+      }
+    } catch (e) {}
   }
 };
 window.ASSET_FIELD_LABELS = {
@@ -3236,7 +3629,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2756) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2959) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -3726,7 +4119,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 2992) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3195) ---- */
 const {
   useState,
   useEffect,
@@ -3975,7 +4368,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3095) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3298) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4203,7 +4596,349 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3278) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3481) ---- */
+function sigCanvasToDataUrl(src, dropWhite) {
+  const w = src.width,
+    h = src.height;
+  const ctx = src.getContext("2d");
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  let minX = w,
+    minY = h,
+    maxX = -1,
+    maxY = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    if (dropWhite && d[i + 3] > 0 && d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114 > 185) d[i + 3] = 0;
+    if (d[i + 3] > 20) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) return "";
+  if (dropWhite) ctx.putImageData(img, 0, 0);
+  const pad = 6;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(w - 1, maxX + pad);
+  maxY = Math.min(h - 1, maxY + pad);
+  const cw = maxX - minX + 1,
+    ch = maxY - minY + 1;
+  const scale = Math.min(1, 600 / cw);
+  const out = document.createElement("canvas");
+  out.width = Math.round(cw * scale);
+  out.height = Math.round(ch * scale);
+  out.getContext("2d").drawImage(src, minX, minY, cw, ch, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
+}
+function SignaturePad({
+  onCancel,
+  onDone
+}) {
+  const ref = React.useRef(null);
+  const drawing = React.useRef(false);
+  const [empty, setEmpty] = React.useState(true);
+  React.useEffect(() => {
+    const c = ref.current;
+    const r = c.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    c.width = Math.round(r.width * dpr);
+    c.height = Math.round(r.height * dpr);
+    const ctx = c.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#0B1F5C";
+  }, []);
+  const pos = e => {
+    const r = ref.current.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  const down = e => {
+    e.preventDefault();
+    ref.current.setPointerCapture(e.pointerId);
+    drawing.current = true;
+    const ctx = ref.current.getContext("2d");
+    const [x, y] = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + 0.1, y + 0.1);
+    ctx.stroke();
+    setEmpty(false);
+  };
+  const move = e => {
+    if (!drawing.current) return;
+    const ctx = ref.current.getContext("2d");
+    const [x, y] = pos(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+  const up = () => {
+    drawing.current = false;
+  };
+  const clear = () => {
+    const c = ref.current;
+    c.getContext("2d").clearRect(0, 0, c.width, c.height);
+    setEmpty(true);
+  };
+  return React.createElement("div", null, React.createElement("canvas", {
+    ref: ref,
+    onPointerDown: down,
+    onPointerMove: move,
+    onPointerUp: up,
+    onPointerCancel: up,
+    style: {
+      width: "100%",
+      height: 160,
+      border: "1.5px dashed #94A3B8",
+      borderRadius: 8,
+      background: "#fff",
+      touchAction: "none",
+      cursor: "crosshair",
+      display: "block"
+    }
+  }), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      margin: "5px 0 8px"
+    }
+  }, "\u0E43\u0E0A\u0E49\u0E19\u0E34\u0E49\u0E27\u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E21\u0E32\u0E2A\u0E4C\u0E40\u0E0B\u0E47\u0E19\u0E43\u0E19\u0E01\u0E23\u0E2D\u0E1A"), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: clear,
+    disabled: empty
+  }, React.createElement("i", {
+    className: "fa-solid fa-eraser"
+  }), " \u0E25\u0E49\u0E32\u0E07"), React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: onCancel
+  }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
+    className: "btn btn-primary btn-sm",
+    disabled: empty,
+    onClick: () => onDone(sigCanvasToDataUrl(ref.current, false))
+  }, React.createElement("i", {
+    className: "fa-solid fa-check"
+  }), " \u0E43\u0E0A\u0E49\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E19\u0E35\u0E49")));
+}
+function SignatureSettings({
+  user
+}) {
+  const [sig, setSig] = React.useState(null);
+  const [drawing, setDrawing] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const fileRef = React.useRef(null);
+  React.useEffect(() => {
+    let alive = true;
+    window.__SIG.get(user.id).then(v => {
+      if (alive) setSig(v || "");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [user.id]);
+  const save = async dataUrl => {
+    if (!dataUrl) {
+      Swal.fire({
+        icon: "warning",
+        title: "ไม่พบลายเซ็นในรูป"
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await window.__SIG.save(user.id, dataUrl);
+      setSig(dataUrl);
+      setDrawing(false);
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกลายเซ็นแล้ว",
+        timer: 1500,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกลายเซ็นไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    const {
+      isConfirmed
+    } = await Swal.fire({
+      title: "ลบลายเซ็น?",
+      text: "เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของคุณ",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "ลบ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#DC2626"
+    });
+    if (!isConfirmed) return;
+    setBusy(true);
+    try {
+      await window.__SIG.save(user.id, "");
+      setSig("");
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "ลบไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onFile = e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!/^image\//.test(file.type)) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาเลือกไฟล์รูปภาพ"
+      });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 1200 / Math.max(im.width, im.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(im.width * s);
+      c.height = Math.round(im.height * s);
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      save(sigCanvasToDataUrl(c, true));
+    };
+    im.onerror = () => {
+      URL.revokeObjectURL(url);
+      Swal.fire({
+        icon: "error",
+        title: "เปิดรูปไม่ได้"
+      });
+    };
+    im.src = url;
+  };
+  return React.createElement("div", {
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: "12px 14px"
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 500,
+      fontSize: 13.5,
+      marginBottom: 4
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-signature",
+    style: {
+      color: "var(--primary)",
+      marginRight: 7
+    }
+  }), "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E02\u0E2D\u0E07\u0E09\u0E31\u0E19"), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 10,
+      lineHeight: 1.6
+    }
+  }, "\u0E43\u0E0A\u0E49\u0E25\u0E07\u0E43\u0E19\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 \u0E43\u0E1A\u0E02\u0E2D\u0E40\u0E1A\u0E34\u0E01 \u0E41\u0E25\u0E30\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07 \u2014 \u0E02\u0E36\u0E49\u0E19\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E04\u0E38\u0E13 \u0E41\u0E25\u0E30\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E17\u0E35\u0E48\u0E04\u0E38\u0E13\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E19\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E2D\u0E07"), drawing ? React.createElement(SignaturePad, {
+    onCancel: () => setDrawing(false),
+    onDone: save
+  }) : React.createElement(React.Fragment, null, React.createElement("div", {
+    style: {
+      height: 90,
+      border: "1px solid var(--line)",
+      borderRadius: 8,
+      background: "#fff",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 10
+    }
+  }, sig === null ? React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14...") : sig ? React.createElement("img", {
+    src: sig,
+    alt: "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19",
+    style: {
+      maxHeight: 76,
+      maxWidth: "90%"
+    }
+  }) : React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19")), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("button", {
+    className: "btn btn-primary btn-sm",
+    onClick: () => setDrawing(true),
+    disabled: busy || sig === null
+  }, React.createElement("i", {
+    className: "fa-solid fa-pen-nib"
+  }), " ", sig ? "เซ็นใหม่" : "เซ็นลายเซ็น"), React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => fileRef.current && fileRef.current.click(),
+    disabled: busy || sig === null
+  }, React.createElement("i", {
+    className: "fa-solid fa-upload"
+  }), " \u0E2D\u0E31\u0E1B\u0E42\u0E2B\u0E25\u0E14\u0E23\u0E39\u0E1B"), sig && React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: remove,
+    disabled: busy,
+    style: {
+      color: "#DC2626"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-trash"
+  }), " \u0E25\u0E1A"), busy && React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 14,
+      height: 14,
+      borderWidth: 2,
+      alignSelf: "center"
+    }
+  })), React.createElement("input", {
+    ref: fileRef,
+    type: "file",
+    accept: "image/*",
+    style: {
+      display: "none"
+    },
+    onChange: onFile
+  })));
+}
 function ChangePasswordModal({
   user,
   onClose
@@ -4558,7 +5293,9 @@ function ChangePasswordModal({
     }
   }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
     className: "fa-solid fa-floppy-disk"
-  }), " ", profileDirty ? "บันทึกข้อมูลผู้ใช้งาน" : "ยังไม่มีการแก้ไข")))), React.createElement("div", {
+  }), " ", profileDirty ? "บันทึกข้อมูลผู้ใช้งาน" : "ยังไม่มีการแก้ไข")))), React.createElement(SignatureSettings, {
+    user: user
+  }), React.createElement("div", {
     style: {
       border: "1px solid var(--line)",
       borderRadius: 10,
@@ -4897,9 +5634,24 @@ function Sidebar({
     key: "withdrawals",
     icon: "fa-file-invoice",
     label: "รายการเบิกของ"
+  }, {
+    key: "withdrawal-pending",
+    icon: "fa-cart-shopping",
+    label: "รายการรอจัดซื้อ/จัดหา",
+    badge: window.withdrawalPendingCount()
+  }, {
+    key: "site-stock",
+    icon: "fa-warehouse",
+    label: "สต๊อก/เบิกจ่ายหน้างาน"
   }];
   const navBySystem = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "manage" ? manageNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
-  const nav = navBySystem.filter(x => window.canAccessPage(user, x.key));
+  const pmDueCount = window.machinesPmDue(user).total;
+  const nav = navBySystem.filter(x => window.canAccessPage(user, x.key)).map(x => x.key === "machines" && pmDueCount ? {
+    ...x,
+    badge: pmDueCount,
+    badgeTitle: `ต้องทำ PM ${pmDueCount} เครื่อง`,
+    badgeWarn: true
+  } : x);
   return React.createElement(React.Fragment, null, open && React.createElement("div", {
     className: "sidebar-scrim show",
     onClick: onClose
@@ -4927,7 +5679,12 @@ function Sidebar({
   }, React.createElement("i", {
     className: `fa-solid ${n.icon}`
   }), React.createElement("span", null, n.label), n.badge > 0 && React.createElement("span", {
-    className: "badge"
+    className: "badge",
+    title: n.badgeTitle,
+    style: n.badgeWarn ? {
+      background: "#F59E0B",
+      color: "#fff"
+    } : undefined
   }, n.badge))), React.createElement("div", {
     className: "section"
   }, "\u0E17\u0E31\u0E48\u0E27\u0E44\u0E1B"), React.createElement("div", {
@@ -4999,7 +5756,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3566) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3906) ---- */
 function Projects({
   user
 }) {
@@ -5636,7 +6393,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 3819) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4159) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6033,7 +6790,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4065) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4405) ---- */
 function Dashboard({
   user,
   goTo
@@ -7417,7 +8174,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 4642) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 4982) ---- */
 function Repairs({
   user
 }) {
@@ -7923,7 +8680,8 @@ function MachineQuickView({
   const statusColor = {
     "ใช้งาน": "#10B981",
     "ซ่อม": "#EF4444",
-    "รอซ่อม": "#F59E0B"
+    "รอซ่อม": "#F59E0B",
+    "ส่งคืน": "#6366F1"
   }[m && m.status] || "#64748B";
   const cat = m ? window.getCategory(m.categoryId) : null;
   const row = (k, v) => React.createElement("div", null, React.createElement("div", {
@@ -8790,6 +9548,55 @@ window.getRepairPlace = function (r) {
   return p && typeof p === "object" && !Array.isArray(p) ? Object.assign(base, p) : base;
 };
 window.PNM_LOGO_DATAURL = "data:image/jpeg;base64,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";
+const SIG_DATAURL_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/;
+window.__SIG = {
+  _cache: {},
+  async get(userId) {
+    if (!userId) return "";
+    if (userId in this._cache) return this._cache[userId];
+    try {
+      const r = await window.api("getSignature", {
+        id: userId
+      });
+      const v = r && r.dataUrl || "";
+      this._cache[userId] = SIG_DATAURL_RE.test(v) ? v : "";
+    } catch (e) {
+      return "";
+    }
+    return this._cache[userId];
+  },
+  cached(userId) {
+    return userId && this._cache[userId] || "";
+  },
+  preload(ids) {
+    return Promise.all([...new Set((ids || []).filter(Boolean))].map(id => this.get(id)));
+  },
+  async save(userId, dataUrl) {
+    if (dataUrl && !SIG_DATAURL_RE.test(dataUrl)) throw new Error("รูปแบบลายเซ็นไม่ถูกต้อง");
+    await window.api("saveSignature", {
+      id: userId,
+      dataUrl: dataUrl || ""
+    });
+    this._cache[userId] = dataUrl || "";
+  },
+  resolve(name, prevName, prevId, user) {
+    const n = String(name || "").trim();
+    if (!n) return "";
+    if (user && n === String(user.name || "").trim()) return user.id;
+    if (n === String(prevName || "").trim()) return prevId || "";
+    return "";
+  },
+  img(userId, style) {
+    const s = this.cached(userId);
+    return s ? `<img src="${s}" alt="" style="${style || "display:block;margin:0 auto;max-height:11mm;max-width:90%"}">` : "";
+  }
+};
+function repairReporterSigner(r) {
+  if (!r || !r.reporterId) return "";
+  const u = (window.__DATA.users || []).find(x => String(x.id) === String(r.reporterId));
+  const nm = String(r.reporterName || "").trim();
+  return !nm || u && String(u.name || "").trim() === nm ? r.reporterId : "";
+}
 window.buildRepairFormDoc = function (r, user) {
   const esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const m = (window.__DATA.machines || []).find(x => x.code === r.machineCode) || {};
@@ -8814,10 +9621,10 @@ window.buildRepairFormDoc = function (r, user) {
     rows += "<tr><td class='c-no'>" + (i + 1) + "</td><td class='c-item'>" + fill(p && p.text) + "</td><td class='c-insp'></td></tr>";
   }
   const logo = "<img src='" + window.PNM_LOGO_DATAURL + "' width='92' alt='' style='display:block'>";
-  const html = "<!doctype html><html lang='th'><head><meta charset='utf-8'><title>ใบแจ้งซ่อม " + esc(r.running) + "</title><style>" + "@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Sarabun',Tahoma,Arial,sans-serif;color:#000;font-size:13px;margin:0}" + ".sheet{width:186mm;margin:0 auto}.hd{display:flex;align-items:center;gap:14px;margin-bottom:2px}.hd-title{flex:1;text-align:center}.cn-th{font-size:22px;font-weight:700}.cn-en{font-size:15px;font-weight:700;letter-spacing:.5px}.hd-sp{width:92px}" + ".doc-title{text-align:center;font-size:16px;font-weight:700;margin:6px 0 12px}" + ".row2{display:flex;justify-content:space-between;margin-bottom:8px}" + ".info .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:5px 0}" + "b{font-weight:600;white-space:nowrap}" + ".dot{border-bottom:1px dotted #000;min-height:16px;padding:0 4px;text-align:center;display:inline-block}" + ".f1{flex:1;min-width:70px}.f2{flex:2;min-width:120px}.w180{width:180px}.w120{width:120px}.fwide{flex:1;min-width:300px}" + ".box{border:1.5px solid #000;margin:10px 0}.box-hd{text-align:center;font-weight:700;border-bottom:1.5px solid #000;padding:5px;background:#f2f2f2}" + ".rt{width:100%;border-collapse:collapse;table-layout:fixed}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px;word-break:break-word;overflow-wrap:anywhere}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center;vertical-align:top}.rt .c-item{width:64%;white-space:pre-wrap;line-height:1.45}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px;vertical-align:top}" + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}" + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}" + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}" + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}" + "</style></head><body><div class='sheet'>" + "<div class='hd'><div>" + logo + "</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>" + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>" + "<div class='row2'><div>เลขที่ <span class='dot w180'>" + fill(r.running) + "</span></div><div>วันที่ <span class='dot w120'>" + fill(dateStr) + "</span></div></div>" + "<div class='info'>" + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>" + fill(cat.name) + "</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>" + fill(r.machineCode) + "</span><b>กรรมสิทธิ์</b><span class='dot f1'>" + fill(m.ownership) + "</span></div>" + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>" + fill(m.brand) + "</span><b>รุ่น</b><span class='dot f1'>" + fill(m.model) + "</span><b>ขนาด</b><span class='dot f1'>" + fill(m.size) + "</span><b>ปี</b><span class='dot f1'>" + fill(m.year) + "</span><b>ทะเบียน</b><span class='dot f1'></span></div>" + "<div class='ln'><b>Serial No.</b><span class='dot f1'>" + fill(m.serial) + "</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>" + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'>" + fill(r.odometerKm) + "</span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>" + fill(r.hourMeter || m.hours) + "</span></div>" + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(projLabel) + "</span><b>ไซต์งาน</b><span class='dot f1'>" + fill(r.subSite || m.subSite) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>" + "</div>" + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>" + rows + "</tbody></table></div>" + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>" + "<tr class='sig-name'><td>" + fill(r.driverName || m.driverName) + "</td><td>" + fill(r.reporterName) + "</td><td></td><td></td></tr>" + "<tr class='sig-paren'><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td></tr>" + "<tr class='sig-date'><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ ..............</td><td>วันที่ ..............</td></tr></table>" + "<div class='box'><div class='box-hd'>สถานที่ทำการซ่อม</div><div class='loc'>" + "<div class='ln'><b>แจ้งซ่อมที่</b><span class='dot fwide'>" + fill(rp.reportAt) + "</span></div>" + "<div class='ln'><b>สถานที่ทำการซ่อม</b>" + box(rp.mode === "onsite") + "ส่งช่างซ่อมหน้างาน ที่ <span class='dot f1'>" + fill(rp.onsite) + "</span></div>" + "<div class='ln indent'>" + box(rp.mode === "workshop") + "โรงซ่อมของบริษัทที่แจ้งซ่อม</div>" + "<div class='ln indent'>" + box(rp.mode === "other") + "อื่นๆ <span class='dot f1'>" + fill(rp.other) + "</span></div>" + "<div class='ln'><b>หมายเหตุ</b><span class='dot fwide'>" + fill(rp.note) + "</span></div>" + "</div></div>" + "</div></body></html>";
+  const html = "<!doctype html><html lang='th'><head><meta charset='utf-8'><title>ใบแจ้งซ่อม " + esc(r.running) + "</title><style>" + "@page{size:A4;margin:12mm}*{box-sizing:border-box}body{font-family:'Sarabun',Tahoma,Arial,sans-serif;color:#000;font-size:13px;margin:0}" + ".sheet{width:186mm;margin:0 auto}.hd{display:flex;align-items:center;gap:14px;margin-bottom:2px}.hd-title{flex:1;text-align:center}.cn-th{font-size:22px;font-weight:700}.cn-en{font-size:15px;font-weight:700;letter-spacing:.5px}.hd-sp{width:92px}" + ".doc-title{text-align:center;font-size:16px;font-weight:700;margin:6px 0 12px}" + ".row2{display:flex;justify-content:space-between;margin-bottom:8px}" + ".info .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:5px 0}" + "b{font-weight:600;white-space:nowrap}" + ".dot{border-bottom:1px dotted #000;min-height:16px;padding:0 4px;text-align:center;display:inline-block}" + ".f1{flex:1;min-width:70px}.f2{flex:2;min-width:120px}.w180{width:180px}.w120{width:120px}.fwide{flex:1;min-width:300px}" + ".box{border:1.5px solid #000;margin:10px 0}.box-hd{text-align:center;font-weight:700;border-bottom:1.5px solid #000;padding:5px;background:#f2f2f2}" + ".rt{width:100%;border-collapse:collapse;table-layout:fixed}.rt th,.rt td{border:1px solid #000;padding:5px 8px;font-size:13px;word-break:break-word;overflow-wrap:anywhere}.rt thead th{background:#fafafa}.rt .c-no{width:8%;text-align:center;vertical-align:top}.rt .c-item{width:64%;white-space:pre-wrap;line-height:1.45}.rt .c-insp{width:28%;text-align:center}.rt tbody td{height:26px;vertical-align:top}" + ".sig{width:100%;border-collapse:collapse;margin:10px 0}.sig th,.sig td{border:1px solid #000;text-align:center;padding:6px 4px;font-size:12px}.sig th{font-weight:600}.sig .sig-name td{height:34px;vertical-align:bottom;font-weight:600}.sig .sig-paren td{color:#000}.sig .sig-date td{font-size:12px}" + ".loc{padding:8px 10px}.loc .ln{display:flex;align-items:baseline;gap:6px;margin:6px 0;flex-wrap:wrap}.loc .indent{padding-left:120px}" + ".chk{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border:1.3px solid #000;margin-right:5px;font-size:11px;line-height:1;font-weight:700;vertical-align:middle}" + ".fld{color:#1D4ED8;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}" + "</style></head><body><div class='sheet'>" + "<div class='hd'><div>" + logo + "</div><div class='hd-title'><div class='cn-th'>บริษัท พานามณี จำกัด</div><div class='cn-en'>PANAMANEE COMPANY LIMITED</div></div><div class='hd-sp'></div></div>" + "<div class='doc-title'>ใบแจ้งซ่อมเครื่องจักรและอุปกรณ์</div>" + "<div class='row2'><div>เลขที่ <span class='dot w180'>" + fill(r.running) + "</span></div><div>วันที่ <span class='dot w120'>" + fill(dateStr) + "</span></div></div>" + "<div class='info'>" + "<div class='ln'><b>ประเภทเครื่องจักร</b><span class='dot f2'>" + fill(cat.name) + "</span><b>หมายเลขเครื่องจักร</b><span class='dot f2'>" + fill(r.machineCode) + "</span><b>กรรมสิทธิ์</b><span class='dot f1'>" + fill(m.ownership) + "</span></div>" + "<div class='ln'><b>ยี่ห้อ</b><span class='dot f1'>" + fill(m.brand) + "</span><b>รุ่น</b><span class='dot f1'>" + fill(m.model) + "</span><b>ขนาด</b><span class='dot f1'>" + fill(m.size) + "</span><b>ปี</b><span class='dot f1'>" + fill(m.year) + "</span><b>ทะเบียน</b><span class='dot f1'></span></div>" + "<div class='ln'><b>Serial No.</b><span class='dot f1'>" + fill(m.serial) + "</span><b>Engine No.</b><span class='dot f1'></span><b>Chassis No.</b><span class='dot f1'></span></div>" + "<div class='ln'><b>เลขมิเตอร์กิโลเมตร</b><span class='dot f1'>" + fill(r.odometerKm) + "</span><b>เลขมิเตอร์ชั่วโมง</b><span class='dot f1'>" + fill(r.hourMeter || m.hours) + "</span></div>" + "<div class='ln'><b>หน่วยงาน</b><span class='dot f1'>" + fill(projLabel) + "</span><b>ไซต์งาน</b><span class='dot f1'>" + fill(r.subSite || m.subSite) + "</span><b>สถานที่</b><span class='dot f1'>" + fill(m.location) + "</span></div>" + "</div>" + "<div class='box'><div class='box-hd'>รายการซ่อม (อาการผิดปกติ)</div><table class='rt'><thead><tr><th class='c-no'></th><th class='c-item'>รายการ</th><th class='c-insp'>ผู้ตรวจพบ</th></tr></thead><tbody>" + rows + "</tbody></table></div>" + "<table class='sig'><tr><th>พนักงานขับ</th><th>ผู้จัดทำเอกสาร/ ผู้รับแจ้ง</th><th>หัวหน้าแผนกปฏิบัติการ</th><th>ผู้จัดการฝ่ายบริหาร</th></tr>" + "<tr class='sig-name'><td>" + fill(r.driverName || m.driverName) + "</td><td>" + window.__SIG.img(repairReporterSigner(r), "display:block;margin:0 auto 2px;max-height:30px;max-width:90%") + fill(r.reporterName) + "</td><td></td><td></td></tr>" + "<tr class='sig-paren'><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td><td>( ...................... )</td></tr>" + "<tr class='sig-date'><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ " + fill(dateStr) + "</td><td>วันที่ ..............</td><td>วันที่ ..............</td></tr></table>" + "<div class='box'><div class='box-hd'>สถานที่ทำการซ่อม</div><div class='loc'>" + "<div class='ln'><b>แจ้งซ่อมที่</b><span class='dot fwide'>" + fill(rp.reportAt) + "</span></div>" + "<div class='ln'><b>สถานที่ทำการซ่อม</b>" + box(rp.mode === "onsite") + "ส่งช่างซ่อมหน้างาน ที่ <span class='dot f1'>" + fill(rp.onsite) + "</span></div>" + "<div class='ln indent'>" + box(rp.mode === "workshop") + "โรงซ่อมของบริษัทที่แจ้งซ่อม</div>" + "<div class='ln indent'>" + box(rp.mode === "other") + "อื่นๆ <span class='dot f1'>" + fill(rp.other) + "</span></div>" + "<div class='ln'><b>หมายเหตุ</b><span class='dot fwide'>" + fill(rp.note) + "</span></div>" + "</div></div>" + "</div></body></html>";
   return html;
 };
-window.printRepairForm = function (r, user) {
+window.printRepairForm = async function (r, user) {
   const w = window.open("", "_blank");
   if (!w) {
     Swal.fire({
@@ -8827,6 +9634,7 @@ window.printRepairForm = function (r, user) {
     });
     return;
   }
+  await window.__SIG.preload([repairReporterSigner(r)]);
   w.document.open();
   w.document.write(window.buildRepairFormDoc(r, user));
   w.document.close();
@@ -8862,6 +9670,7 @@ window.shareRepairImage = async function (r, user) {
       didOpen: () => Swal.showLoading()
     });
     const H2C = await ensureH2C();
+    await window.__SIG.preload([repairReporterSigner(r)]);
     iframe = document.createElement("iframe");
     iframe.style.cssText = "position:fixed;left:-100000px;top:0;width:760px;height:1200px;border:0;background:#fff";
     document.body.appendChild(iframe);
@@ -9857,7 +10666,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5534) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5922) ---- */
 function Users({
   user
 }) {
@@ -10395,7 +11204,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 5710) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6098) ---- */
 function Categories({
   user
 }) {
@@ -10658,7 +11467,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 5798) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6186) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -11415,6 +12224,7 @@ function Machines({
   const [ownF, setOwnF] = React.useState([]);
   const [siteF, setSiteF] = React.useState([]);
   const [sortF, setSortF] = React.useState("none");
+  const [pmOnly, setPmOnly] = React.useState(false);
   const [detail, setDetail] = React.useState(null);
   const [edit, setEdit] = React.useState(null);
   React.useEffect(() => {
@@ -11486,8 +12296,21 @@ function Machines({
     if (catF.length && !catF.includes(m.categoryId || "__none__")) return false;
     if (ownF.length && !ownF.includes((m.ownership || "").trim() || "__none__")) return false;
     if (siteF.length && !siteF.includes((m.subSite || "").trim() || "__none__")) return false;
+    if (pmOnly && !["overdue", "soon"].includes(window.machinePmStatus(m).state)) return false;
     return true;
   });
+  const pmDue = React.useMemo(() => {
+    let over = 0,
+      soon = 0;
+    rows.forEach(m => {
+      const s = window.machinePmStatus(m).state;
+      if (s === "overdue") over++;else if (s === "soon") soon++;
+    });
+    return {
+      over,
+      soon
+    };
+  }, [rows]);
   if (sortF !== "none") {
     const txt = v => String(v ?? "").trim();
     const cmp = {
@@ -11514,7 +12337,8 @@ function Machines({
   const statusColor = s => ({
     "ใช้งาน": "#10B981",
     "ซ่อม": "#EF4444",
-    "รอซ่อม": "#F59E0B"
+    "รอซ่อม": "#F59E0B",
+    "ส่งคืน": "#6366F1"
   })[s] || "#64748B";
   const syncCache = fn => {
     window.__DATA.machines = fn(window.__DATA.machines || []);
@@ -11725,6 +12549,11 @@ function Machines({
         icon: "fa-gears",
         driverName: "",
         drivePhoto: "",
+        photos: [],
+        pmEveryDays: "",
+        pmEveryHours: "",
+        lastPmDate: "",
+        lastPmHours: "",
         driveLink1: "",
         driveLink2: "",
         driveLinkPL: "",
@@ -11734,10 +12563,55 @@ function Machines({
     })
   }, React.createElement("i", {
     className: "fa-solid fa-plus"
-  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"))), React.createElement("div", {
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"))), (pmDue.over + pmDue.soon > 0 || pmOnly) && React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap",
+      padding: "11px 16px",
+      marginBottom: 16,
+      borderRadius: 12,
+      background: pmDue.over ? "#FEF2F2" : "#FFFBEB",
+      border: `1px solid ${pmDue.over ? "#FECACA" : "#FDE68A"}`
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-calendar-days",
+    style: {
+      fontSize: 20,
+      color: pmDue.over ? "#DC2626" : "#D97706"
+    }
+  }), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 200,
+      fontSize: 13.5
+    }
+  }, React.createElement("b", null, "\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19 PM"), " \xB7", " ", pmDue.over > 0 && React.createElement("span", {
+    style: {
+      color: "#B91C1C",
+      fontWeight: 600
+    }
+  }, "\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14 ", pmDue.over, " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07"), pmDue.over > 0 && pmDue.soon > 0 && " · ", pmDue.soon > 0 && React.createElement("span", {
+    style: {
+      color: "#B45309",
+      fontWeight: 600
+    }
+  }, "\u0E43\u0E01\u0E25\u0E49\u0E16\u0E36\u0E07\u0E01\u0E33\u0E2B\u0E19\u0E14 ", pmDue.soon, " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07"), pmDue.over + pmDue.soon === 0 && React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E17\u0E33 PM \u0E41\u0E25\u0E49\u0E27")), React.createElement("button", {
+    className: `btn btn-sm ${pmOnly ? "btn-primary" : "btn-ghost"}`,
+    onClick: () => setPmOnly(v => !v)
+  }, React.createElement("i", {
+    className: `fa-solid ${pmOnly ? "fa-xmark" : "fa-filter"}`
+  }), " ", pmOnly ? "แสดงทั้งหมด" : "แสดงเฉพาะที่ต้องทำ PM")), React.createElement("div", {
     className: "machines-grid"
   }, filtered.map(m => {
     const cat = window.getCategory(m.categoryId);
+    const pm = window.machinePmStatus(m);
+    const photo = window.machinePhotos(m)[0];
     return React.createElement("div", {
       className: "machine-card",
       key: m.id,
@@ -11750,8 +12624,8 @@ function Machines({
       className: "ic"
     }, React.createElement("i", {
       className: `fa-solid ${m.icon || "fa-gears"}`
-    })), m.drivePhoto && React.createElement("img", {
-      src: gdriveThumb(m.drivePhoto),
+    })), photo && React.createElement("img", {
+      src: gdriveThumb(photo),
       alt: "",
       style: {
         position: "absolute",
@@ -11761,7 +12635,26 @@ function Machines({
         objectFit: "cover"
       },
       onError: e => e.target.style.display = "none"
-    }), m.categoryId && React.createElement("div", {
+    }), (pm.state === "overdue" || pm.state === "soon") && React.createElement("div", {
+      title: pm.text,
+      style: {
+        position: "absolute",
+        right: 8,
+        bottom: 8,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: pm.state === "overdue" ? "#DC2626" : "#F59E0B",
+        color: "#fff",
+        fontSize: 10.5,
+        fontWeight: 600,
+        boxShadow: "0 1px 3px rgba(0,0,0,.25)"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-wrench"
+    }), " ", pm.state === "overdue" ? "เกินกำหนด PM" : "ใกล้ถึง PM"), m.categoryId && React.createElement("div", {
       className: "drive-tag",
       style: {
         background: cat.color,
@@ -11901,10 +12794,17 @@ function MachineForm({
       return;
     }
     setBusy(true);
+    const num = v => v === "" || v == null ? "" : Number(v) || 0;
     try {
       await onSave({
         ...f,
-        hours: Number(f.hours) || 0
+        hours: Number(f.hours) || 0,
+        photos: window.machinePhotos(f),
+        drivePhoto: window.machinePhotos(f)[0] || "",
+        pmEveryDays: num(f.pmEveryDays),
+        pmEveryHours: num(f.pmEveryHours),
+        lastPmHours: num(f.lastPmHours),
+        lastPmDate: f.lastPmDate || ""
       });
     } finally {
       setBusy(false);
@@ -12079,7 +12979,9 @@ function MachineForm({
     value: "\u0E0B\u0E48\u0E2D\u0E21"
   }, "\u0E0B\u0E48\u0E2D\u0E21"), React.createElement("option", {
     value: "\u0E23\u0E2D\u0E0B\u0E48\u0E2D\u0E21"
-  }, "\u0E23\u0E2D\u0E0B\u0E48\u0E2D\u0E21"))), React.createElement("div", {
+  }, "\u0E23\u0E2D\u0E0B\u0E48\u0E2D\u0E21"), React.createElement("option", {
+    value: "\u0E2A\u0E48\u0E07\u0E04\u0E37\u0E19"
+  }, "\u0E2A\u0E48\u0E07\u0E04\u0E37\u0E19"))), React.createElement("div", {
     className: "form-field",
     style: {
       gridColumn: "1/-1"
@@ -12142,31 +13044,101 @@ function MachineForm({
       marginRight: 6,
       color: "#10B981"
     }
-  }), "\u0E25\u0E34\u0E07\u0E04\u0E4C\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E Google Drive ", React.createElement("span", {
+  }), "\u0E23\u0E39\u0E1B\u0E16\u0E48\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 ", React.createElement("span", {
     style: {
       fontWeight: 400,
       fontSize: 12,
       color: "var(--muted)"
     }
-  }, "\u0E23\u0E39\u0E1B\u0E16\u0E48\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 (\u0E08\u0E30\u0E41\u0E2A\u0E14\u0E07\u0E43\u0E19\u0E01\u0E32\u0E23\u0E4C\u0E14)")), React.createElement("input", {
-    value: f.drivePhoto || "",
-    onChange: e => up("drivePhoto", e.target.value),
-    placeholder: "https://drive.google.com/file/d/..."
-  }), gdriveThumb(f.drivePhoto) && React.createElement("div", {
-    style: {
-      marginTop: 8
+  }, "\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14 3 \u0E23\u0E39\u0E1B \xB7 \u0E23\u0E39\u0E1B\u0E41\u0E23\u0E01\u0E08\u0E30\u0E41\u0E2A\u0E14\u0E07\u0E43\u0E19\u0E01\u0E32\u0E23\u0E4C\u0E14")), React.createElement(PhotosField, {
+    value: window.machinePhotos(f),
+    max: 3,
+    onChange: v => setF(p => ({
+      ...p,
+      photos: v,
+      drivePhoto: v[0] || ""
+    })),
+    uploadAction: "uploadPartPhoto",
+    folder: window.PART_PHOTOS_FOLDER,
+    uploadContext: {
+      running: [f.code, f.name].filter(Boolean).join(" ") || "machine"
     }
-  }, React.createElement("img", {
-    src: gdriveThumb(f.drivePhoto),
-    alt: "preview",
+  })), React.createElement("div", {
+    className: "form-field",
     style: {
-      height: 100,
-      borderRadius: 8,
-      objectFit: "cover",
-      border: "1px solid var(--line)"
-    },
-    onError: e => e.target.style.display = "none"
-  }))), React.createElement("div", {
+      gridColumn: "1/-1",
+      margin: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      padding: "12px 14px",
+      background: "#ECFEFF",
+      border: "1px solid #A5F3FC",
+      borderRadius: 10
+    }
+  }, React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: "#0E7490",
+      marginBottom: 4
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-calendar-days",
+    style: {
+      marginRight: 6
+    }
+  }), "\u0E41\u0E1C\u0E19\u0E1A\u0E33\u0E23\u0E38\u0E07\u0E23\u0E31\u0E01\u0E29\u0E32 (PM)"), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginBottom: 10
+    }
+  }, "\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E27\u0E31\u0E19 \u0E2B\u0E23\u0E37\u0E2D\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19 \u0E2B\u0E23\u0E37\u0E2D\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E2D\u0E07\u0E41\u0E1A\u0E1A \u0E23\u0E30\u0E1A\u0E1A\u0E08\u0E30\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E43\u0E01\u0E25\u0E49\u0E04\u0E23\u0E1A\u0E23\u0E2D\u0E1A (", window.PM_SOON_DAYS, " \u0E27\u0E31\u0E19 / ", window.PM_SOON_HOURS, " \u0E0A\u0E21. \u0E25\u0E48\u0E27\u0E07\u0E2B\u0E19\u0E49\u0E32) \xB7 \u0E40\u0E27\u0E49\u0E19\u0E27\u0E48\u0E32\u0E07 = \u0E44\u0E21\u0E48\u0E40\u0E15\u0E37\u0E2D\u0E19"), React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
+      gap: 10
+    }
+  }, React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12
+    }
+  }, "\u0E17\u0E33 PM \u0E17\u0E38\u0E01 (\u0E27\u0E31\u0E19)"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.pmEveryDays || "",
+    onChange: e => up("pmEveryDays", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 90"
+  })), React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12
+    }
+  }, "\u0E17\u0E33 PM \u0E17\u0E38\u0E01 (\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07)"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.pmEveryHours || "",
+    onChange: e => up("pmEveryHours", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 250"
+  })), React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12
+    }
+  }, "PM \u0E04\u0E23\u0E31\u0E49\u0E07\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"), React.createElement("input", {
+    type: "date",
+    value: f.lastPmDate || "",
+    onChange: e => up("lastPmDate", e.target.value)
+  })), React.createElement("div", null, React.createElement("label", {
+    style: {
+      fontSize: 12
+    }
+  }, "\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07 \u0E13 PM \u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.lastPmHours || "",
+    onChange: e => up("lastPmHours", e.target.value),
+    placeholder: String(f.hours || 0)
+  }))))), React.createElement("div", {
     className: "form-field",
     style: {
       gridColumn: "1/-1"
@@ -12490,7 +13462,8 @@ function MachineDetail({
   const statusColor = {
     "ใช้งาน": "#10B981",
     "ซ่อม": "#EF4444",
-    "รอซ่อม": "#F59E0B"
+    "รอซ่อม": "#F59E0B",
+    "ส่งคืน": "#6366F1"
   }[m.status] || "#64748B";
   const canEdit = ["Admin", "Officer", "Engineer"].includes(window.effectiveRole(user));
   const canEditRepairs = ["Admin", "Officer", "Engineer"].includes(user.role);
@@ -12657,6 +13630,59 @@ function MachineDetail({
     }, React.createElement("i", {
       className: `fa-solid ${val ? "fa-pen" : "fa-plus"}`
     })));
+  };
+  const recordPm = async () => {
+    const esc = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    const res = await Swal.fire({
+      title: "บันทึกทำ PM แล้ว",
+      html: `<div style="text-align:left;display:grid;gap:10px;font-size:14px">
+        <label>วันที่ทำ PM<input id="pm-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${toDateStr(new Date())}"></label>
+        <label>ชั่วโมงทำงาน ณ วันที่ทำ PM<input id="pm-hours" type="number" min="0" class="swal2-input" style="margin:4px 0 0;width:100%" value="${esc(m.hours || 0)}"></label>
+        <label>หมายเหตุ (เช่น เปลี่ยนถ่ายน้ำมันเครื่อง, กรองอากาศ)<input id="pm-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
+      </div>`,
+      showCancelButton: true,
+      confirmButtonText: "บันทึก",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#0E7490",
+      preConfirm: () => {
+        const date = document.getElementById("pm-date").value;
+        if (!date) {
+          Swal.showValidationMessage("กรุณาระบุวันที่");
+          return false;
+        }
+        const hv = document.getElementById("pm-hours").value;
+        return {
+          date,
+          hours: hv === "" ? "" : Number(hv) || 0,
+          note: document.getElementById("pm-note").value.trim()
+        };
+      }
+    });
+    if (!res.isConfirmed) return;
+    const v = res.value;
+    const entry = {
+      date: v.date,
+      hours: v.hours,
+      note: v.note,
+      by: user.name,
+      recordedAt: new Date().toISOString()
+    };
+    const patch = {
+      lastPmDate: v.date,
+      lastPmHours: v.hours,
+      lastService: v.date,
+      pmHistory: [...(m.pmHistory || []), entry]
+    };
+    if (v.hours !== "" && v.hours > (Number(m.hours) || 0)) patch.hours = v.hours;
+    await onPatchMachine(patch);
+    Swal.fire({
+      icon: "success",
+      title: "บันทึก PM แล้ว",
+      timer: 1400,
+      showConfirmButton: false,
+      toast: true,
+      position: "top-end"
+    });
   };
   const startEditTransfer = (idx, t) => {
     setEditTrIdx(idx);
@@ -12856,8 +13882,8 @@ function MachineDetail({
     className: "ic"
   }, React.createElement("i", {
     className: `fa-solid ${m.icon || "fa-gears"}`
-  })), m.drivePhoto && React.createElement("img", {
-    src: gdriveThumb(m.drivePhoto),
+  })), window.machinePhotos(m)[0] && React.createElement("img", {
+    src: gdriveThumb(window.machinePhotos(m)[0]),
     alt: "",
     style: {
       position: "absolute",
@@ -12867,7 +13893,21 @@ function MachineDetail({
       objectFit: "cover"
     },
     onError: e => e.target.style.display = "none"
-  }))), React.createElement("div", null, React.createElement("div", {
+  })), window.machinePhotos(m).length > 1 && React.createElement("div", {
+    style: {
+      position: "absolute",
+      left: 8,
+      right: 8,
+      bottom: 8,
+      display: "flex",
+      gap: 6,
+      justifyContent: "center"
+    }
+  }, window.machinePhotos(m).map((url, i) => React.createElement(PhotoThumb, {
+    key: i,
+    url: url,
+    size: 52
+  })))), React.createElement("div", null, React.createElement("div", {
     style: {
       fontSize: 20,
       fontWeight: 600,
@@ -13006,7 +14046,120 @@ function MachineDetail({
       color: "var(--muted)",
       marginBottom: 3
     }
-  }, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E04\u0E23\u0E31\u0E49\u0E07\u0E16\u0E31\u0E14\u0E44\u0E1B"), renderInspectionCell("nextInspectionDate")))), (m.driveLink1 || m.driveLink2 || m.driveLinkPL) && React.createElement("div", {
+  }, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E2A\u0E2D\u0E1A\u0E04\u0E23\u0E31\u0E49\u0E07\u0E16\u0E31\u0E14\u0E44\u0E1B"), renderInspectionCell("nextInspectionDate")))), (() => {
+    const pm = window.machinePmStatus(m);
+    const everyD = Number(m.pmEveryDays) || 0,
+      everyH = Number(m.pmEveryHours) || 0;
+    const col = pm.state === "overdue" ? "#DC2626" : pm.state === "soon" ? "#D97706" : "#0E7490";
+    const hist = (m.pmHistory || []).slice().reverse();
+    return React.createElement("div", {
+      style: {
+        marginTop: 12,
+        padding: "10px 14px",
+        background: "#ECFEFF",
+        border: "1px solid #A5F3FC",
+        borderRadius: 10
+      }
+    }, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        fontWeight: 600,
+        color: "#0E7490",
+        letterSpacing: ".06em",
+        marginBottom: 8,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        flexWrap: "wrap"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-calendar-days"
+    }), "\u0E41\u0E1C\u0E19\u0E1A\u0E33\u0E23\u0E38\u0E07\u0E23\u0E31\u0E01\u0E29\u0E32 (PM)", pm.state !== "none" && React.createElement("span", {
+      style: {
+        marginLeft: "auto",
+        padding: "2px 9px",
+        borderRadius: 999,
+        background: col + "1A",
+        color: col,
+        fontSize: 11.5,
+        letterSpacing: 0
+      }
+    }, pm.state === "overdue" ? "⚠ ถึงกำหนดแล้ว" : pm.state === "soon" ? "ใกล้ถึงกำหนด" : "ปกติ", " \xB7 ", pm.text)), !everyD && !everyH ? React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--muted)"
+      }
+    }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A PM", canEdit ? " — กด \"แก้ไข\" เพื่อตั้งรอบเป็นวันหรือชั่วโมงทำงาน" : "") : React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 10,
+        fontSize: 12.5
+      }
+    }, React.createElement("div", null, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, "\u0E23\u0E2D\u0E1A PM"), [everyD ? `ทุก ${everyD} วัน` : "", everyH ? `ทุก ${everyH.toLocaleString("th-TH")} ชม.` : ""].filter(Boolean).join(" หรือ ")), React.createElement("div", null, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, "PM \u0E04\u0E23\u0E31\u0E49\u0E07\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"), m.lastPmDate || m.lastService ? window.__DATA.fmtDate(m.lastPmDate || m.lastService) : "—", m.lastPmHours !== "" && m.lastPmHours != null ? ` · ${Number(m.lastPmHours).toLocaleString("th-TH")} ชม.` : ""), pm.nextDate && React.createElement("div", null, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, "\u0E04\u0E23\u0E1A\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("b", {
+      style: {
+        color: col
+      }
+    }, window.__DATA.fmtDate(pm.nextDate))), pm.nextHours != null && React.createElement("div", null, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, "\u0E04\u0E23\u0E1A\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E17\u0E35\u0E48\u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07"), React.createElement("b", {
+      style: {
+        color: col
+      }
+    }, pm.nextHours.toLocaleString("th-TH"), " \u0E0A\u0E21."), " ", React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "(\u0E15\u0E2D\u0E19\u0E19\u0E35\u0E49 ", Number(m.hours || 0).toLocaleString("th-TH"), ")"))), canEdit && (everyD || everyH) ? React.createElement("button", {
+      className: "btn btn-sm btn-primary",
+      style: {
+        marginTop: 10
+      },
+      onClick: recordPm
+    }, React.createElement("i", {
+      className: "fa-solid fa-circle-check"
+    }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E33 PM \u0E41\u0E25\u0E49\u0E27") : null, hist.length > 0 && React.createElement("div", {
+      style: {
+        marginTop: 10,
+        borderTop: "1px dashed #A5F3FC",
+        paddingTop: 8,
+        display: "grid",
+        gap: 4
+      }
+    }, React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, "\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34 PM (", hist.length, ")"), hist.slice(0, 5).map((h, i) => React.createElement("div", {
+      key: i,
+      style: {
+        fontSize: 12
+      }
+    }, React.createElement("b", null, window.__DATA.fmtDate(h.date)), h.hours !== "" && h.hours != null ? ` · ${Number(h.hours).toLocaleString("th-TH")} ชม.` : "", " \xB7 \u0E42\u0E14\u0E22 ", h.by || "—", h.note ? React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, " \xB7 ", h.note) : null))));
+  })(), (m.driveLink1 || m.driveLink2 || m.driveLinkPL) && React.createElement("div", {
     style: {
       marginTop: 14,
       display: "grid",
@@ -13508,7 +14661,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 6704) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7203) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -13587,7 +14740,15 @@ function WithdrawalPaperPreview({
     className: "withdrawal-paper"
   }, React.createElement("div", {
     className: "paper-head"
-  }, React.createElement("div", null, React.createElement(WithdrawalLogo, null)), React.createElement("div", {
+  }, React.createElement("div", null, React.createElement("img", {
+    src: window.PNM_LOGO_DATAURL,
+    alt: "\u0E42\u0E25\u0E42\u0E01\u0E49 \u0E1A\u0E23\u0E34\u0E29\u0E31\u0E17 \u0E1E\u0E32\u0E19\u0E32\u0E21\u0E13\u0E35 \u0E08\u0E33\u0E01\u0E31\u0E14",
+    style: {
+      display: "block",
+      width: 117,
+      height: "auto"
+    }
+  })), React.createElement("div", {
     className: "paper-title-block"
   }, React.createElement("div", {
     className: "company"
@@ -13665,7 +14826,8 @@ function WithdrawalPaperPreview({
   }), React.createElement("div", null, "\u0E1C\u0E39\u0E49\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34")))));
 }
 function Withdrawals({
-  user
+  user,
+  view = "docs"
 }) {
   const canEdit = ["Admin", "Officer", "Director", "Engineer"].includes(user.role);
   const [rows, setRows] = React.useState(() => window.__DATA.withdrawals || []);
@@ -13684,6 +14846,13 @@ function Withdrawals({
         year: "numeric"
       }) : v || "";
     };
+    const money = v => {
+      const n = Number(v);
+      return n ? n.toLocaleString("th-TH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }) : v === undefined || v === "" || v === null ? "" : "-";
+    };
     const items = parseItems(doc).map((x, i) => ({
       ...x,
       no: i + 1
@@ -13695,8 +14864,8 @@ function Withdrawals({
       unit: "",
       remark: ""
     });
-    const trs = items.map(item => `<tr><td>${item.no}</td><td style="text-align:left;padding-left:8px">${item.name || ""}</td><td>${item.qty || ""}</td><td>${item.unit || ""}</td><td>-</td><td>-</td><td>-</td><td>-</td><td style="text-align:left">${item.remark || ""}</td></tr>`).join("");
-    return `<div style="font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:21mm 9mm 12mm;background:#fff;box-sizing:border-box;position:relative"><style>table.wd{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:40px}table.wd th,table.wd td{border:1px solid #000;padding:1px 4px;height:24px;line-height:1.05;text-align:center;vertical-align:middle}table.wd th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap;overflow:hidden}</style><div style="display:grid;grid-template-columns:38mm 1fr 50mm;gap:5mm;align-items:start;margin-bottom:6mm;position:relative;min-height:32mm"><div>${logoSvg}</div><div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:90mm;text-align:center"><div style="font-size:25px;font-weight:400">บริษัท พานามณี จำกัด</div><div style="font-size:24px;font-weight:400;margin-top:1mm">ใบขอเบิก/ขอสั่งซื้อ</div></div><div></div></div><div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;font-weight:400;margin-bottom:7mm"><div>เลขที่ใบเบิก <span style="border-bottom:1px dotted #000;display:inline-block;min-width:34mm;text-align:center">${doc.docNo || ""}</span></div><div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:36mm;text-align:center">${fmt(doc.docDate)}</span></div></div><div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;font-weight:400;margin-bottom:10mm"><span>หน่วยงาน</span><span style="border-bottom:1px dotted #000;display:inline-block;flex:1;padding-left:4mm">${doc.department || doc.project || ""}</span></div><table class="wd"><thead><tr><th rowspan="2" style="width:11mm">ลำดับ</th><th rowspan="2" style="width:53mm">รายการ</th><th colspan="2" style="width:34mm">จำนวนเบิก/ขอสั่งซื้อ</th><th rowspan="2" style="width:21mm">ยอดคงเหลือ</th><th rowspan="2" style="width:22mm">วันที่เบิกล่าสุด</th><th rowspan="2" style="width:15mm">ราคา</th><th rowspan="2" style="width:18mm">จำนวนเงิน</th><th rowspan="2">หมายเหตุ</th></tr><tr><th>จำนวน</th><th>หน่วยนับ</th></tr></thead><tbody>${trs}</tbody></table><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:7mm;font-size:17px;text-align:center"><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ขอเบิก/ขอสั่งซื้อ</div></div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ตรวจสอบ</div></div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div></div></div></div>`;
+    const trs = items.map(item => `<tr><td>${item.no}</td><td style="text-align:left;padding-left:8px">${item.name || ""}</td><td>${item.qty || ""}</td><td>${item.unit || ""}</td><td>-</td><td>-</td><td>${money(item.unitPrice)}</td><td>${money(item.amount)}</td><td style="text-align:left">${item.remark || ""}</td></tr>`).join("");
+    return `<div style="font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:21mm 9mm 12mm;background:#fff;box-sizing:border-box;position:relative"><style>table.wd{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:40px}table.wd th,table.wd td{border:1px solid #000;padding:1px 4px;height:24px;line-height:1.05;text-align:center;vertical-align:middle}table.wd th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap;overflow:hidden}</style><div style="display:grid;grid-template-columns:38mm 1fr 50mm;gap:5mm;align-items:start;margin-bottom:6mm;position:relative;min-height:32mm"><div>${logoSvg}</div><div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:90mm;text-align:center"><div style="font-size:25px;font-weight:400">บริษัท พานามณี จำกัด</div><div style="font-size:24px;font-weight:400;margin-top:1mm">ใบขอเบิก/ขอสั่งซื้อ</div></div><div></div></div><div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;font-weight:400;margin-bottom:7mm"><div>เลขที่ใบเบิก <span style="border-bottom:1px dotted #000;display:inline-block;min-width:34mm;text-align:center">${doc.docNo || ""}</span></div><div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:36mm;text-align:center">${fmt(doc.docDate)}</span></div></div><div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;font-weight:400;margin-bottom:10mm"><span>หน่วยงาน</span><span style="border-bottom:1px dotted #000;display:inline-block;flex:1;padding-left:4mm">${doc.department || doc.project || ""}</span></div><table class="wd"><thead><tr><th rowspan="2" style="width:11mm">ลำดับ</th><th rowspan="2" style="width:53mm">รายการ</th><th colspan="2" style="width:34mm">จำนวนเบิก/ขอสั่งซื้อ</th><th rowspan="2" style="width:21mm">ยอดคงเหลือ</th><th rowspan="2" style="width:22mm">วันที่เบิกล่าสุด</th><th rowspan="2" style="width:15mm">ราคา</th><th rowspan="2" style="width:18mm">จำนวนเงิน</th><th rowspan="2">หมายเหตุ</th></tr><tr><th>จำนวน</th><th>หน่วยนับ</th></tr></thead><tbody>${trs}</tbody></table><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:7mm;font-size:17px;text-align:center"><div><div style="height:10mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.requesterId, "display:block;max-height:10mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้ขอเบิก/ขอสั่งซื้อ</div>${doc.requester ? `<div style="font-size:14px;color:#333">(${String(doc.requester).replace(/</g, "&lt;")})</div>` : ""}</div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ตรวจสอบ</div></div><div><div style="height:10mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div></div></div></div>`;
   };
   const pdfName = doc => `${clean(doc.docNo || "withdrawal").replace(/[\\/:*?"<>|]/g, "-")}.pdf`;
   const downloadPdf = async doc => {
@@ -13706,7 +14875,7 @@ function Withdrawals({
         allowOutsideClick: false,
         didOpen: () => Swal.showLoading()
       });
-      await window.__loadPdf();
+      await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.requesterId])]);
       Swal.close();
     } catch (e) {
       Swal.fire({
@@ -13744,10 +14913,21 @@ function Withdrawals({
   };
   const save = async form => {
     const key = form.key || safeKey(form.docNo);
+    if (!form.key && rows.some(x => x.key === key)) {
+      Swal.fire({
+        icon: "warning",
+        title: "เลขที่ใบเบิกซ้ำ",
+        text: `มีใบเบิกเลขที่ ${form.docNo} อยู่แล้ว`
+      });
+      return;
+    }
+    const prev = rows.find(x => x.key === form.key) || {};
+    const requesterId = window.__SIG.resolve(form.requester, prev.requester, prev.requesterId, user);
     const saved = await window.api("upsertWithdrawal", {
       key,
       doc: {
         ...form,
+        requesterId,
         id: form.docNo || key
       }
     });
@@ -13782,7 +14962,342 @@ function Withdrawals({
       window.__DATA.withdrawals = upd;
     }
   };
+  const tab = view;
+  const [pendProj, setPendProj] = React.useState("");
+  const pending = React.useMemo(() => {
+    const list = [];
+    rows.forEach(doc => parseItems(doc).forEach((it, idx) => {
+      if (it && it.supplied) return;
+      if (!String(it && it.name || "").trim()) return;
+      list.push({
+        doc,
+        it,
+        idx,
+        project: doc.project || "— ไม่ระบุโครงการ —"
+      });
+    }));
+    return list;
+  }, [rows]);
+  const pendingByProject = React.useMemo(() => {
+    const map = new Map();
+    pending.forEach(p => {
+      if (!map.has(p.project)) map.set(p.project, []);
+      map.get(p.project).push(p);
+    });
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], "th")).map(([project, list]) => ({
+      project,
+      list: list.sort((a, b) => String(a.doc.docDate || "").localeCompare(String(b.doc.docDate || "")))
+    }));
+  }, [pending]);
+  const daysSince = d => {
+    const t = new Date(d);
+    if (!d || isNaN(t)) return null;
+    const n = new Date();
+    n.setHours(0, 0, 0, 0);
+    t.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((n - t) / 86400000));
+  };
+  const reqQty = it => {
+    const n = parseFloat(String(it.qty || "").replace(/,/g, ""));
+    return isNaN(n) ? null : n;
+  };
+  const remainOf = it => {
+    const r = reqQty(it);
+    return r == null ? null : Math.max(0, r - (Number(it.suppliedQty) || 0));
+  };
+  const setSupplied = async (doc, idx) => {
+    const it = parseItems(doc)[idx] || {};
+    const remain = remainOf(it);
+    const esc = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    const res = await Swal.fire({
+      title: "บันทึกการจัดหา",
+      html: `<div style="text-align:left;font-size:14px;display:grid;gap:10px">
+        <div><b>${esc(it.name)}</b><div style="font-size:12.5px;color:#64748B">ขอเบิก ${esc(it.qty || "-")} ${esc(it.unit || "")}${Number(it.suppliedQty) ? ` · จัดหาไปแล้ว ${esc(it.suppliedQty)} · ค้าง ${esc(remain)}` : ""}</div></div>
+        <label>จัดหาได้จำนวน (${esc(it.unit || "หน่วย")})<input id="sp-qty" type="number" min="0" step="any" class="swal2-input" style="margin:4px 0 0;width:100%" value="${remain == null ? "" : esc(remain)}"></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label>ราคาต่อหน่วย (บาท)<input id="sp-price" type="number" min="0" step="any" class="swal2-input" style="margin:4px 0 0;width:100%" value="${it.unitPrice ? esc(it.unitPrice) : ""}" placeholder="0.00"></label>
+          <label>จำนวนเงิน (บาท)<input id="sp-amount" type="number" min="0" step="any" class="swal2-input" style="margin:4px 0 0;width:100%" placeholder="คำนวณให้อัตโนมัติ"></label>
+        </div>
+        <label>วันที่<input id="sp-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${window.__DATA.fmtDate(new Date())}"></label>
+        <label>หมายเหตุ (เช่น ซื้อจากร้าน, เลขที่ PO)<input id="sp-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
+        ${doc.project ? `<label style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;background:#ECFEFF;border:1px solid #A5F3FC;border-radius:8px;cursor:pointer"><input id="sp-stock" type="checkbox" checked style="margin-top:3px;width:16px;height:16px"><span>ส่งของเข้า <b>สต๊อกหน้างาน</b> โครงการ <b>${esc(doc.project)}</b>${doc.department && doc.department !== doc.project ? ` (${esc(doc.department)})` : ""}<br><span style="font-size:12px;color:#64748B">ถ้ายังไม่มีรายการนี้ในคลังของโครงการ ระบบจะสร้างให้</span></span></label>` : `<div style="font-size:12.5px;color:#B45309">ใบเบิกนี้ไม่ได้ระบุโครงการ — จะไม่ส่งเข้าสต๊อกหน้างาน</div>`}
+      </div>`,
+      showCancelButton: true,
+      confirmButtonText: "บันทึก",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#1E40AF",
+      didOpen: () => {
+        const q = document.getElementById("sp-qty"),
+          pr = document.getElementById("sp-price"),
+          am = document.getElementById("sp-amount");
+        let manual = false;
+        const calc = () => {
+          if (manual) return;
+          const v = (Number(q.value) || 0) * (Number(pr.value) || 0);
+          am.value = v ? String(Math.round(v * 100) / 100) : "";
+        };
+        q.addEventListener("input", calc);
+        pr.addEventListener("input", calc);
+        am.addEventListener("input", () => {
+          manual = am.value !== "";
+        });
+        calc();
+      },
+      preConfirm: () => {
+        const q = Number(document.getElementById("sp-qty").value);
+        if (!(q > 0)) {
+          Swal.showValidationMessage("กรอกจำนวนที่จัดหาได้");
+          return false;
+        }
+        const price = Number(document.getElementById("sp-price").value) || 0;
+        const amount = Number(document.getElementById("sp-amount").value) || Math.round(q * price * 100) / 100;
+        const st = document.getElementById("sp-stock");
+        return {
+          qty: q,
+          price,
+          amount,
+          toStock: !!(st && st.checked),
+          date: document.getElementById("sp-date").value || window.__DATA.fmtDate(new Date()),
+          note: document.getElementById("sp-note").value.trim()
+        };
+      }
+    });
+    if (!res.isConfirmed) return;
+    const v = res.value;
+    const total = (Number(it.suppliedQty) || 0) + v.qty;
+    const r = reqQty(it);
+    const done = r == null || total >= r;
+    let stockRes = null;
+    if (v.toStock && doc.project) {
+      try {
+        Swal.fire({
+          title: "กำลังส่งของเข้าสต๊อกหน้างาน...",
+          allowOutsideClick: false,
+          didOpen: () => Swal.showLoading()
+        });
+        stockRes = await window.api("receiveToStock", {
+          project: doc.project,
+          name: it.name,
+          unit: it.unit,
+          qty: v.qty,
+          date: v.date,
+          ref: doc.docNo || "",
+          receiver: "จัดซื้อ/จัดหา",
+          note: [`จากใบเบิก ${doc.docNo || ""}`, v.note].filter(Boolean).join(" · "),
+          by: user.name || "",
+          byId: user.id
+        });
+        window.__DATA.siteStock = null;
+        Swal.close();
+      } catch (err) {
+        const {
+          isConfirmed
+        } = await Swal.fire({
+          icon: "warning",
+          title: "ส่งเข้าสต๊อกหน้างานไม่สำเร็จ",
+          text: (err.message || String(err)) + " · บันทึกการจัดหาต่อโดยไม่เข้าสต๊อกหรือไม่?",
+          showCancelButton: true,
+          confirmButtonText: "บันทึกต่อ",
+          cancelButtonText: "ยกเลิก",
+          confirmButtonColor: "#1E40AF"
+        });
+        if (!isConfirmed) return;
+      }
+    }
+    const log = [...(Array.isArray(it.supplyLog) ? it.supplyLog : []), {
+      qty: v.qty,
+      price: v.price,
+      amount: v.amount,
+      date: v.date,
+      note: v.note,
+      by: user.name || "",
+      toStock: !!stockRes,
+      stockItemKey: stockRes ? stockRes.itemKey : "",
+      stockMoveKey: stockRes && stockRes.move ? stockRes.move.key : ""
+    }];
+    const amountTotal = log.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+    const items = parseItems(doc).map((x, i) => i !== idx ? x : {
+      ...x,
+      suppliedQty: total,
+      supplyLog: log,
+      supplied: done,
+      unitPrice: v.price || x.unitPrice || "",
+      amount: amountTotal ? Math.round(amountTotal * 100) / 100 : x.amount || "",
+      suppliedAt: done ? v.date : x.suppliedAt || "",
+      suppliedBy: done ? user.name || "" : x.suppliedBy || ""
+    });
+    try {
+      await window.api("upsertWithdrawal", {
+        key: doc.key,
+        doc: {
+          ...doc,
+          items
+        }
+      });
+      const upd = rows.map(x => x.key === doc.key ? {
+        ...x,
+        items
+      } : x);
+      setRows(upd);
+      window.__DATA.withdrawals = upd;
+      Swal.fire({
+        icon: "success",
+        title: done ? "จัดหาครบแล้ว" : `บันทึกแล้ว · ยังค้าง ${(r - total).toLocaleString("th-TH")} ${it.unit || ""}`,
+        text: stockRes ? `ส่งเข้าสต๊อกหน้างาน ${doc.project} แล้ว · คงเหลือ ${Number(stockRes.balance).toLocaleString("th-TH")} ${it.unit || ""}${stockRes.createdItem ? " (สร้างรายการใหม่)" : ""}` : "",
+        timer: 2600,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    }
+  };
+  const supplyCount = doc => {
+    const it = parseItems(doc).filter(x => String(x && x.name || "").trim());
+    return {
+      done: it.filter(x => x.supplied).length,
+      total: it.length
+    };
+  };
   const filtered = rows.filter(x => !q || [x.docNo, x.docDate, x.project, x.department, x.requester].join(" ").toLowerCase().includes(q.toLowerCase()));
+  const tabBar = tab === "pending" && pendingByProject.length > 0 ? React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap",
+      padding: "0 16px 12px"
+    }
+  }, React.createElement("select", {
+    value: pendProj,
+    onChange: e => setPendProj(e.target.value),
+    style: {
+      maxWidth: 260
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (", pendingByProject.length, ")"), pendingByProject.map(g => React.createElement("option", {
+    key: g.project,
+    value: g.project
+  }, g.project, " (", g.list.length, ")")))) : null;
+  if (tab === "pending") return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "filters",
+    style: {
+      paddingBottom: 6
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 14
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-cart-shopping",
+    style: {
+      color: "#D97706",
+      marginRight: 8
+    }
+  }), "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E0B\u0E37\u0E49\u0E2D/\u0E08\u0E31\u0E14\u0E2B\u0E32"), React.createElement("div", {
+    className: "spacer"
+  }), React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: "var(--muted)",
+      alignSelf: "center"
+    }
+  }, "\u0E23\u0E27\u0E21 ", pending.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 ", pendingByProject.length, " \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23")), tabBar, pendingByProject.length === 0 ? React.createElement("div", {
+    className: "empty",
+    style: {
+      padding: 30
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-check",
+    style: {
+      color: "#10B981"
+    }
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E04\u0E49\u0E32\u0E07\u0E08\u0E31\u0E14\u0E2B\u0E32"), React.createElement("div", null, "\u0E17\u0E38\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E43\u0E19\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01\u0E16\u0E39\u0E01\u0E08\u0E31\u0E14\u0E2B\u0E32\u0E04\u0E23\u0E1A\u0E41\u0E25\u0E49\u0E27")) : pendingByProject.filter(g => !pendProj || g.project === pendProj).map(g => React.createElement("div", {
+    key: g.project,
+    style: {
+      padding: "0 16px 16px"
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "8px 0",
+      borderTop: "2px solid var(--line)",
+      fontWeight: 600,
+      fontSize: 13.5
+    }
+  }, g.project.startsWith("—") ? g.project : React.createElement(ProjectLabel, {
+    name: g.project
+  }), React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      color: "var(--muted)",
+      fontSize: 12.5
+    }
+  }, g.list.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E23\u0E2D\u0E08\u0E31\u0E14\u0E2B\u0E32")), React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19"), React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E02\u0E2D"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01"), React.createElement("th", null, "\u0E23\u0E2D\u0E21\u0E32\u0E41\u0E25\u0E49\u0E27"), canEdit && React.createElement("th", null))), React.createElement("tbody", null, g.list.map(p => {
+    const age = daysSince(p.doc.docDate);
+    return React.createElement("tr", {
+      key: p.doc.key + ":" + p.idx
+    }, React.createElement("td", null, React.createElement("div", {
+      className: "cell-title"
+    }, p.it.name), p.it.remark && React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--muted)"
+      }
+    }, p.it.remark)), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, p.it.qty || "-", " ", p.it.unit || "", Number(p.it.suppliedQty) > 0 && React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: "#B45309"
+      },
+      title: (p.it.supplyLog || []).map(l => `${l.date} จัดหา ${l.qty}${l.price ? ` @${l.price}` : ""}${l.amount ? ` = ${l.amount} บ.` : ""} โดย ${l.by}${l.note ? " (" + l.note + ")" : ""}`).join(" | ")
+    }, "\u0E08\u0E31\u0E14\u0E2B\u0E32\u0E41\u0E25\u0E49\u0E27 ", Number(p.it.suppliedQty).toLocaleString("th-TH"), " \xB7 \u0E04\u0E49\u0E32\u0E07 ", remainOf(p.it) == null ? "-" : remainOf(p.it).toLocaleString("th-TH"), Number(p.it.amount) > 0 && React.createElement(React.Fragment, null, " \xB7 ", Number(p.it.amount).toLocaleString("th-TH", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }), " \u0E1A."))), React.createElement("td", null, React.createElement("span", {
+      className: "ticket-id"
+    }, p.doc.docNo || "-")), React.createElement("td", {
+      className: "hide-on-mobile"
+    }, p.doc.docDate || "-"), React.createElement("td", {
+      className: "hide-on-mobile"
+    }, p.doc.requester || "-"), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap",
+        color: age > 14 ? "#B91C1C" : age > 7 ? "#B45309" : "inherit",
+        fontWeight: age > 7 ? 600 : 400
+      }
+    }, age == null ? "-" : `${age} วัน`), canEdit && React.createElement("td", null, React.createElement("button", {
+      className: "btn btn-sm btn-primary",
+      onClick: () => setSupplied(p.doc, p.idx)
+    }, React.createElement("i", {
+      className: "fa-solid fa-check"
+    }), " \u0E08\u0E31\u0E14\u0E2B\u0E32\u0E41\u0E25\u0E49\u0E27")));
+  }))))))));
   return React.createElement(React.Fragment, null, React.createElement("div", {
     className: "card"
   }, React.createElement("div", {
@@ -13804,7 +15319,7 @@ function Withdrawals({
       docDate: window.__DATA.fmtDate(new Date()),
       project: "",
       department: "",
-      requester: "",
+      requester: user.name || "",
       items: [{
         name: "",
         qty: "",
@@ -13815,33 +15330,53 @@ function Withdrawals({
     })
   }, React.createElement("i", {
     className: "fa-solid fa-plus"
-  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E1A\u0E34\u0E01")), React.createElement("div", {
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E1A\u0E34\u0E01")), tabBar, React.createElement("div", {
     className: "table-wrap"
   }, React.createElement("table", {
     className: "data"
-  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19/\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01"), React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "PDF"), React.createElement("th", null))), React.createElement("tbody", null, filtered.map(doc => React.createElement("tr", {
-    key: doc.key || doc.docNo
-  }, React.createElement("td", null, React.createElement("span", {
-    className: "ticket-id"
-  }, doc.docNo || "-")), React.createElement("td", null, doc.docDate || "-"), React.createElement("td", null, doc.department || doc.project || "-"), React.createElement("td", null, doc.requester || "-"), React.createElement("td", null, parseItems(doc).length.toLocaleString("th-TH")), React.createElement("td", null, React.createElement("button", {
-    className: "btn btn-sm btn-ghost",
-    onClick: () => downloadPdf(doc)
-  }, React.createElement("i", {
-    className: "fa-solid fa-file-pdf"
-  }), " PDF")), React.createElement("td", null, canEdit && React.createElement("div", {
-    className: "row-actions"
-  }, React.createElement("button", {
-    className: "ia",
-    onClick: () => setEdit(doc)
-  }, React.createElement("i", {
-    className: "fa-solid fa-pen"
-  })), React.createElement("button", {
-    className: "ia danger",
-    onClick: () => remove(doc)
-  }, React.createElement("i", {
-    className: "fa-solid fa-trash"
-  })))))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
-    colSpan: "7"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19/\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01"), React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E2B\u0E32\u0E41\u0E25\u0E49\u0E27"), React.createElement("th", null, "PDF"), React.createElement("th", null))), React.createElement("tbody", null, filtered.map(doc => {
+    const sc = supplyCount(doc);
+    return React.createElement("tr", {
+      key: doc.key || doc.docNo
+    }, React.createElement("td", null, React.createElement("span", {
+      className: "ticket-id"
+    }, doc.docNo || "-")), React.createElement("td", null, doc.docDate || "-"), React.createElement("td", null, doc.project || doc.department || "-", doc.department && doc.project && doc.department !== doc.project && React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--muted)"
+      }
+    }, doc.department)), React.createElement("td", null, doc.requester || "-"), React.createElement("td", null, parseItems(doc).length.toLocaleString("th-TH")), React.createElement("td", null, React.createElement("span", {
+      className: "badge",
+      style: sc.total && sc.done === sc.total ? {
+        background: "#DCFCE7",
+        color: "#166534"
+      } : sc.done ? {
+        background: "#FEF3C7",
+        color: "#92400E"
+      } : {
+        background: "#FEE2E2",
+        color: "#B91C1C"
+      }
+    }, sc.done, "/", sc.total)), React.createElement("td", null, React.createElement("button", {
+      className: "btn btn-sm btn-ghost",
+      onClick: () => downloadPdf(doc)
+    }, React.createElement("i", {
+      className: "fa-solid fa-file-pdf"
+    }), " PDF")), React.createElement("td", null, canEdit && React.createElement("div", {
+      className: "row-actions"
+    }, React.createElement("button", {
+      className: "ia",
+      onClick: () => setEdit(doc)
+    }, React.createElement("i", {
+      className: "fa-solid fa-pen"
+    })), React.createElement("button", {
+      className: "ia danger",
+      onClick: () => remove(doc)
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
+    })))));
+  }), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: "8"
   }, React.createElement("div", {
     className: "empty"
   }, React.createElement("i", {
@@ -13850,30 +15385,116 @@ function Withdrawals({
     className: "t"
   }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E1A\u0E34\u0E01\u0E02\u0E2D\u0E07"), React.createElement("div", null, "\u0E01\u0E14\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E1A\u0E34\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19")))))))), edit && React.createElement(WithdrawalForm, {
     initial: edit,
+    user: user,
+    rows: rows,
     onClose: () => setEdit(null),
     onSave: save
   }));
 }
+window.withdrawalPendingCount = function () {
+  let n = 0;
+  (window.__DATA.withdrawals || []).forEach(doc => (Array.isArray(doc.items) ? doc.items : []).forEach(it => {
+    if (it && !it.supplied && String(it.name || "").trim()) n++;
+  }));
+  return n;
+};
+window.nextWithdrawalNo = function (project, docDate, rows) {
+  if (!project) return "";
+  const code = String(window.getProjectCode(project) || project).trim().replace(/\s+/g, "-").toUpperCase();
+  const d = docDate ? new Date(docDate) : new Date();
+  const dt = isNaN(d) ? new Date() : d;
+  const prefix = "PR-" + code + "-" + String(dt.getFullYear() + 543) + String(dt.getMonth() + 1).padStart(2, "0") + "/";
+  let max = 0;
+  (rows || window.__DATA.withdrawals || []).forEach(x => {
+    const t = String(x.docNo || "");
+    if (t.slice(0, prefix.length) === prefix) {
+      const n = parseInt(t.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(3, "0");
+};
 function WithdrawalForm({
   initial,
+  user,
+  rows,
   onClose,
   onSave
 }) {
+  const isNew = !initial.key;
   const [f, setF] = React.useState(initial);
+  const [autoNo, setAutoNo] = React.useState(isNew);
   const [items, setItems] = React.useState(() => Array.isArray(initial.items) && initial.items.length ? initial.items : [{
     name: "",
     qty: "",
     unit: "",
     remark: ""
   }]);
+  const projects = React.useMemo(() => window.visibleProjects(user), [user]);
+  const projOptions = cur => {
+    const list = projects.map(p => ({
+      value: p.name,
+      label: (p.code ? `[${p.code}] ` : "") + p.name
+    }));
+    if (cur && !list.some(o => o.value === cur)) list.unshift({
+      value: cur,
+      label: cur + " (ข้อมูลเดิม)"
+    });
+    return list;
+  };
+  React.useEffect(() => {
+    if (!autoNo) return;
+    setF(p => ({
+      ...p,
+      docNo: window.nextWithdrawalNo(p.project, p.docDate, rows)
+    }));
+  }, [autoNo, f.project, f.docDate]);
   const up = (k, v) => setF(p => ({
     ...p,
     [k]: v
+  }));
+  const setProject = v => setF(p => ({
+    ...p,
+    project: v,
+    department: !p.department || p.department === p.project ? v : p.department
   }));
   const upItem = (i, k, v) => setItems(prev => prev.map((x, idx) => idx === i ? {
     ...x,
     [k]: v
   } : x));
+  const userOpts = cur => {
+    const names = [...new Set((window.__DATA.users || []).map(u => String(u.name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th"));
+    if (cur && !names.includes(cur)) names.unshift(cur);
+    return names;
+  };
+  const knownItems = React.useMemo(() => {
+    const map = new Map();
+    const add = (name, unit) => {
+      const n = String(name || "").trim();
+      if (!n) return;
+      const k = n.toLowerCase();
+      const cur = map.get(k) || {
+        name: n,
+        unit: "",
+        count: 0
+      };
+      cur.count++;
+      if (!cur.unit && unit) cur.unit = String(unit).trim();
+      map.set(k, cur);
+    };
+    (rows || window.__DATA.withdrawals || []).forEach(d => (Array.isArray(d.items) ? d.items : []).forEach(it => add(it && it.name, it && it.unit)));
+    (window.__DATA.siteStock && window.__DATA.siteStock.items || []).forEach(it => add(it.name, it.unit));
+    return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "th"));
+  }, [rows]);
+  const pickName = (i, v) => setItems(prev => prev.map((x, idx) => {
+    if (idx !== i) return x;
+    const hit = knownItems.find(k => k.name === v);
+    return {
+      ...x,
+      name: v,
+      unit: hit && hit.unit && !String(x.unit || "").trim() ? hit.unit : x.unit
+    };
+  }));
   const addItem = () => setItems(prev => [...prev, {
     name: "",
     qty: "",
@@ -13887,13 +15508,21 @@ function WithdrawalForm({
     remark: ""
   }] : prev.filter((_, idx) => idx !== i));
   const cleanItems = items.map(x => ({
+    ...x,
     name: String(x.name || "").trim(),
     qty: String(x.qty || "").trim(),
     unit: String(x.unit || "").trim(),
     remark: String(x.remark || "").trim()
   })).filter(x => x.name || x.qty || x.unit || x.remark);
   const submit = e => {
-    e.preventDefault();
+    e && e.preventDefault && e.preventDefault();
+    if (!f.project) {
+      Swal.fire({
+        icon: "warning",
+        title: "เลือกโครงการก่อน"
+      });
+      return;
+    }
     if (!String(f.docNo || "").trim()) {
       Swal.fire({
         icon: "warning",
@@ -13910,6 +15539,7 @@ function WithdrawalForm({
     }
     onSave({
       ...f,
+      docNo: String(f.docNo).trim(),
       items: cleanItems
     });
   };
@@ -13939,10 +15569,61 @@ function WithdrawalForm({
     className: "form-grid"
   }, React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01 *"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("select", {
+    value: f.project || "",
+    onChange: e => setProject(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014"), projOptions(f.project).map(o => React.createElement("option", {
+    key: o.value,
+    value: o.value
+  }, o.label))), projects.length === 0 && React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "#92400E",
+      marginTop: 4
+    }
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014 \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E17\u0E35\u0E48 \u0E23\u0E30\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23 \u2192 \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23")), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19"), React.createElement("select", {
+    value: f.department || "",
+    onChange: e => up("department", e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19 \u2014"), projOptions(f.department).map(o => React.createElement("option", {
+    key: o.value,
+    value: o.value
+  }, o.label)))), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E40\u0E1A\u0E34\u0E01 * ", autoNo ? React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      fontSize: 11.5,
+      color: "#047857"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-wand-magic-sparkles"
+  }), " \u0E2D\u0E2D\u0E01\u0E40\u0E25\u0E02\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34\u0E15\u0E32\u0E21\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23") : isNew && React.createElement("button", {
+    type: "button",
+    onClick: () => setAutoNo(true),
+    style: {
+      border: "none",
+      background: "none",
+      color: "var(--primary)",
+      fontSize: 11.5,
+      cursor: "pointer",
+      padding: 0
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate"
+  }), " \u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E40\u0E25\u0E02\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34")), React.createElement("input", {
+    className: "mono",
     value: f.docNo || "",
-    onChange: e => up("docNo", e.target.value),
-    placeholder: "PN-202604-017"
+    onChange: e => {
+      setAutoNo(false);
+      up("docNo", e.target.value);
+    },
+    placeholder: f.project ? "" : "เลือกโครงการก่อน ระบบจะออกเลขให้"
   })), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("input", {
@@ -13951,23 +15632,15 @@ function WithdrawalForm({
     onChange: e => up("docDate", e.target.value)
   })), React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01"), React.createElement("select", {
     value: f.requester || "",
     onChange: e => up("requester", e.target.value)
-  })), React.createElement("div", {
-    className: "form-field"
-  }, React.createElement("label", null, "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E07\u0E32\u0E19"), React.createElement("input", {
-    value: f.department || "",
-    onChange: e => up("department", e.target.value)
-  })), React.createElement("div", {
-    className: "form-field",
-    style: {
-      gridColumn: "1/-1"
-    }
-  }, React.createElement("label", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("input", {
-    value: f.project || "",
-    onChange: e => up("project", e.target.value)
-  })), React.createElement("div", {
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1C\u0E39\u0E49\u0E40\u0E1A\u0E34\u0E01 \u2014"), userOpts(f.requester).map(n => React.createElement("option", {
+    key: n,
+    value: n
+  }, n)))), React.createElement("div", {
     className: "form-field",
     style: {
       gridColumn: "1/-1"
@@ -14005,7 +15678,9 @@ function WithdrawalForm({
     }
   }, idx + 1), React.createElement("td", null, React.createElement("input", {
     value: item.name || "",
-    onChange: e => upItem(idx, "name", e.target.value)
+    list: "wd-item-names",
+    onChange: e => pickName(idx, e.target.value),
+    placeholder: "\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E40\u0E04\u0E22\u0E40\u0E1A\u0E34\u0E01"
   })), React.createElement("td", null, React.createElement("input", {
     value: item.qty || "",
     onChange: e => upItem(idx, "qty", e.target.value)
@@ -14021,7 +15696,12 @@ function WithdrawalForm({
     onClick: () => removeItem(idx)
   }, React.createElement("i", {
     className: "fa-solid fa-trash"
-  })))))))), React.createElement("button", {
+  })))))))), React.createElement("datalist", {
+    id: "wd-item-names"
+  }, knownItems.map(k => React.createElement("option", {
+    key: k.name,
+    value: k.name
+  }, k.unit ? `หน่วย: ${k.unit}` : "", k.count > 1 ? ` · เบิกแล้ว ${k.count} ครั้ง` : ""))), React.createElement("button", {
     type: "button",
     className: "btn btn-ghost btn-sm",
     style: {
@@ -14030,7 +15710,13 @@ function WithdrawalForm({
     onClick: addItem
   }, React.createElement("i", {
     className: "fa-solid fa-plus"
-  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E41\u0E16\u0E27\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23")), React.createElement("div", {
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E41\u0E16\u0E27\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), knownItems.length > 0 && React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginLeft: 10
+    }
+  }, "\u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E21\u0E35\u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E17\u0E35\u0E48\u0E40\u0E04\u0E22\u0E40\u0E1A\u0E34\u0E01 ", knownItems.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E40\u0E15\u0E34\u0E21\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E43\u0E2B\u0E49\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34")), React.createElement("div", {
     className: "form-field",
     style: {
       gridColumn: "1/-1"
@@ -14057,6 +15743,1611 @@ function WithdrawalForm({
     doc: f,
     items: items
   })));
+}
+const STOCK_MANAGE_ROLES = ["Admin", "Director", "Officer", "Engineer"];
+const STOCK_IMPORT_COLS = ["โครงการ", "ไซต์งานย่อย", "รหัส", "รายการ", "หมวด", "หน่วย", "ขั้นต่ำ", "ยอดยกมา", "ที่เก็บ", "หมายเหตุ"];
+const STOCK_TYPE = {
+  in: {
+    label: "รับเข้า",
+    color: "#047857",
+    bg: "#DCFCE7",
+    icon: "fa-arrow-down",
+    sign: "+"
+  },
+  out: {
+    label: "เบิกจ่าย",
+    color: "#B91C1C",
+    bg: "#FEE2E2",
+    icon: "fa-arrow-up",
+    sign: "−"
+  },
+  adjust: {
+    label: "ปรับยอด",
+    color: "#6D28D9",
+    bg: "#EDE9FE",
+    icon: "fa-scale-balanced",
+    sign: "±"
+  }
+};
+const nextStockRef = (type, project, moves) => {
+  const code = String(window.getProjectCode(project) || project || "").trim().replace(/\s+/g, "-").toUpperCase();
+  const d = new Date();
+  const prefix = (type === "in" ? "SI" : "SO") + "-" + code + "-" + String(d.getFullYear() + 543) + String(d.getMonth() + 1).padStart(2, "0") + "/";
+  let max = 0;
+  (moves || []).forEach(m => {
+    const t = String(m.ref || "");
+    if (t.slice(0, prefix.length) === prefix) {
+      const n = parseInt(t.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(3, "0");
+};
+const fmtQty = n => (Number(n) || 0).toLocaleString("th-TH", {
+  maximumFractionDigits: 2
+});
+function SiteStock({
+  user
+}) {
+  const role = window.effectiveRole ? window.effectiveRole(user) : user.role;
+  const canManage = STOCK_MANAGE_ROLES.includes(role);
+  const [data, setData] = React.useState(() => window.__DATA.siteStock || null);
+  const [err, setErr] = React.useState("");
+  const [tab, setTab] = React.useState("stock");
+  const [project, setProject] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const [lowOnly, setLowOnly] = React.useState(false);
+  const [typeF, setTypeF] = React.useState("");
+  const [editItem, setEditItem] = React.useState(null);
+  const [move, setMove] = React.useState(null);
+  const [newItemKey, setNewItemKey] = React.useState(null);
+  const importRef = React.useRef(null);
+  const load = React.useCallback(() => {
+    setErr("");
+    window.api("loadStock").then(d => {
+      window.__DATA.siteStock = d;
+      setData(d);
+    }).catch(e => setErr(e.message || String(e)));
+  }, []);
+  React.useEffect(() => {
+    if (!data) load();
+  }, []);
+  const commit = fn => setData(prev => {
+    const next = fn(prev);
+    window.__DATA.siteStock = next;
+    return next;
+  });
+  const projects = React.useMemo(() => window.visibleProjects(user), [user]);
+  const items = React.useMemo(() => window.filterByUserProjects(user, data && data.items || [], "project"), [data, user]);
+  const moves = React.useMemo(() => window.filterByUserProjects(user, data && data.moves || [], "project").slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))), [data, user]);
+  const projOpts = React.useMemo(() => {
+    const names = projects.map(p => p.name);
+    items.forEach(i => {
+      if (i.project && !names.includes(i.project)) names.push(i.project);
+    });
+    return names;
+  }, [projects, items]);
+  const isLow = i => (Number(i.minQty) || 0) > 0 && (Number(i.qty) || 0) <= (Number(i.minQty) || 0);
+  const kw = q.trim().toLowerCase();
+  const shownItems = items.filter(i => (!project || i.project === project) && (!lowOnly || isLow(i)) && (!kw || [i.code, i.name, i.category, i.location, i.subSite].some(v => String(v || "").toLowerCase().includes(kw)))).sort((a, b) => String(a.project || "").localeCompare(String(b.project || ""), "th") || String(a.name || "").localeCompare(String(b.name || ""), "th", {
+    numeric: true
+  }));
+  const shownMoves = moves.filter(m => (!project || m.project === project) && (!typeF || m.type === typeF) && (!kw || [m.itemName, m.itemCode, m.ref, m.receiver, m.purpose, m.by, m.note].some(v => String(v || "").toLowerCase().includes(kw))));
+  const lowCount = items.filter(i => (!project || i.project === project) && isLow(i)).length;
+  const thisMonth = window.__DATA.fmtDate(new Date()).slice(0, 7);
+  const monthCount = type => moves.filter(m => m.type === type && (!project || m.project === project) && String(m.date || "").slice(0, 7) === thisMonth).length;
+  const saveItem = async forms => {
+    const list = Array.isArray(forms) ? forms : [forms];
+    const created = [],
+      fail = [];
+    for (const form of list) {
+      try {
+        const res = await window.api("saveStockItem", {
+          item: form,
+          by: user.name,
+          byId: user.id
+        });
+        commit(prev => ({
+          items: (prev.items || []).some(x => x.key === res.item.key) ? prev.items.map(x => x.key === res.item.key ? res.item : x) : [...(prev.items || []), res.item],
+          moves: res.move ? [...(prev.moves || []), res.move] : prev.moves || []
+        }));
+        if (!form.key) created.push(res.item.key);
+      } catch (e) {
+        fail.push(`${form.name || "-"}: ${e.message}`);
+      }
+    }
+    if (created.length && editItem && editItem.fromMove) setNewItemKey({
+      keys: created
+    });
+    if (fail.length) {
+      Swal.fire({
+        icon: created.length ? "warning" : "error",
+        title: created.length ? `เพิ่มแล้ว ${created.length} รายการ · ไม่สำเร็จ ${fail.length}` : "บันทึกไม่สำเร็จ",
+        html: "<div style='text-align:left;font-size:13px'>" + fail.map(x => "• " + String(x).replace(/</g, "&lt;")).join("<br/>") + "</div>",
+        confirmButtonColor: "#1E40AF"
+      });
+      if (!created.length) return;
+    }
+    setEditItem(null);
+    if (!fail.length) Swal.fire({
+      icon: "success",
+      title: list[0].key ? "บันทึกการแก้ไขแล้ว" : `เพิ่มรายการแล้ว ${created.length} รายการ`,
+      timer: 1300,
+      showConfirmButton: false,
+      toast: true,
+      position: "top-end"
+    });
+  };
+  const downloadTemplate = async () => {
+    try {
+      const XLSX = await ensureXLSX();
+      const ws = XLSX.utils.aoa_to_sheet([STOCK_IMPORT_COLS, [project || projOpts[0] || "ชื่อโครงการ", "", "OIL-68", "น้ำมันไฮดรอลิก 68", "น้ำมัน", "ลิตร", 20, 100, "ตู้คอนเทนเนอร์ 1", ""]]);
+      ws["!cols"] = STOCK_IMPORT_COLS.map(c => ({
+        wch: Math.max(12, c.length + 6)
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "รายการสต๊อก");
+      XLSX.writeFile(wb, "แบบฟอร์มนำเข้าสต๊อกหน้างาน.xlsx");
+    } catch (e) {
+      Swal.fire({
+        icon: "error",
+        title: "สร้างไฟล์ไม่สำเร็จ",
+        text: e.message
+      });
+    }
+  };
+  const importExcel = async file => {
+    if (!file) return;
+    try {
+      const XLSX = await ensureXLSX();
+      const wb = XLSX.read(await file.arrayBuffer(), {
+        type: "array"
+      });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+        defval: ""
+      });
+      const txt = v => String(v == null ? "" : v).trim();
+      const rowsIn = raw.map((r, i) => ({
+        line: i + 2,
+        project: txt(r["โครงการ"]),
+        subSite: txt(r["ไซต์งานย่อย"]),
+        code: txt(r["รหัส"]),
+        name: txt(r["รายการ"]),
+        category: txt(r["หมวด"]),
+        unit: txt(r["หน่วย"]),
+        minQty: Number(r["ขั้นต่ำ"]) || 0,
+        qty: Number(r["ยอดยกมา"]) || 0,
+        location: txt(r["ที่เก็บ"]),
+        note: txt(r["หมายเหตุ"])
+      })).filter(r => r.name || r.project);
+      if (!rowsIn.length) {
+        Swal.fire({
+          icon: "info",
+          title: "ไม่พบข้อมูลในไฟล์",
+          text: "ใช้หัวคอลัมน์ตามแบบฟอร์ม: " + STOCK_IMPORT_COLS.join(", ")
+        });
+        return;
+      }
+      const same = (a, b) => a.project === b.project && String(a.name || "").trim().toLowerCase() === String(b.name || "").trim().toLowerCase() && String(a.code || "") === String(b.code || "");
+      const bad = [],
+        dup = [],
+        good = [];
+      rowsIn.forEach(r => {
+        if (!r.project || !r.name || !r.unit) bad.push(`แถว ${r.line}: ต้องมี โครงการ, รายการ, หน่วย`);else if (!projOpts.includes(r.project)) bad.push(`แถว ${r.line}: ไม่พบโครงการ "${r.project}" หรือไม่มีสิทธิ์`);else if (items.some(x => same(x, r)) || good.some(x => same(x, r))) dup.push(`แถว ${r.line}: ${r.name} มีอยู่แล้วใน ${r.project}`);else good.push(r);
+      });
+      const esc = v => String(v).replace(/</g, "&lt;");
+      const {
+        isConfirmed
+      } = await Swal.fire({
+        title: `นำเข้า ${good.length} รายการ?`,
+        icon: good.length ? "question" : "warning",
+        html: `<div style="text-align:left;font-size:13px">พร้อมนำเข้า <b>${good.length}</b> รายการ` + (dup.length ? `<br/>ข้าม (มีอยู่แล้ว) ${dup.length} รายการ` : "") + (bad.length || dup.length ? `<div style="max-height:140px;overflow:auto;margin-top:6px;color:#B91C1C">${bad.concat(dup).slice(0, 30).map(x => "• " + esc(x)).join("<br/>")}</div>` : "") + `</div>`,
+        showCancelButton: true,
+        confirmButtonText: "นำเข้า",
+        cancelButtonText: "ยกเลิก",
+        confirmButtonColor: "#1E40AF",
+        showConfirmButton: good.length > 0
+      });
+      if (!isConfirmed || !good.length) return;
+      let ok = 0;
+      const fail = [];
+      for (let i = 0; i < good.length; i++) {
+        Swal.fire({
+          title: `กำลังนำเข้า ${i + 1}/${good.length}...`,
+          allowOutsideClick: false,
+          didOpen: () => Swal.showLoading()
+        });
+        const {
+          line,
+          ...item
+        } = good[i];
+        try {
+          const res = await window.api("saveStockItem", {
+            item,
+            by: user.name,
+            byId: user.id
+          });
+          ok++;
+          commit(prev => ({
+            items: [...(prev.items || []), res.item],
+            moves: res.move ? [...(prev.moves || []), res.move] : prev.moves || []
+          }));
+        } catch (e) {
+          fail.push(`แถว ${line}: ${e.message}`);
+        }
+      }
+      Swal.fire({
+        icon: fail.length ? "warning" : "success",
+        title: `นำเข้าแล้ว ${ok} รายการ` + (fail.length ? ` · ไม่สำเร็จ ${fail.length}` : ""),
+        html: fail.length ? "<div style='text-align:left;font-size:13px'>" + fail.map(x => "• " + esc(x)).join("<br/>") + "</div>" : "",
+        confirmButtonColor: "#1E40AF"
+      });
+    } catch (e) {
+      Swal.fire({
+        icon: "error",
+        title: "อ่านไฟล์ไม่สำเร็จ",
+        text: e.message
+      });
+    }
+  };
+  const removeItem = async it => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteStockItem",
+      payload: {
+        key: it.key
+      },
+      entityLabel: "รายการสต๊อกหน้างาน",
+      targetName: `${it.code ? it.code + " " : ""}${it.name || ""}`.trim(),
+      project: it.project || "",
+      targetInfo: `คงเหลือ ${fmtQty(it.qty)} ${it.unit || ""}`
+    });
+    if (done) commit(prev => ({
+      ...prev,
+      items: (prev.items || []).filter(x => x.key !== it.key)
+    }));
+  };
+  const saveMove = async form => {
+    const ok = [],
+      fail = [];
+    for (const ln of form.lines) {
+      try {
+        const res = await window.api("stockMove", {
+          itemKey: ln.itemKey,
+          type: form.type,
+          qty: ln.qty,
+          date: form.date,
+          ref: form.ref,
+          receiver: form.receiver,
+          purpose: form.purpose,
+          note: form.note,
+          by: user.name,
+          byId: user.id
+        });
+        ok.push(res);
+        commit(prev => ({
+          items: (prev.items || []).map(x => x.key === ln.itemKey ? {
+            ...x,
+            qty: res.balance
+          } : x),
+          moves: [...(prev.moves || []), res.move]
+        }));
+      } catch (e) {
+        fail.push(e.message || String(e));
+      }
+    }
+    if (fail.length) {
+      Swal.fire({
+        icon: ok.length ? "warning" : "error",
+        title: ok.length ? `บันทึกแล้ว ${ok.length} รายการ · ไม่สำเร็จ ${fail.length}` : "บันทึกไม่สำเร็จ",
+        html: "<div style='text-align:left;font-size:13px'>" + fail.map(x => "• " + String(x).replace(/</g, "&lt;")).join("<br/>") + "</div>",
+        confirmButtonColor: "#1E40AF"
+      });
+      if (ok.length) setMove(null);
+      return;
+    }
+    setMove(null);
+    Swal.fire({
+      icon: "success",
+      title: `${STOCK_TYPE[form.type].label}แล้ว ${ok.length} รายการ`,
+      text: form.ref ? `เลขที่ ${form.ref}` : "",
+      timer: 1600,
+      showConfirmButton: false,
+      toast: true,
+      position: "top-end"
+    });
+  };
+  const exportExcel = async () => {
+    try {
+      const XLSX = await ensureXLSX();
+      const wb = XLSX.utils.book_new();
+      const s1 = shownItems.map((i, n) => ({
+        "ลำดับ": n + 1,
+        "โครงการ": i.project || "",
+        "ไซต์งานย่อย": i.subSite || "",
+        "รหัส": i.code || "",
+        "รายการ": i.name || "",
+        "หมวด": i.category || "",
+        "คงเหลือ": Number(i.qty) || 0,
+        "หน่วย": i.unit || "",
+        "ขั้นต่ำ": Number(i.minQty) || 0,
+        "สถานะ": isLow(i) ? "ต่ำกว่าขั้นต่ำ" : "",
+        "ที่เก็บ": i.location || "",
+        "หมายเหตุ": i.note || ""
+      }));
+      const s2 = shownMoves.map((m, n) => ({
+        "ลำดับ": n + 1,
+        "วันที่": m.date || "",
+        "ประเภท": (STOCK_TYPE[m.type] || {}).label || m.type,
+        "เลขที่": m.ref || "",
+        "โครงการ": m.project || "",
+        "รหัส": m.itemCode || "",
+        "รายการ": m.itemName || "",
+        "จำนวน": Number(m.qty) || 0,
+        "หน่วย": m.unit || "",
+        "คงเหลือหลังทำรายการ": Number(m.balance) || 0,
+        "ผู้รับของ / รับจาก": m.receiver || "",
+        "ใช้สำหรับ": m.purpose || "",
+        "ผู้บันทึก": m.by || "",
+        "หมายเหตุ": m.note || ""
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s1.length ? s1 : [{
+        "ไม่มีข้อมูล": ""
+      }]), "คงคลัง");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s2.length ? s2 : [{
+        "ไม่มีข้อมูล": ""
+      }]), "ประวัติรับ-เบิก");
+      XLSX.writeFile(wb, `สต๊อกหน้างาน_${window.__DATA.fmtDate(new Date()).replace(/-/g, "")}.xlsx`);
+    } catch (e) {
+      Swal.fire({
+        icon: "error",
+        title: "ส่งออกไม่สำเร็จ",
+        text: e.message
+      });
+    }
+  };
+  if (err) return React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "card-body"
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-triangle-exclamation",
+    style: {
+      color: "#EF4444"
+    }
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E42\u0E2B\u0E25\u0E14\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08"), React.createElement("div", null, err), React.createElement("button", {
+    className: "btn btn-primary btn-sm",
+    style: {
+      marginTop: 12
+    },
+    onClick: load
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate"
+  }), " \u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48"))));
+  if (!data) return React.createElement(Loading, {
+    show: true,
+    text: "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E07\u0E32\u0E19..."
+  });
+  const openMove = (type, it) => setMove({
+    type,
+    project: it ? it.project : project || projOpts[0] || "",
+    lines: it ? [{
+      itemKey: it.key,
+      qty: ""
+    }] : [{
+      itemKey: "",
+      qty: ""
+    }]
+  });
+  const totalItems = items.filter(i => !project || i.project === project).length;
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))",
+      gap: 12,
+      marginBottom: 16
+    }
+  }, [{
+    l: "รายการในคลัง",
+    v: totalItems,
+    i: "fa-boxes-stacked",
+    c: "#1E40AF"
+  }, {
+    l: "ต่ำกว่าขั้นต่ำ",
+    v: lowCount,
+    i: "fa-triangle-exclamation",
+    c: lowCount ? "#DC2626" : "#64748B",
+    click: () => {
+      setTab("stock");
+      setLowOnly(true);
+    }
+  }, {
+    l: "รับเข้าเดือนนี้ (ครั้ง)",
+    v: monthCount("in"),
+    i: "fa-arrow-down",
+    c: "#047857",
+    click: () => {
+      setTab("moves");
+      setTypeF("in");
+    }
+  }, {
+    l: "เบิกจ่ายเดือนนี้ (ครั้ง)",
+    v: monthCount("out"),
+    i: "fa-arrow-up",
+    c: "#B91C1C",
+    click: () => {
+      setTab("moves");
+      setTypeF("out");
+    }
+  }].map(s => React.createElement("div", {
+    key: s.l,
+    className: "card",
+    onClick: s.click,
+    style: {
+      padding: "12px 16px",
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      cursor: s.click ? "pointer" : "default",
+      margin: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      display: "grid",
+      placeItems: "center",
+      background: s.c + "18",
+      color: s.c
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${s.i}`
+  })), React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, s.l), React.createElement("div", {
+    style: {
+      fontSize: 20,
+      fontWeight: 600
+    }
+  }, s.v.toLocaleString("th-TH")))))), React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "filters"
+  }, React.createElement("div", {
+    className: "search-input"
+  }, React.createElement("i", {
+    className: "fa-solid fa-magnifying-glass"
+  }), React.createElement("input", {
+    value: q,
+    onChange: e => setQ(e.target.value),
+    placeholder: tab === "stock" ? "ค้นหารหัส / รายการ / หมวด / ที่เก็บ..." : "ค้นหารายการ / เลขที่ / ผู้รับ / ใช้สำหรับ..."
+  })), React.createElement("select", {
+    value: project,
+    onChange: e => setProject(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), projOpts.map(p => React.createElement("option", {
+    key: p,
+    value: p
+  }, p))), tab === "moves" && React.createElement("select", {
+    value: typeF,
+    onChange: e => setTypeF(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17"), Object.entries(STOCK_TYPE).map(([k, t]) => React.createElement("option", {
+    key: k,
+    value: k
+  }, t.label))), tab === "stock" && React.createElement("label", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      fontSize: 13,
+      cursor: "pointer"
+    }
+  }, React.createElement("input", {
+    type: "checkbox",
+    checked: lowOnly,
+    onChange: e => setLowOnly(e.target.checked)
+  }), " \u0E40\u0E09\u0E1E\u0E32\u0E30\u0E15\u0E48\u0E33\u0E01\u0E27\u0E48\u0E32\u0E02\u0E31\u0E49\u0E19\u0E15\u0E48\u0E33"), React.createElement("div", {
+    className: "spacer"
+  }), React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: exportExcel
+  }, React.createElement("i", {
+    className: "fa-solid fa-file-excel",
+    style: {
+      color: "#1D6F42"
+    }
+  }), " \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel"), React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: load,
+    title: "\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate"
+  })), React.createElement("button", {
+    className: "btn btn-ghost",
+    style: {
+      color: "#047857",
+      border: "1px solid #A7F3D0"
+    },
+    onClick: () => openMove("in")
+  }, React.createElement("i", {
+    className: "fa-solid fa-arrow-down"
+  }), " \u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32"), React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: () => openMove("out"),
+    disabled: !items.length
+  }, React.createElement("i", {
+    className: "fa-solid fa-arrow-up"
+  }), " \u0E40\u0E1A\u0E34\u0E01\u0E08\u0E48\u0E32\u0E22"), React.createElement("button", {
+    className: "btn btn-primary",
+    style: {
+      background: "#0E7490",
+      borderColor: "#0E7490"
+    },
+    onClick: () => setEditItem({
+      project: project || projOpts[0] || "",
+      subSite: "",
+      code: "",
+      name: "",
+      category: "",
+      unit: "",
+      minQty: "",
+      qty: "",
+      location: "",
+      note: ""
+    })
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: () => importRef.current && importRef.current.click(),
+    title: "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2B\u0E25\u0E32\u0E22\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E08\u0E32\u0E01\u0E44\u0E1F\u0E25\u0E4C Excel"
+  }, React.createElement("i", {
+    className: "fa-solid fa-file-import",
+    style: {
+      color: "#1D6F42"
+    }
+  }), " \u0E19\u0E33\u0E40\u0E02\u0E49\u0E32 Excel"), React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: downloadTemplate,
+    title: "\u0E14\u0E32\u0E27\u0E19\u0E4C\u0E42\u0E2B\u0E25\u0E14\u0E41\u0E1A\u0E1A\u0E1F\u0E2D\u0E23\u0E4C\u0E21 Excel \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32"
+  }, React.createElement("i", {
+    className: "fa-solid fa-download"
+  }), " \u0E41\u0E1A\u0E1A\u0E1F\u0E2D\u0E23\u0E4C\u0E21"), React.createElement("input", {
+    ref: importRef,
+    type: "file",
+    accept: ".xlsx,.xls,.csv",
+    style: {
+      display: "none"
+    },
+    onChange: e => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      importExcel(f);
+    }
+  })), React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap",
+      padding: "0 16px 12px"
+    }
+  }, React.createElement("div", {
+    className: "seg",
+    style: {
+      display: "inline-flex",
+      background: "var(--bg)",
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      padding: 3
+    }
+  }, [{
+    k: "stock",
+    l: "คงคลัง",
+    i: "fa-warehouse"
+  }, {
+    k: "moves",
+    l: "ประวัติรับ-เบิก",
+    i: "fa-clock-rotate-left"
+  }].map(t => React.createElement("button", {
+    key: t.k,
+    onClick: () => setTab(t.k),
+    style: {
+      padding: "7px 14px",
+      borderRadius: 7,
+      border: "none",
+      fontSize: 13,
+      cursor: "pointer",
+      fontFamily: "Kanit",
+      background: tab === t.k ? "var(--primary)" : "transparent",
+      color: tab === t.k ? "#fff" : "var(--muted)"
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${t.i}`
+  }), " ", t.l))), React.createElement("span", {
+    style: {
+      fontSize: 13,
+      color: "var(--muted)"
+    }
+  }, tab === "stock" ? `${shownItems.length.toLocaleString("th-TH")} รายการ` : `${shownMoves.length.toLocaleString("th-TH")} ครั้ง`)), tab === "stock" ? React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E02\u0E31\u0E49\u0E19\u0E15\u0E48\u0E33"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E17\u0E35\u0E48\u0E40\u0E01\u0E47\u0E1A"), React.createElement("th", null, "\u0E17\u0E33\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), canManage && React.createElement("th", null))), React.createElement("tbody", null, shownItems.map(i => {
+    const low = isLow(i);
+    const empty = (Number(i.qty) || 0) <= 0;
+    return React.createElement("tr", {
+      key: i.key
+    }, React.createElement("td", null, i.code && React.createElement("span", {
+      className: "ticket-id",
+      style: {
+        marginRight: 6
+      }
+    }, i.code), React.createElement("span", {
+      className: "cell-title",
+      style: {
+        display: "inline"
+      }
+    }, i.name), i.category && React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--muted)"
+      }
+    }, i.category)), React.createElement("td", {
+      style: {
+        fontSize: 13
+      }
+    }, i.project ? React.createElement(ProjectLabel, {
+      name: i.project
+    }) : "—", i.subSite && React.createElement("div", {
+      style: {
+        marginTop: 3
+      }
+    }, React.createElement(SubSiteTag, {
+      value: i.subSite,
+      project: i.project
+    }))), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, React.createElement("b", {
+      style: {
+        fontSize: 15,
+        color: empty ? "#B91C1C" : low ? "#B45309" : "inherit"
+      }
+    }, fmtQty(i.qty)), " ", i.unit || "", (low || empty) && React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: empty ? "#B91C1C" : "#B45309",
+        fontWeight: 600
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-triangle-exclamation"
+    }), " ", empty ? "หมด" : "ใกล้หมด")), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 13
+      }
+    }, Number(i.minQty) ? `${fmtQty(i.minQty)} ${i.unit || ""}` : "—"), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 13
+      }
+    }, i.location || "—"), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, React.createElement("button", {
+      className: "btn btn-sm btn-ghost",
+      style: {
+        color: "#047857"
+      },
+      onClick: () => openMove("in", i),
+      title: "\u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32"
+    }, React.createElement("i", {
+      className: "fa-solid fa-arrow-down"
+    }), " \u0E23\u0E31\u0E1A"), " ", React.createElement("button", {
+      className: "btn btn-sm btn-ghost",
+      style: {
+        color: "#B91C1C"
+      },
+      onClick: () => openMove("out", i),
+      disabled: empty,
+      title: "\u0E40\u0E1A\u0E34\u0E01\u0E08\u0E48\u0E32\u0E22"
+    }, React.createElement("i", {
+      className: "fa-solid fa-arrow-up"
+    }), " \u0E40\u0E1A\u0E34\u0E01")), canManage && React.createElement("td", null, React.createElement("div", {
+      className: "row-actions"
+    }, React.createElement("button", {
+      className: "ia",
+      title: "\u0E1B\u0E23\u0E31\u0E1A\u0E22\u0E2D\u0E14\u0E15\u0E32\u0E21\u0E17\u0E35\u0E48\u0E19\u0E31\u0E1A\u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07",
+      onClick: () => openMove("adjust", i),
+      style: {
+        color: "#6D28D9"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-scale-balanced"
+    })), React.createElement("button", {
+      className: "ia",
+      title: "\u0E41\u0E01\u0E49\u0E44\u0E02",
+      onClick: () => setEditItem({
+        ...i
+      })
+    }, React.createElement("i", {
+      className: "fa-solid fa-pen"
+    })), React.createElement("button", {
+      className: "ia danger",
+      title: "\u0E25\u0E1A",
+      onClick: () => removeItem(i)
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
+    })))));
+  }), shownItems.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: canManage ? 7 : 6
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-warehouse"
+  }), React.createElement("div", {
+    className: "t"
+  }, items.length ? "ไม่พบรายการ" : "ยังไม่มีของในคลัง"), React.createElement("div", null, items.length ? "ลองเปลี่ยนเงื่อนไขการค้นหา" : "กด 'เพิ่มรายการ' หรือ 'นำเข้า Excel' เพื่อตั้งรายการของในคลังของโครงการ"))))))) : React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17"), React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D"), React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A / \u0E43\u0E0A\u0E49\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E1C\u0E39\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"))), React.createElement("tbody", null, shownMoves.slice(0, 500).map(m => {
+    const t = STOCK_TYPE[m.type] || STOCK_TYPE.adjust;
+    const n = Number(m.qty) || 0;
+    return React.createElement("tr", {
+      key: m.key
+    }, React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap",
+        fontSize: 13
+      }
+    }, m.date || "—"), React.createElement("td", null, React.createElement("span", {
+      className: "badge",
+      style: {
+        background: t.bg,
+        color: t.color
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${t.icon}`
+    }), " ", t.label)), React.createElement("td", null, React.createElement("div", {
+      className: "cell-title"
+    }, m.itemName || "—"), React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--muted)"
+      }
+    }, m.project || "", m.subSite ? ` · ${m.subSite}` : "")), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap",
+        fontWeight: 600,
+        color: t.color
+      }
+    }, m.type === "adjust" ? n >= 0 ? "+" : "−" : t.sign, fmtQty(Math.abs(n)), " ", m.unit || ""), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 13
+      }
+    }, fmtQty(m.balance)), React.createElement("td", null, React.createElement("span", {
+      className: "mono",
+      style: {
+        fontSize: 12
+      }
+    }, m.ref || "—")), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 12.5
+      }
+    }, m.receiver || "—", m.purpose && React.createElement("div", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, m.purpose), m.note && React.createElement("div", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, m.note)), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 12.5
+      }
+    }, m.by || "—"));
+  }), shownMoves.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: "8"
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-clock-rotate-left"
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34")))))), shownMoves.length > 500 && React.createElement("div", {
+    style: {
+      padding: 10,
+      fontSize: 12,
+      color: "var(--muted)",
+      textAlign: "center"
+    }
+  }, "\u0E41\u0E2A\u0E14\u0E07 500 \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14 \xB7 \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E14\u0E39\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"))), move && React.createElement(StockMoveForm, {
+    initial: move,
+    items: items,
+    moves: moves,
+    projOpts: projOpts,
+    user: user,
+    onClose: () => {
+      setMove(null);
+      setNewItemKey(null);
+    },
+    onSave: saveMove,
+    newItemKey: newItemKey,
+    onNewItem: proj => setEditItem({
+      project: proj,
+      subSite: "",
+      code: "",
+      name: "",
+      category: "",
+      unit: "",
+      minQty: "",
+      qty: "",
+      location: "",
+      note: "",
+      fromMove: true
+    })
+  }), editItem && React.createElement(StockItemForm, {
+    initial: editItem,
+    items: items,
+    projOpts: projOpts,
+    onClose: () => setEditItem(null),
+    onSave: saveItem
+  }));
+}
+function StockItemForm({
+  initial,
+  items,
+  projOpts,
+  onClose,
+  onSave
+}) {
+  const isNew = !initial.key;
+  const fromMove = !!initial.fromMove;
+  const blankRow = () => ({
+    code: "",
+    name: "",
+    category: "",
+    unit: "",
+    minQty: "",
+    qty: ""
+  });
+  const [f, setF] = React.useState(() => {
+    const {
+      fromMove: _fm,
+      ...rest
+    } = initial;
+    return rest;
+  });
+  const [rows, setRows] = React.useState(() => [blankRow()]);
+  const [busy, setBusy] = React.useState(false);
+  const up = (k, v) => setF(p => ({
+    ...p,
+    [k]: v
+  }));
+  const setRow = (i, k, v) => setRows(prev => prev.map((r, idx) => idx === i ? {
+    ...r,
+    [k]: v
+  } : r));
+  const addRow = () => setRows(prev => [...prev, blankRow()]);
+  const removeRow = i => setRows(prev => prev.length <= 1 ? [blankRow()] : prev.filter((_, idx) => idx !== i));
+  const known = React.useMemo(() => {
+    const map = new Map();
+    const add = o => {
+      const n = String(o && o.name || "").trim();
+      if (!n) return;
+      const k = n.toLowerCase();
+      const cur = map.get(k) || {
+        name: n,
+        unit: "",
+        category: "",
+        code: ""
+      };
+      ["unit", "category", "code"].forEach(x => {
+        if (!cur[x] && o[x]) cur[x] = String(o[x]).trim();
+      });
+      map.set(k, cur);
+    };
+    (items || []).forEach(add);
+    (window.__DATA.withdrawals || []).forEach(d => (Array.isArray(d.items) ? d.items : []).forEach(add));
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "th"));
+  }, [items]);
+  const pickName = (i, v) => setRows(prev => prev.map((r, idx) => {
+    if (idx !== i) return r;
+    const hit = known.find(k => k.name === v);
+    if (!hit) return {
+      ...r,
+      name: v
+    };
+    return {
+      ...r,
+      name: v,
+      unit: r.unit || hit.unit,
+      category: r.category || hit.category,
+      code: r.code || hit.code
+    };
+  }));
+  const existsIn = name => (items || []).some(x => x.project === f.project && String(x.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
+  const submit = async e => {
+    e && e.preventDefault && e.preventDefault();
+    if (!f.project) {
+      Swal.fire({
+        icon: "warning",
+        title: "เลือกโครงการก่อน"
+      });
+      return;
+    }
+    if (!isNew) {
+      if (!String(f.name || "").trim() || !String(f.unit || "").trim()) {
+        Swal.fire({
+          icon: "warning",
+          title: "กรอกชื่อรายการและหน่วยนับ"
+        });
+        return;
+      }
+      setBusy(true);
+      try {
+        await onSave({
+          ...f,
+          name: f.name.trim(),
+          unit: f.unit.trim(),
+          code: String(f.code || "").trim(),
+          minQty: Number(f.minQty) || 0
+        });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    const filled = rows.filter(r => String(r.name || "").trim() || String(r.unit || "").trim() || String(r.code || "").trim());
+    if (!filled.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรอกรายการอย่างน้อย 1 บรรทัด"
+      });
+      return;
+    }
+    const miss = filled.findIndex(r => !String(r.name || "").trim() || !String(r.unit || "").trim());
+    if (miss >= 0) {
+      Swal.fire({
+        icon: "warning",
+        title: `บรรทัดที่ ${rows.indexOf(filled[miss]) + 1}: กรอกชื่อรายการและหน่วยนับ`
+      });
+      return;
+    }
+    const names = filled.map(r => r.name.trim().toLowerCase());
+    if (new Set(names).size !== names.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "มีชื่อรายการซ้ำกันในฟอร์ม"
+      });
+      return;
+    }
+    const dup = filled.filter(r => existsIn(r.name));
+    if (dup.length) {
+      const {
+        isConfirmed
+      } = await Swal.fire({
+        icon: "question",
+        title: "มีรายการนี้ในคลังของโครงการแล้ว",
+        text: dup.map(r => r.name.trim()).join(", ") + " — ถ้าจะเพิ่มจำนวน ให้ใช้ 'รับเข้า' แทน · ยังต้องการเพิ่มเป็นรายการใหม่หรือไม่?",
+        showCancelButton: true,
+        confirmButtonText: "เพิ่มต่อ",
+        cancelButtonText: "กลับไปแก้",
+        confirmButtonColor: "#1E40AF"
+      });
+      if (!isConfirmed) return;
+    }
+    const common = {
+      project: f.project,
+      subSite: f.subSite || "",
+      location: f.location || "",
+      note: f.note || ""
+    };
+    setBusy(true);
+    try {
+      await onSave(filled.map(r => ({
+        ...common,
+        code: String(r.code || "").trim(),
+        name: r.name.trim(),
+        category: String(r.category || "").trim(),
+        unit: r.unit.trim(),
+        minQty: Number(r.minQty) || 0,
+        qty: fromMove ? 0 : Number(r.qty) || 0
+      })));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cellIn = {
+    width: "100%",
+    padding: "7px 9px",
+    border: "1px solid var(--line)",
+    borderRadius: 7,
+    fontFamily: "Kanit",
+    fontSize: 13.5
+  };
+  return React.createElement(Modal, {
+    open: true,
+    onClose: onClose,
+    size: isNew ? "xl" : "lg",
+    title: React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-warehouse",
+      style: {
+        marginRight: 8,
+        color: "var(--primary)"
+      }
+    }), isNew ? "เพิ่มรายการในคลังหน้างาน" : "แก้ไขรายการในคลัง"),
+    footer: React.createElement(React.Fragment, null, React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: onClose,
+      disabled: busy
+    }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: submit,
+      disabled: busy
+    }, busy ? React.createElement(React.Fragment, null, React.createElement("div", {
+      className: "spinner",
+      style: {
+        width: 14,
+        height: 14,
+        borderWidth: 2
+      }
+    }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-floppy-disk"
+    }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", isNew && rows.filter(r => String(r.name || "").trim()).length > 1 ? ` ${rows.filter(r => String(r.name || "").trim()).length} รายการ` : "")))
+  }, React.createElement("form", {
+    onSubmit: submit
+  }, React.createElement("div", {
+    className: "form-grid"
+  }, React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("select", {
+    value: f.project || "",
+    onChange: e => setF(p => ({
+      ...p,
+      project: e.target.value,
+      subSite: ""
+    })),
+    disabled: !isNew || fromMove
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014"), projOpts.map(p => React.createElement("option", {
+    key: p,
+    value: p
+  }, p))), !isNew && React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginTop: 3
+    }
+  }, "\u0E22\u0E49\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49 \u2014 \u0E43\u0E2B\u0E49\u0E40\u0E1A\u0E34\u0E01\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E17\u0E35\u0E48\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E43\u0E2B\u0E21\u0E48")), React.createElement(SubSiteField, {
+    project: f.project,
+    value: f.subSite,
+    onChange: v => up("subSite", v),
+    hint: "\u0E44\u0E0B\u0E15\u0E4C\u0E07\u0E32\u0E19\u0E22\u0E48\u0E2D\u0E22\u0E17\u0E35\u0E48\u0E40\u0E01\u0E47\u0E1A\u0E02\u0E2D\u0E07\u0E19\u0E35\u0E49 (\u0E16\u0E49\u0E32\u0E21\u0E35)"
+  }), !isNew && React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E34\u0E19\u0E04\u0E49\u0E32"), React.createElement("input", {
+    className: "mono",
+    value: f.code || "",
+    onChange: e => up("code", e.target.value),
+    placeholder: "\u0E16\u0E49\u0E32\u0E21\u0E35"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E2B\u0E21\u0E27\u0E14"), React.createElement("input", {
+    value: f.category || "",
+    onChange: e => up("category", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19, \u0E27\u0E31\u0E2A\u0E14\u0E38\u0E2A\u0E34\u0E49\u0E19\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E07, PPE"
+  })), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 *"), React.createElement("input", {
+    value: f.name || "",
+    onChange: e => up("name", e.target.value)
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E19\u0E31\u0E1A *"), React.createElement("input", {
+    value: f.unit || "",
+    onChange: e => up("unit", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E25\u0E34\u0E15\u0E23, \u0E16\u0E31\u0E07, \u0E0A\u0E34\u0E49\u0E19"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E08\u0E38\u0E14\u0E2A\u0E31\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D / \u0E02\u0E31\u0E49\u0E19\u0E15\u0E48\u0E33"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.minQty || "",
+    onChange: e => up("minQty", e.target.value),
+    placeholder: "\u0E40\u0E15\u0E37\u0E2D\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E40\u0E17\u0E48\u0E32\u0E19\u0E35\u0E49"
+  }))), isNew && React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 * ", React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, "\u0E40\u0E1E\u0E34\u0E48\u0E21/\u0E25\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E44\u0E14\u0E49 \xB7 \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E37\u0E48\u0E2D\u0E41\u0E25\u0E49\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E17\u0E35\u0E48\u0E40\u0E04\u0E22\u0E21\u0E35 \u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E15\u0E34\u0E21\u0E2B\u0E19\u0E48\u0E27\u0E22/\u0E2B\u0E21\u0E27\u0E14\u0E43\u0E2B\u0E49")), React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
+    style: {
+      width: 40
+    }
+  }, "#"), React.createElement("th", {
+    style: {
+      width: 120
+    }
+  }, "\u0E23\u0E2B\u0E31\u0E2A"), React.createElement("th", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 *"), React.createElement("th", {
+    style: {
+      width: 150
+    }
+  }, "\u0E2B\u0E21\u0E27\u0E14"), React.createElement("th", {
+    style: {
+      width: 100
+    }
+  }, "\u0E2B\u0E19\u0E48\u0E27\u0E22 *"), React.createElement("th", {
+    style: {
+      width: 100
+    }
+  }, "\u0E02\u0E31\u0E49\u0E19\u0E15\u0E48\u0E33"), !fromMove && React.createElement("th", {
+    style: {
+      width: 110
+    }
+  }, "\u0E22\u0E2D\u0E14\u0E22\u0E01\u0E21\u0E32"), React.createElement("th", {
+    style: {
+      width: 44
+    }
+  }))), React.createElement("tbody", null, rows.map((r, i) => React.createElement("tr", {
+    key: i
+  }, React.createElement("td", {
+    style: {
+      textAlign: "center",
+      color: "var(--muted)"
+    }
+  }, i + 1), React.createElement("td", null, React.createElement("input", {
+    className: "mono",
+    style: cellIn,
+    value: r.code,
+    onChange: e => setRow(i, "code", e.target.value),
+    placeholder: "\u0E16\u0E49\u0E32\u0E21\u0E35"
+  })), React.createElement("td", null, React.createElement("input", {
+    style: cellIn,
+    value: r.name,
+    list: "stock-known-names",
+    onChange: e => pickName(i, e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19\u0E44\u0E2E\u0E14\u0E23\u0E2D\u0E25\u0E34\u0E01 68"
+  }), r.name && f.project && existsIn(r.name) && React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "#B45309"
+    }
+  }, "\u0E21\u0E35\u0E43\u0E19\u0E04\u0E25\u0E31\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49\u0E41\u0E25\u0E49\u0E27 \u2014 \u0E43\u0E0A\u0E49 \"\u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\" \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E08\u0E33\u0E19\u0E27\u0E19")), React.createElement("td", null, React.createElement("input", {
+    style: cellIn,
+    value: r.category,
+    onChange: e => setRow(i, "category", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E19\u0E49\u0E33\u0E21\u0E31\u0E19"
+  })), React.createElement("td", null, React.createElement("input", {
+    style: cellIn,
+    value: r.unit,
+    onChange: e => setRow(i, "unit", e.target.value),
+    placeholder: "\u0E25\u0E34\u0E15\u0E23"
+  })), React.createElement("td", null, React.createElement("input", {
+    style: cellIn,
+    type: "number",
+    min: "0",
+    value: r.minQty,
+    onChange: e => setRow(i, "minQty", e.target.value)
+  })), !fromMove && React.createElement("td", null, React.createElement("input", {
+    style: cellIn,
+    type: "number",
+    min: "0",
+    step: "any",
+    value: r.qty,
+    onChange: e => setRow(i, "qty", e.target.value),
+    placeholder: "0"
+  })), React.createElement("td", null, React.createElement("button", {
+    type: "button",
+    className: "ia danger",
+    title: "\u0E25\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E19\u0E35\u0E49",
+    onClick: () => removeRow(i)
+  }, React.createElement("i", {
+    className: "fa-solid fa-trash"
+  })))))))), React.createElement("datalist", {
+    id: "stock-known-names"
+  }, known.map(k => React.createElement("option", {
+    key: k.name,
+    value: k.name
+  }, k.unit ? `หน่วย: ${k.unit}` : ""))), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    style: {
+      marginTop: 8
+    },
+    onClick: addRow
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14"), fromMove && React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginLeft: 10
+    }
+  }, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E17\u0E35\u0E48\u0E23\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32 \u0E01\u0E23\u0E2D\u0E01\u0E43\u0E19\u0E43\u0E1A\u0E23\u0E31\u0E1A\u0E2B\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E17\u0E35\u0E48\u0E40\u0E01\u0E47\u0E1A"), React.createElement("input", {
+    value: f.location || "",
+    onChange: e => up("location", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E15\u0E39\u0E49\u0E04\u0E2D\u0E19\u0E40\u0E17\u0E19\u0E40\u0E19\u0E2D\u0E23\u0E4C 1"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("input", {
+    value: f.note || "",
+    onChange: e => up("note", e.target.value)
+  })))));
+}
+function StockMoveForm({
+  initial,
+  items,
+  moves,
+  projOpts,
+  user,
+  onClose,
+  onSave,
+  newItemKey,
+  onNewItem
+}) {
+  const type = initial.type;
+  const t = STOCK_TYPE[type];
+  const [project, setProject] = React.useState(initial.project || "");
+  const [date, setDate] = React.useState(window.__DATA.fmtDate(new Date()));
+  const [ref, setRef] = React.useState("");
+  const [refAuto, setRefAuto] = React.useState(type !== "adjust");
+  const [receiver, setReceiver] = React.useState("");
+  const [purpose, setPurpose] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [lines, setLines] = React.useState(initial.lines);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (refAuto && project) setRef(nextStockRef(type, project, moves));
+  }, [project, refAuto]);
+  React.useEffect(() => {
+    const keys = newItemKey && newItemKey.keys || [];
+    if (!keys.length) return;
+    setLines(prev => {
+      const kept = prev.filter(l => l.itemKey);
+      return [...kept, ...keys.filter(k => !kept.some(l => l.itemKey === k)).map(k => ({
+        itemKey: k,
+        qty: ""
+      }))];
+    });
+  }, [newItemKey]);
+  const pool = items.filter(i => i.project === project);
+  const itemOf = k => items.find(i => i.key === k);
+  const setLine = (i, k, v) => setLines(prev => prev.map((x, idx) => idx === i ? {
+    ...x,
+    [k]: v
+  } : x));
+  const machines = React.useMemo(() => (window.__DATA.machines || []).filter(m => m.project === project), [project]);
+  const submit = async () => {
+    const clean = lines.filter(l => l.itemKey && l.qty !== "" && l.qty != null);
+    if (!clean.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "เลือกรายการและใส่จำนวนอย่างน้อย 1 รายการ"
+      });
+      return;
+    }
+    if (type !== "adjust" && clean.some(l => !(Number(l.qty) > 0))) {
+      Swal.fire({
+        icon: "warning",
+        title: "จำนวนต้องมากกว่า 0"
+      });
+      return;
+    }
+    if (new Set(clean.map(l => l.itemKey)).size !== clean.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "มีรายการซ้ำ",
+        text: "รวมจำนวนไว้บรรทัดเดียว"
+      });
+      return;
+    }
+    if (type === "out") {
+      const over = clean.find(l => Number(l.qty) > (Number((itemOf(l.itemKey) || {}).qty) || 0));
+      if (over) {
+        const it = itemOf(over.itemKey) || {};
+        Swal.fire({
+          icon: "warning",
+          title: "ของไม่พอเบิก",
+          text: `${it.name} คงเหลือ ${fmtQty(it.qty)} ${it.unit || ""}`
+        });
+        return;
+      }
+      if (!receiver.trim()) {
+        Swal.fire({
+          icon: "warning",
+          title: "กรอกชื่อผู้รับของ"
+        });
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await onSave({
+        type,
+        date,
+        ref: ref.trim(),
+        receiver: receiver.trim(),
+        purpose: purpose.trim(),
+        note: note.trim(),
+        lines: clean.map(l => ({
+          ...l,
+          qty: Number(l.qty)
+        }))
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return React.createElement(Modal, {
+    open: true,
+    onClose: onClose,
+    size: "lg",
+    title: React.createElement(React.Fragment, null, React.createElement("i", {
+      className: `fa-solid ${t.icon}`,
+      style: {
+        marginRight: 8,
+        color: t.color
+      }
+    }), type === "adjust" ? "ปรับยอดตามที่นับได้จริง" : type === "in" ? "รับของเข้าคลังหน้างาน" : "เบิกจ่ายของหน้างาน"),
+    footer: React.createElement(React.Fragment, null, React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: onClose,
+      disabled: busy
+    }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: submit,
+      disabled: busy,
+      style: {
+        background: t.color,
+        borderColor: t.color
+      }
+    }, busy ? React.createElement(React.Fragment, null, React.createElement("div", {
+      className: "spinner",
+      style: {
+        width: 14,
+        height: 14,
+        borderWidth: 2
+      }
+    }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-check"
+    }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", t.label)))
+  }, React.createElement("div", {
+    className: "form-grid"
+  }, React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 *"), React.createElement("select", {
+    value: project,
+    onChange: e => {
+      setProject(e.target.value);
+      setLines([{
+        itemKey: "",
+        qty: ""
+      }]);
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u2014"), projOpts.map(p => React.createElement("option", {
+    key: p,
+    value: p
+  }, p)))), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("input", {
+    type: "date",
+    value: date,
+    onChange: e => setDate(e.target.value)
+  })), type !== "adjust" && React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48", type === "in" ? "ใบรับ" : "ใบเบิก", " ", refAuto && React.createElement("span", {
+    style: {
+      fontWeight: 400,
+      fontSize: 11.5,
+      color: "#047857"
+    }
+  }, "\u0E2D\u0E2D\u0E01\u0E40\u0E25\u0E02\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34")), React.createElement("input", {
+    className: "mono",
+    value: ref,
+    onChange: e => {
+      setRefAuto(false);
+      setRef(e.target.value);
+    },
+    placeholder: type === "in" ? "หรือเลขที่ใบส่งของ/ใบกำกับ" : ""
+  })), type === "out" && React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A\u0E02\u0E2D\u0E07 *"), React.createElement("input", {
+    value: receiver,
+    onChange: e => setReceiver(e.target.value),
+    placeholder: "\u0E0A\u0E37\u0E48\u0E2D\u0E04\u0E19\u0E17\u0E35\u0E48\u0E21\u0E32\u0E23\u0E31\u0E1A\u0E02\u0E2D\u0E07"
+  })), type === "in" && React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01"), React.createElement("input", {
+    value: receiver,
+    onChange: e => setReceiver(e.target.value),
+    placeholder: "\u0E1C\u0E39\u0E49\u0E02\u0E32\u0E22 / \u0E2A\u0E48\u0E07\u0E21\u0E32\u0E08\u0E32\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E44\u0E2B\u0E19"
+  })), type === "out" && React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, "\u0E43\u0E0A\u0E49\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A (\u0E07\u0E32\u0E19 / \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23)"), React.createElement("input", {
+    value: purpose,
+    onChange: e => setPurpose(e.target.value),
+    list: "stock-purpose",
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E40\u0E15\u0E34\u0E21\u0E19\u0E49\u0E33\u0E21\u0E31\u0E19 XCMG-001, \u0E07\u0E32\u0E19\u0E40\u0E08\u0E32\u0E30 Rig1"
+  }), React.createElement("datalist", {
+    id: "stock-purpose"
+  }, machines.map(m => React.createElement("option", {
+    key: m.id,
+    value: `${m.code} ${m.name || ""}`.trim()
+  })))), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), !project ? React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: "var(--muted)"
+    }
+  }, "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E01\u0E48\u0E2D\u0E19") : pool.length === 0 ? React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: "#92400E"
+    }
+  }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E43\u0E19\u0E04\u0E25\u0E31\u0E07", type === "in" ? " — กดปุ่ม ของใหม่ ด้านล่างเพื่อเพิ่ม" : "") : React.createElement("div", {
+    className: "table-wrap",
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", {
+    style: {
+      width: 120
+    }
+  }, "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D"), React.createElement("th", {
+    style: {
+      width: 150
+    }
+  }, type === "adjust" ? "ยอดที่นับได้" : "จำนวน"), React.createElement("th", {
+    style: {
+      width: 44
+    }
+  }))), React.createElement("tbody", null, lines.map((l, idx) => {
+    const it = itemOf(l.itemKey);
+    const cur = it ? Number(it.qty) || 0 : 0;
+    const n = Number(l.qty) || 0;
+    const after = it ? type === "in" ? cur + n : type === "out" ? cur - n : n : null;
+    return React.createElement("tr", {
+      key: idx
+    }, React.createElement("td", null, React.createElement("select", {
+      value: l.itemKey,
+      onChange: e => setLine(idx, "itemKey", e.target.value),
+      style: {
+        width: "100%"
+      }
+    }, React.createElement("option", {
+      value: ""
+    }, "\u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \u2014"), pool.map(i => React.createElement("option", {
+      key: i.key,
+      value: i.key
+    }, i.code ? `[${i.code}] ` : "", i.name, " (", i.unit, ")")))), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap",
+        fontSize: 13
+      }
+    }, it ? `${fmtQty(it.qty)} ${it.unit || ""}` : "—"), React.createElement("td", null, React.createElement("input", {
+      type: "number",
+      min: "0",
+      step: "any",
+      value: l.qty,
+      onChange: e => setLine(idx, "qty", e.target.value)
+    }), it && l.qty !== "" && React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: after < 0 ? "#B91C1C" : "var(--muted)"
+      }
+    }, after < 0 ? "เกินยอดคงเหลือ" : `หลังทำรายการ ${fmtQty(after)}`)), React.createElement("td", null, React.createElement("button", {
+      type: "button",
+      className: "ia danger",
+      onClick: () => setLines(prev => prev.length <= 1 ? [{
+        itemKey: "",
+        qty: ""
+      }] : prev.filter((_, i) => i !== idx))
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
+    }))));
+  })))), project && pool.length > 0 && type !== "adjust" && React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    style: {
+      marginTop: 8
+    },
+    onClick: () => setLines(prev => [...prev, {
+      itemKey: "",
+      qty: ""
+    }])
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14"), project && type === "in" && onNewItem && React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    style: {
+      marginTop: 8,
+      marginLeft: 6,
+      color: "#0E7490"
+    },
+    onClick: () => onNewItem(project)
+  }, React.createElement("i", {
+    className: "fa-solid fa-square-plus"
+  }), " \u0E02\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48 (\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E04\u0E25\u0E31\u0E07)")), React.createElement("div", {
+    className: "form-field",
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, React.createElement("label", null, "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("input", {
+    value: note,
+    onChange: e => setNote(e.target.value),
+    placeholder: type === "adjust" ? "เช่น ตรวจนับประจำเดือน" : ""
+  }))), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginTop: 8
+    }
+  }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E42\u0E14\u0E22 ", user.name));
 }
 function DocPJ2({
   user
@@ -15046,7 +18337,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 7229) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8403) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -16145,7 +19436,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 7536) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8710) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -16315,7 +19606,7 @@ function AssetRegistry({
     site: m.project || "",
     subSite: m.subSite || "",
     note: m.note || "",
-    photos: [m.drivePhoto].filter(Boolean),
+    photos: window.machinePhotos(m),
     transferHistory: m.transferHistory || []
   })), [rows]);
   const merged = React.useMemo(() => {
@@ -17226,6 +20517,8 @@ function TransferAssetsModal({
           fromProject,
           fromSubSite,
           toSubSite,
+          senderId: window.__SIG.resolve(sender, "", "", user),
+          receiverId: window.__SIG.resolve(receiver, "", "", user),
           fromProjectLabel: fromProject + (fromSubSite ? ` · ${fromSubSite}` : "")
         }
       });
@@ -17793,8 +21086,8 @@ window.buildDeliveryOrderHtml = function (doc) {
     </table>
     ${doc.note ? `<div style="font-size:16px;margin-top:3mm">หมายเหตุ: ${esc(doc.note)}</div>` : ""}
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:10mm;font-size:17px;text-align:center">
-      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้ส่งมอบ</div><div style="font-size:14px;color:#333">${esc(doc.sender || "")}</div></div>
-      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้รับมอบ</div><div style="font-size:14px;color:#333">${esc(doc.receiver || "")}</div></div>
+      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.senderId, "display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้ส่งมอบ</div><div style="font-size:14px;color:#333">${esc(doc.sender || "")}</div></div>
+      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.receiverId, "display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้รับมอบ</div><div style="font-size:14px;color:#333">${esc(doc.receiver || "")}</div></div>
       <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div><div style="font-size:14px;color:#333">&nbsp;</div></div>
     </div>
   </div>`;
@@ -17806,7 +21099,7 @@ window.downloadDeliveryOrderPdf = async function (doc) {
       allowOutsideClick: false,
       didOpen: () => Swal.showLoading()
     });
-    await window.__loadPdf();
+    await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId])]);
     Swal.close();
   } catch (e) {
     Swal.fire({
@@ -17855,6 +21148,11 @@ function DeliveryOrders({
   const [transferOpen, setTransferOpen] = React.useState(false);
   const [hideCancelled, setHideCancelled] = React.useState(false);
   const saveEdit = async (doc, patch) => {
+    patch = {
+      ...patch,
+      senderId: window.__SIG.resolve(patch.sender, doc.sender, doc.senderId, user),
+      receiverId: window.__SIG.resolve(patch.receiver, doc.receiver, doc.receiverId, user)
+    };
     const res = await window.api("updateDeliveryOrder", {
       key: doc.key,
       patch,
@@ -18615,7 +21913,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 8745) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 9923) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -19088,7 +22386,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 9080) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10258) ---- */
 function Permissions({
   user
 }) {
@@ -19113,7 +22411,7 @@ function Permissions({
   const users = React.useMemo(() => (window.__DATA.users || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "th")), []);
   const roleAllow = role => {
     const c = cfg.roles[role];
-    return new Set(c && c.set ? c.allow || [] : window.defaultPagesFor(role));
+    return new Set(window.roleAllowList(role, c));
   };
   const setRoleAllow = (role, s) => {
     setCfg(c => ({
@@ -19122,7 +22420,8 @@ function Permissions({
         ...c.roles,
         [role]: {
           set: true,
-          allow: [...s]
+          allow: [...s],
+          known: window.APP_FEATURES.map(f => f.key)
         }
       }
     }));
@@ -19212,7 +22511,8 @@ function Permissions({
         if (!roles.includes(r)) return;
         clean.roles[r] = {
           set: true,
-          allow: (v.allow || []).filter(k => valid.has(k))
+          allow: window.roleAllowList(r, v).filter(k => valid.has(k)),
+          known: [...valid]
         };
       });
       Object.entries(cfg.users).forEach(([uid, v]) => {
@@ -19706,7 +23006,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 9432) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10611) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -20401,6 +23701,8 @@ function App() {
     window.__JOBALERT.start(user);
     window.askNotifyPermission(user);
     window.__FCM.autoStart(user);
+    const pmT = setTimeout(() => window.__PMALERT.check(user), 4000);
+    return () => clearTimeout(pmT);
   }, [user && user.id, user && user.role]);
   React.useEffect(() => {
     if (!user) return;
@@ -20691,6 +23993,14 @@ function App() {
       t: "ใบส่งของ (DO)",
       c: "Delivery Order · บันทึกการย้ายทรัพย์สินระหว่างโครงการ"
     },
+    "site-stock": {
+      t: "สต๊อก/เบิกจ่ายหน้างาน",
+      c: "Consume · คงคลังแต่ละโครงการ รับเข้า และเบิกจ่ายของหน้างาน"
+    },
+    "withdrawal-pending": {
+      t: "รายการรอจัดซื้อ/จัดหา",
+      c: "Consume · รายการในใบเบิกที่ยังไม่ได้ซื้อ/จัดหา แยกตามโครงการ"
+    },
     "withdrawals": {
       t: "รายการเบิกของ",
       c: "ERP Withdrawal · ใบขอเบิก/ขอสั่งซื้อ 24 แถวต่อหน้า"
@@ -20760,6 +24070,13 @@ function App() {
       user: activeUser
     });
     if (safePage === "withdrawals") return React.createElement(Withdrawals, {
+      user: activeUser
+    });
+    if (safePage === "withdrawal-pending") return React.createElement(Withdrawals, {
+      user: activeUser,
+      view: "pending"
+    });
+    if (safePage === "site-stock") return React.createElement(SiteStock, {
       user: activeUser
     });
     if (safePage === "doc-pj2") return React.createElement(DocPJ2, {
