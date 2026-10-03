@@ -8183,6 +8183,10 @@ function Repairs({
   React.useEffect(() => {
     setRows(visibleRows);
   }, [visibleRows]);
+  const {
+    mine: myDelReqs
+  } = window.useDeleteRequests(user);
+  const pendingDelIds = React.useMemo(() => new Set((myDelReqs || []).filter(x => x.kind !== "edit" && x.status === "pending" && x.action === "deleteRepair").map(x => String(x.targetKey))), [myDelReqs]);
   const [q, setQ] = React.useState("");
   const [status, setStatus] = React.useState("all");
   const [cat, setCat] = React.useState("all");
@@ -8610,15 +8614,40 @@ function Repairs({
     onClick: () => setDetail(r)
   }, React.createElement("i", {
     className: "fa-solid fa-eye"
-  })), user.role === "Admin" && React.createElement("button", {
+  })), user.role === "Admin" ? React.createElement("button", {
     className: "ia",
-    title: "\u0E25\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 (\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19)",
+    title: "\u0E25\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25",
     onClick: () => deleteRepair(r),
     style: {
       color: "#EF4444"
     }
   }, React.createElement("i", {
     className: "fa-solid fa-trash"
+  })) : pendingDelIds.has(String(r.id)) ? React.createElement("span", {
+    title: "\u0E2A\u0E48\u0E07\u0E04\u0E33\u0E02\u0E2D\u0E25\u0E1A\u0E41\u0E25\u0E49\u0E27 \u0E23\u0E2D\u0E1C\u0E39\u0E49\u0E14\u0E39\u0E41\u0E25\u0E23\u0E30\u0E1A\u0E1A (Admin) \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34",
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "2px 8px",
+      borderRadius: 999,
+      background: "#FEF3C7",
+      color: "#B45309",
+      fontSize: 11,
+      fontWeight: 600,
+      whiteSpace: "nowrap"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-hourglass-half"
+  }), " \u0E23\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E25\u0E1A") : React.createElement("button", {
+    className: "ia",
+    title: "\u0E02\u0E2D\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34\u0E25\u0E1A\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 (\u0E2A\u0E48\u0E07\u0E43\u0E2B\u0E49 Admin \u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34)",
+    onClick: () => deleteRepair(r),
+    style: {
+      color: "#EF4444"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-trash-can-arrow-up"
   })))))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
     colSpan: "9"
   }, React.createElement("div", {
@@ -10666,7 +10695,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5922) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5931) ---- */
 function Users({
   user
 }) {
@@ -11204,7 +11233,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6098) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6107) ---- */
 function Categories({
   user
 }) {
@@ -11467,7 +11496,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6186) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6195) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -14661,7 +14690,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7203) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7212) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18337,7 +18366,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8403) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8412) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19436,7 +19465,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8710) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8719) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -21913,7 +21942,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 9923) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 9932) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22386,7 +22415,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10258) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10267) ---- */
 function Permissions({
   user
 }) {
@@ -23006,7 +23035,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10611) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10620) ---- */
 function WorkspacePicker({
   user,
   onContinue,

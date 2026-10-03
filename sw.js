@@ -6,7 +6,7 @@
  *
  * เวลาแก้ไฟล์นี้ ให้เปลี่ยนเลข CACHE ด้วย เพื่อล้างแคชเก่าทิ้ง
  */
-const CACHE = "rms-v3";
+const CACHE = "rms-v4";
 
 /* ── แจ้งเตือนแบบ push (Firebase Cloud Messaging) ─────────────────────────
  * รวมไว้ใน service worker ตัวเดียวกัน ไม่แยกเป็น firebase-messaging-sw.js

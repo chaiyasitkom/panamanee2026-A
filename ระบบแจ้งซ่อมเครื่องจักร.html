@@ -4987,6 +4987,11 @@ function Repairs({user}){
 
   const [rows,setRows] = React.useState(visibleRows);
   React.useEffect(()=>{ setRows(visibleRows); },[visibleRows]);
+  // ใบแจ้งซ่อมที่ส่งคำขออนุมัติลบไว้แล้ว (รอ Admin) — ขึ้นป้ายและกันกดซ้ำ
+  const { mine: myDelReqs } = window.useDeleteRequests(user);
+  const pendingDelIds = React.useMemo(()=>new Set(
+    (myDelReqs||[]).filter(x=>x.kind!=="edit" && x.status==="pending" && x.action==="deleteRepair").map(x=>String(x.targetKey))
+  ),[myDelReqs]);
   const [q,setQ] = React.useState("");
   const [status,setStatus] = React.useState("all");
   const [cat,setCat] = React.useState("all");
@@ -5161,7 +5166,11 @@ function Repairs({user}){
                   <td>
                     <div className="row-actions">
                       <button className="ia" title="ดูรายละเอียด" onClick={()=>setDetail(r)}><i className="fa-solid fa-eye"></i></button>
-                      {user.role==="Admin" && <button className="ia" title="ลบข้อมูล (ผู้ดูแลระบบเท่านั้น)" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash"></i></button>}
+                      {user.role==="Admin"
+                        ? <button className="ia" title="ลบข้อมูล" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash"></i></button>
+                        : pendingDelIds.has(String(r.id))
+                          ? <span title="ส่งคำขอลบแล้ว รอผู้ดูแลระบบ (Admin) อนุมัติ" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 8px",borderRadius:999,background:"#FEF3C7",color:"#B45309",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}><i className="fa-solid fa-hourglass-half"></i> รออนุมัติลบ</span>
+                          : <button className="ia" title="ขออนุมัติลบรายการ (ส่งให้ Admin อนุมัติ)" onClick={()=>deleteRepair(r)} style={{color:"#EF4444"}}><i className="fa-solid fa-trash-can-arrow-up"></i></button>}
                     </div>
                   </td>
                 </tr>
