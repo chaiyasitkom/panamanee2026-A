@@ -1101,6 +1101,7 @@ async function api(action, payload = {}) {
         const id = key || ref.key;
         clean.id = clean.id || clean.assetCode || id;
         clean.quantity = Number(clean.quantity) || 0;
+        clean.price = clean.price === '' || clean.price == null || isNaN(Number(clean.price)) ? '' : Math.round(Number(clean.price) * 100) / 100;
         clean.updatedAt = new Date().toISOString();
         await ref.set(clean);
         return {
@@ -1704,7 +1705,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1737) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1738) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1905,6 +1906,14 @@ window.APP_FEATURES = [{
   icon: "fa-clipboard-check",
   roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Reporter"]
 }, {
+  key: "pm-plan",
+  sys: "repairs",
+  group: "งานซ่อม",
+  label: "แผนบำรุงรักษา (PM)",
+  icon: "fa-calendar-check",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer"],
+  addedLater: true
+}, {
   key: "machines",
   sys: "assets",
   group: "Asset",
@@ -1999,8 +2008,8 @@ window.APP_FEATURES = [{
   roles: ["Admin"]
 }];
 window.SYSTEM_PAGES = {
-  repairs: ["dashboard", "repairs", "spare-parts", "machines", "r-dashboard", "r-new", "r-mine"],
-  assets: ["machines", "asset-registry", "asset-do", "doc-pj2", "transfer-history"],
+  repairs: ["dashboard", "repairs", "spare-parts", "pm-plan", "machines", "r-dashboard", "r-new", "r-mine"],
+  assets: ["machines", "pm-plan", "asset-registry", "asset-do", "doc-pj2", "transfer-history"],
   consume: ["withdrawals", "withdrawal-pending", "site-stock"],
   manage: ["projects", "users", "categories", "login-logs", "permissions"]
 };
@@ -2491,7 +2500,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2178) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2180) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2646,7 +2655,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2308) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2310) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2828,10 +2837,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2453) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2455) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2456) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2458) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3009,7 +3018,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2583) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2585) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3328,6 +3337,9 @@ window.ASSET_FIELD_LABELS = {
   unit: {
     label: "หน่วย"
   },
+  price: {
+    label: "ราคาต่อหน่วย (บาท)"
+  },
   ownership: {
     label: "กรรมสิทธิ์"
   },
@@ -3629,7 +3641,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2959) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 2961) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4119,7 +4131,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3195) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3197) ---- */
 const {
   useState,
   useEffect,
@@ -4368,7 +4380,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3298) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3300) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4596,7 +4608,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3481) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3483) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -5508,6 +5520,10 @@ function Sidebar({
     icon: "fa-box-open",
     label: "อะไหล่ที่ใช้ซ่อม"
   }, {
+    key: "pm-plan",
+    icon: "fa-calendar-check",
+    label: "แผนบำรุงรักษา (PM)"
+  }, {
     key: "machines",
     icon: "fa-industry",
     label: "ทะเบียนเครื่องจักร"
@@ -5545,6 +5561,10 @@ function Sidebar({
     key: "spare-parts",
     icon: "fa-box-open",
     label: "อะไหล่ที่ใช้ซ่อม"
+  }, {
+    key: "pm-plan",
+    icon: "fa-calendar-check",
+    label: "แผนบำรุงรักษา (PM)"
   }, {
     key: "machines",
     icon: "fa-industry",
@@ -5592,6 +5612,10 @@ function Sidebar({
     icon: "fa-box-open",
     label: "อะไหล่ที่ใช้ซ่อม"
   }, {
+    key: "pm-plan",
+    icon: "fa-calendar-check",
+    label: "แผนบำรุงรักษา (PM)"
+  }, {
     key: "machines",
     icon: "fa-industry",
     label: "ทะเบียนเครื่องจักร"
@@ -5605,6 +5629,10 @@ function Sidebar({
     icon: "fa-industry",
     label: "ทะเบียนเครื่องจักร"
   }, {
+    key: "pm-plan",
+    icon: "fa-calendar-check",
+    label: "แผนบำรุงรักษา (PM)"
+  }, {
     key: "transfer-history",
     icon: "fa-clock-rotate-left",
     label: "ประวัติการย้ายเครื่องจักร"
@@ -5613,6 +5641,10 @@ function Sidebar({
     key: "machines",
     icon: "fa-industry",
     label: "ทะเบียนเครื่องจักร"
+  }, {
+    key: "pm-plan",
+    icon: "fa-calendar-check",
+    label: "แผนบำรุงรักษา (PM)"
   }, {
     key: "asset-registry",
     icon: "fa-boxes-stacked",
@@ -5646,7 +5678,7 @@ function Sidebar({
   }];
   const navBySystem = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "manage" ? manageNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
   const pmDueCount = window.machinesPmDue(user).total;
-  const nav = navBySystem.filter(x => window.canAccessPage(user, x.key)).map(x => x.key === "machines" && pmDueCount ? {
+  const nav = navBySystem.filter(x => window.canAccessPage(user, x.key)).map(x => (x.key === "machines" || x.key === "pm-plan") && pmDueCount ? {
     ...x,
     badge: pmDueCount,
     badgeTitle: `ต้องทำ PM ${pmDueCount} เครื่อง`,
@@ -5756,7 +5788,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3906) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3913) ---- */
 function Projects({
   user
 }) {
@@ -6393,7 +6425,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4159) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4166) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6790,7 +6822,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4405) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4412) ---- */
 function Dashboard({
   user,
   goTo
@@ -8174,7 +8206,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 4982) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 4989) ---- */
 function Repairs({
   user
 }) {
@@ -9272,7 +9304,10 @@ function RepairDetail({
       color: "var(--primary)",
       fontWeight: 500
     }
-  }, Number(r.cost).toLocaleString(), " \u0E1A\u0E32\u0E17") : React.createElement("span", {
+  }, Number(r.cost).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }), " \u0E1A\u0E32\u0E17") : React.createElement("span", {
     style: {
       color: "var(--muted)"
     }
@@ -9311,7 +9346,10 @@ function RepairDetail({
       color: "var(--muted)",
       fontSize: 12
     }
-  }, "\u0E23\u0E27\u0E21\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48: \u0E3F", r.parts.reduce((s, p) => s + (Number(p.total) || 0), 0).toLocaleString())), React.createElement("div", {
+  }, "\u0E23\u0E27\u0E21\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48: \u0E3F", r.parts.reduce((s, p) => s + (Number(p.total) || 0), 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }))), React.createElement("div", {
     className: "table-scroll",
     style: {
       overflowX: "auto",
@@ -9417,7 +9455,10 @@ function RepairDetail({
       fontFamily: "JetBrains Mono,monospace",
       fontSize: 12
     }
-  }, "\u0E3F", Number(p.unitPrice || 0).toLocaleString()), React.createElement("td", {
+  }, "\u0E3F", Number(p.unitPrice || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })), React.createElement("td", {
     style: {
       padding: "9px 14px",
       textAlign: "right",
@@ -9426,7 +9467,10 @@ function RepairDetail({
       fontFamily: "JetBrains Mono,monospace",
       fontSize: 12
     }
-  }, "\u0E3F", Number(p.total || 0).toLocaleString())))))), r.laborCost > 0 && React.createElement("div", {
+  }, "\u0E3F", Number(p.total || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }))))))), r.laborCost > 0 && React.createElement("div", {
     style: {
       padding: "10px 14px",
       borderTop: "1px solid var(--line-soft)",
@@ -9450,7 +9494,10 @@ function RepairDetail({
       fontFamily: "JetBrains Mono,monospace",
       fontSize: 12
     }
-  }, "\u0E3F", Number(r.laborCost).toLocaleString()))), Array.isArray(r.photos) && r.photos.filter(Boolean).length > 0 && React.createElement("div", {
+  }, "\u0E3F", Number(r.laborCost).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })))), Array.isArray(r.photos) && r.photos.filter(Boolean).length > 0 && React.createElement("div", {
     className: "detail-grid",
     style: {
       marginTop: 18
@@ -10324,7 +10371,11 @@ function AssessModal({
   });
   const partsTotal = parts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
   const total = partsTotal + (Number(laborCost) || 0);
-  const fmt = n => Math.round(Number(n) || 0).toLocaleString();
+  const fmt = n => (Number(n) || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const inStyle = {
     width: "100%",
     padding: "7px 10px",
@@ -10339,15 +10390,15 @@ function AssessModal({
     const cleanParts = parts.filter(p => p.name.trim()).map(p => ({
       name: p.name.trim(),
       qty: Number(p.qty) || 1,
-      unitPrice: Number(p.unitPrice) || 0,
-      total: (Number(p.qty) || 1) * (Number(p.unitPrice) || 0),
+      unitPrice: r2(p.unitPrice),
+      total: r2((Number(p.qty) || 1) * (Number(p.unitPrice) || 0)),
       supplier: p.supplier.trim(),
       photos: (p.photos || []).filter(Boolean).slice(0, 2)
     }));
     onSave(r, {
       parts: cleanParts,
-      laborCost: Number(laborCost) || 0,
-      cost: total
+      laborCost: r2(laborCost),
+      cost: r2(total)
     });
   };
   return React.createElement(Modal, {
@@ -10539,6 +10590,7 @@ function AssessModal({
   }, React.createElement("input", {
     type: "number",
     min: "0",
+    step: "0.01",
     value: p.unitPrice,
     onChange: e => upPart(i, "unitPrice", e.target.value),
     style: {
@@ -10600,6 +10652,7 @@ function AssessModal({
   }, React.createElement("input", {
     type: "number",
     min: "0",
+    step: "0.01",
     value: laborCost,
     onChange: e => setLaborCost(e.target.value),
     placeholder: "0",
@@ -10695,7 +10748,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5931) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 5939) ---- */
 function Users({
   user
 }) {
@@ -11233,7 +11286,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6107) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6115) ---- */
 function Categories({
   user
 }) {
@@ -11496,7 +11549,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6195) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6203) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -13661,48 +13714,8 @@ function MachineDetail({
     })));
   };
   const recordPm = async () => {
-    const esc = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-    const res = await Swal.fire({
-      title: "บันทึกทำ PM แล้ว",
-      html: `<div style="text-align:left;display:grid;gap:10px;font-size:14px">
-        <label>วันที่ทำ PM<input id="pm-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${toDateStr(new Date())}"></label>
-        <label>ชั่วโมงทำงาน ณ วันที่ทำ PM<input id="pm-hours" type="number" min="0" class="swal2-input" style="margin:4px 0 0;width:100%" value="${esc(m.hours || 0)}"></label>
-        <label>หมายเหตุ (เช่น เปลี่ยนถ่ายน้ำมันเครื่อง, กรองอากาศ)<input id="pm-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
-      </div>`,
-      showCancelButton: true,
-      confirmButtonText: "บันทึก",
-      cancelButtonText: "ยกเลิก",
-      confirmButtonColor: "#0E7490",
-      preConfirm: () => {
-        const date = document.getElementById("pm-date").value;
-        if (!date) {
-          Swal.showValidationMessage("กรุณาระบุวันที่");
-          return false;
-        }
-        const hv = document.getElementById("pm-hours").value;
-        return {
-          date,
-          hours: hv === "" ? "" : Number(hv) || 0,
-          note: document.getElementById("pm-note").value.trim()
-        };
-      }
-    });
-    if (!res.isConfirmed) return;
-    const v = res.value;
-    const entry = {
-      date: v.date,
-      hours: v.hours,
-      note: v.note,
-      by: user.name,
-      recordedAt: new Date().toISOString()
-    };
-    const patch = {
-      lastPmDate: v.date,
-      lastPmHours: v.hours,
-      lastService: v.date,
-      pmHistory: [...(m.pmHistory || []), entry]
-    };
-    if (v.hours !== "" && v.hours > (Number(m.hours) || 0)) patch.hours = v.hours;
+    const patch = await window.pmRecordDialog(m, user);
+    if (!patch) return;
     await onPatchMachine(patch);
     Swal.fire({
       icon: "success",
@@ -14690,7 +14703,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7212) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7201) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18366,7 +18379,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8412) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8401) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19465,7 +19478,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8719) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8708) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -19525,6 +19538,8 @@ async function exportAssetsExcel(list) {
         "ขนาด": r.size || "",
         "จำนวน": Number(r.quantity) || 0,
         "หน่วย": r.unit || "",
+        "ราคาต่อหน่วย (บาท)": r.price === "" || r.price == null ? "" : Number(r.price) || 0,
+        "มูลค่ารวม (บาท)": r.price === "" || r.price == null ? "" : Math.round((Number(r.price) || 0) * (Number(r.quantity) || 0) * 100) / 100,
         "กรรมสิทธิ์": r.ownership || "",
         "ผู้ถือครอง": r.holder || "",
         "สถานที่ (โครงการ)": r.site || "",
@@ -19720,7 +19735,7 @@ function AssetRegistry({
     ...prev,
     [k]: !prev[k]
   }));
-  const colCount = canEdit ? 9 : 8;
+  const colCount = canEdit ? 10 : 9;
   const renderRow = r => React.createElement("tr", {
     key: r.key
   }, React.createElement("td", null, React.createElement("span", {
@@ -19789,6 +19804,31 @@ function AssetRegistry({
       whiteSpace: "nowrap"
     }
   }, (Number(r.quantity) || 0).toLocaleString("th-TH"), " ", r.unit || ""), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      whiteSpace: "nowrap",
+      textAlign: "right",
+      fontFamily: "JetBrains Mono,monospace",
+      fontSize: 12
+    }
+  }, r.price !== "" && r.price != null ? React.createElement(React.Fragment, null, React.createElement("div", null, "\u0E3F", (Number(r.price) || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })), (Number(r.quantity) || 0) > 1 && React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "var(--primary)",
+      marginTop: 2
+    },
+    title: "\u0E21\u0E39\u0E25\u0E04\u0E48\u0E32\u0E23\u0E27\u0E21 = \u0E23\u0E32\u0E04\u0E32\u0E15\u0E48\u0E2D\u0E2B\u0E19\u0E48\u0E27\u0E22 \xD7 \u0E08\u0E33\u0E19\u0E27\u0E19"
+  }, "\u0E23\u0E27\u0E21 \u0E3F", ((Number(r.price) || 0) * (Number(r.quantity) || 0)).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }))) : React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u2014")), React.createElement("td", {
     className: "hide-on-mobile",
     style: {
       fontSize: 13
@@ -19919,6 +19959,7 @@ function AssetRegistry({
     size: "",
     quantity: 1,
     unit: "",
+    price: "",
     ownership: "",
     holder: "",
     site: "",
@@ -20229,6 +20270,11 @@ function AssetRegistry({
   }, "\u0E22\u0E35\u0E48\u0E2B\u0E49\u0E2D / \u0E23\u0E38\u0E48\u0E19"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E02\u0E19\u0E32\u0E14"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19"), React.createElement("th", {
+    className: "hide-on-mobile",
+    style: {
+      textAlign: "right"
+    }
+  }, "\u0E23\u0E32\u0E04\u0E32/\u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E01\u0E23\u0E23\u0E21\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C"), React.createElement("th", {
     className: "hide-on-mobile"
@@ -20983,6 +21029,31 @@ function AssetForm({
     value: f.quantity ?? "",
     onChange: e => up("quantity", e.target.value)
   })), txt("unit", "หน่วย", "เช่น ถัง / ชุด / ตัว"), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E23\u0E32\u0E04\u0E32\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19 (\u0E1A\u0E32\u0E17 / \u0E2B\u0E19\u0E48\u0E27\u0E22)"), React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "0.01",
+    value: f.price ?? "",
+    onChange: e => up("price", e.target.value),
+    placeholder: "0.00",
+    style: {
+      textAlign: "right"
+    }
+  }), (Number(f.price) || 0) > 0 && (Number(f.quantity) || 0) > 1 && React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, "\u0E21\u0E39\u0E25\u0E04\u0E48\u0E32\u0E23\u0E27\u0E21 ", (Number(f.quantity) || 0).toLocaleString("th-TH"), " ", f.unit || "หน่วย", " = ", React.createElement("b", {
+    style: {
+      color: "var(--primary)"
+    }
+  }, "\u0E3F", ((Number(f.price) || 0) * (Number(f.quantity) || 0)).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })))), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E01\u0E23\u0E23\u0E21\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C"), React.createElement("input", {
     list: "asset-owners",
@@ -21942,7 +22013,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 9932) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 9934) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22415,7 +22486,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10267) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10269) ---- */
 function Permissions({
   user
 }) {
@@ -23035,7 +23106,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10620) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10622) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -23262,6 +23333,7 @@ function SpareParts({
 }) {
   const [q, setQ] = React.useState("");
   const [view, setView] = React.useState("list");
+  const [openMc, setOpenMc] = React.useState({});
   const [detail, setDetail] = React.useState(null);
   const machineName = code => {
     const m = (window.__DATA.machines || []).find(x => x.code === code);
@@ -23323,9 +23395,61 @@ function SpareParts({
       suppliers: [...g.suppliers]
     })).sort((a, b) => b.total - a.total);
   }, [filtered]);
+  const byMachine = React.useMemo(() => {
+    const map = {};
+    filtered.forEach(r => {
+      const k = r.machineCode || "__none__";
+      if (!map[k]) map[k] = {
+        key: k,
+        code: r.machineCode,
+        name: r.machineName,
+        projects: new Set(),
+        repairs: new Set(),
+        count: 0,
+        qty: 0,
+        total: 0,
+        parts: {}
+      };
+      const g = map[k];
+      g.count += 1;
+      g.qty += r.qty;
+      g.total += r.total;
+      if (r.project) g.projects.add(r.project);
+      g.repairs.add(r.running);
+      const pk = r.name.toLowerCase();
+      if (!g.parts[pk]) g.parts[pk] = {
+        name: r.name,
+        qty: 0,
+        total: 0,
+        count: 0,
+        suppliers: new Set(),
+        runnings: new Set()
+      };
+      const pp = g.parts[pk];
+      pp.qty += r.qty;
+      pp.total += r.total;
+      pp.count += 1;
+      if (r.supplier) pp.suppliers.add(r.supplier);
+      pp.runnings.add(r.running);
+    });
+    return Object.values(map).map(g => ({
+      ...g,
+      projects: [...g.projects],
+      repairs: [...g.repairs],
+      parts: Object.values(g.parts).map(x => ({
+        ...x,
+        suppliers: [...x.suppliers],
+        runnings: [...x.runnings]
+      })).sort((a, b) => b.total - a.total)
+    })).sort((a, b) => (a.key === "__none__") - (b.key === "__none__") || b.total - a.total);
+  }, [filtered]);
   const totalQty = filtered.reduce((s, r) => s + r.qty, 0);
   const totalCost = filtered.reduce((s, r) => s + r.total, 0);
-  const fmt = n => Math.round(Number(n) || 0).toLocaleString("th-TH");
+  const fmt = n => (Number(n) || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const exportExcel = async () => {
     if (!filtered.length) {
       Swal.fire({
@@ -23342,14 +23466,38 @@ function SpareParts({
       });
       const XLSX = await ensureXLSX();
       let data, sheetName;
-      if (view === "grouped") {
+      if (view === "machine") {
+        sheetName = "อะไหล่รวมตามเครื่องจักร";
+        data = [];
+        byMachine.forEach(g => g.parts.forEach(pp => data.push({
+          "รหัสเครื่องจักร": g.code || "(ไม่ระบุ)",
+          "ชื่อเครื่องจักร": g.name || "",
+          "โครงการ": g.projects.join(", "),
+          "อะไหล่/รายการ": pp.name,
+          "ใช้ (ครั้ง)": pp.count,
+          "จำนวนรวม": pp.qty,
+          "มูลค่ารวม (บาท)": r2(pp.total),
+          "แหล่งซื้อ": pp.suppliers.join(", "),
+          "ใบแจ้งซ่อม": pp.runnings.join(", ")
+        })));
+        var machineSum = byMachine.map((g, i) => ({
+          "ลำดับ": i + 1,
+          "รหัสเครื่องจักร": g.code || "(ไม่ระบุ)",
+          "ชื่อเครื่องจักร": g.name || "",
+          "โครงการ": g.projects.join(", "),
+          "จำนวนใบแจ้งซ่อม": g.repairs.length,
+          "รายการอะไหล่": g.count,
+          "จำนวนชิ้นรวม": g.qty,
+          "มูลค่าอะไหล่รวม (บาท)": r2(g.total)
+        }));
+      } else if (view === "grouped") {
         sheetName = "อะไหล่รวมตามชื่อ";
         data = grouped.map((g, i) => ({
           "ลำดับ": i + 1,
           "อะไหล่/รายการ": g.name,
           "จำนวนครั้งที่ใช้": g.count,
           "จำนวนรวม": g.qty,
-          "มูลค่ารวม (บาท)": Math.round(g.total),
+          "มูลค่ารวม (บาท)": r2(g.total),
           "แหล่งซื้อ": g.suppliers.join(", ")
         }));
       } else {
@@ -23359,7 +23507,7 @@ function SpareParts({
           "อะไหล่/รายการ": r.name,
           "จำนวน": r.qty,
           "ราคา/หน่วย": r.unitPrice,
-          "รวม (บาท)": Math.round(r.total),
+          "รวม (บาท)": r2(r.total),
           "แหล่งซื้อ": r.supplier,
           "ใบแจ้งซ่อม": r.running,
           "เครื่องจักร": [r.machineCode, r.machineName].filter(Boolean).join(" "),
@@ -23373,6 +23521,13 @@ function SpareParts({
         wch: Math.min(40, Math.max(k.length + 4, ...data.map(row => String(row[k] ?? "").length + 2)))
       }));
       const wb = XLSX.utils.book_new();
+      if (view === "machine" && machineSum && machineSum.length) {
+        const ws0 = XLSX.utils.json_to_sheet(machineSum);
+        ws0["!cols"] = Object.keys(machineSum[0]).map(k => ({
+          wch: Math.min(40, Math.max(k.length + 4, ...machineSum.map(row => String(row[k] ?? "").length + 2)))
+        }));
+        XLSX.utils.book_append_sheet(wb, ws0, "สรุปรายเครื่องจักร");
+      }
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -23394,8 +23549,8 @@ function SpareParts({
     }
   };
   const stats = [{
-    label: view === "grouped" ? "ชนิดอะไหล่" : "รายการอะไหล่",
-    val: view === "grouped" ? grouped.length : filtered.length,
+    label: view === "grouped" ? "ชนิดอะไหล่" : view === "machine" ? "เครื่องจักรที่ใช้อะไหล่" : "รายการอะไหล่",
+    val: view === "grouped" ? grouped.length : view === "machine" ? byMachine.filter(g => g.code).length : filtered.length,
     icon: "fa-box-open",
     color: "#3B82F6"
   }, {
@@ -23469,7 +23624,17 @@ function SpareParts({
     onClick: () => setView("grouped")
   }, React.createElement("i", {
     className: "fa-solid fa-layer-group"
-  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E0A\u0E37\u0E48\u0E2D\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48")), React.createElement("div", {
+  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E0A\u0E37\u0E48\u0E2D\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48"), React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    style: {
+      borderRadius: 0,
+      background: view === "machine" ? "var(--accent-soft)" : "#fff",
+      color: view === "machine" ? "var(--primary)" : "var(--muted)"
+    },
+    onClick: () => setView("machine")
+  }, React.createElement("i", {
+    className: "fa-solid fa-industry"
+  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("div", {
     className: "spacer"
   }), React.createElement("button", {
     className: "btn btn-ghost",
@@ -23581,7 +23746,197 @@ function SpareParts({
     className: "fa-solid fa-box-open"
   }), React.createElement("div", {
     className: "t"
-  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49"), React.createElement("div", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E08\u0E30\u0E1B\u0E23\u0E32\u0E01\u0E0F\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E40\u0E21\u0E34\u0E19/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E43\u0E19\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21")))))) : React.createElement("table", {
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49"), React.createElement("div", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E08\u0E30\u0E1B\u0E23\u0E32\u0E01\u0E0F\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E40\u0E21\u0E34\u0E19/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E43\u0E19\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21")))))) : view === "machine" ? React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
+    style: {
+      width: 28
+    }
+  }), React.createElement("th", null, "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48"), React.createElement("th", null, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E0A\u0E34\u0E49\u0E19"), React.createElement("th", {
+    style: {
+      textAlign: "right"
+    }
+  }, "\u0E21\u0E39\u0E25\u0E04\u0E48\u0E32\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E23\u0E27\u0E21"))), React.createElement("tbody", null, byMachine.map(g => {
+    const open = !!openMc[g.key];
+    const share = totalCost > 0 ? g.total / totalCost * 100 : 0;
+    return React.createElement(React.Fragment, {
+      key: g.key
+    }, React.createElement("tr", {
+      style: {
+        cursor: "pointer"
+      },
+      onClick: () => setOpenMc(p => ({
+        ...p,
+        [g.key]: !p[g.key]
+      }))
+    }, React.createElement("td", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid fa-chevron-${open ? "down" : "right"}`
+    })), React.createElement("td", null, g.code ? React.createElement(React.Fragment, null, React.createElement("span", {
+      className: "ticket-id"
+    }, g.code), g.name ? React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--muted)",
+        marginTop: 2
+      }
+    }, g.name) : null) : React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "\u2014 \u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23 \u2014")), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 13
+      }
+    }, g.projects.length ? g.projects.map(x => window.projectShort ? window.projectShort(x) : x).join(", ") : "—"), React.createElement("td", null, g.repairs.length.toLocaleString("th-TH"), " \u0E43\u0E1A"), React.createElement("td", {
+      className: "hide-on-mobile"
+    }, g.parts.length.toLocaleString("th-TH"), " \u0E0A\u0E19\u0E34\u0E14 \xB7 ", g.count.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, g.qty.toLocaleString("th-TH")), React.createElement("td", {
+      style: {
+        whiteSpace: "nowrap",
+        textAlign: "right"
+      }
+    }, React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        color: "var(--primary)"
+      }
+    }, "\u0E3F", fmt(g.total)), React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)"
+      }
+    }, share.toFixed(1), "% \u0E02\u0E2D\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"))), open && React.createElement("tr", null, React.createElement("td", null), React.createElement("td", {
+      colSpan: "6",
+      style: {
+        background: "#FAFBFC",
+        padding: "8px 12px 12px"
+      }
+    }, React.createElement("table", {
+      style: {
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: 12.5
+      }
+    }, React.createElement("thead", null, React.createElement("tr", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, React.createElement("th", {
+      style: {
+        textAlign: "left",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48 / \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", {
+      style: {
+        textAlign: "center",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E43\u0E0A\u0E49 (\u0E04\u0E23\u0E31\u0E49\u0E07)"), React.createElement("th", {
+      style: {
+        textAlign: "center",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E27\u0E21"), React.createElement("th", {
+      style: {
+        textAlign: "right",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E21\u0E39\u0E25\u0E04\u0E48\u0E32\u0E23\u0E27\u0E21"), React.createElement("th", {
+      className: "hide-on-mobile",
+      style: {
+        textAlign: "left",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E41\u0E2B\u0E25\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D"), React.createElement("th", {
+      className: "hide-on-mobile",
+      style: {
+        textAlign: "left",
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, "\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21"))), React.createElement("tbody", null, g.parts.map((pp, k) => React.createElement("tr", {
+      key: k,
+      style: {
+        borderTop: "1px solid var(--line-soft)"
+      }
+    }, React.createElement("td", {
+      style: {
+        padding: "6px 8px",
+        fontWeight: 500
+      }
+    }, pp.name), React.createElement("td", {
+      style: {
+        padding: "6px 8px",
+        textAlign: "center"
+      }
+    }, pp.count), React.createElement("td", {
+      style: {
+        padding: "6px 8px",
+        textAlign: "center"
+      }
+    }, pp.qty.toLocaleString("th-TH")), React.createElement("td", {
+      style: {
+        padding: "6px 8px",
+        textAlign: "right",
+        whiteSpace: "nowrap",
+        fontFamily: "JetBrains Mono,monospace",
+        color: "var(--primary)"
+      }
+    }, "\u0E3F", fmt(pp.total)), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        padding: "6px 8px",
+        color: "var(--muted)"
+      }
+    }, pp.suppliers.join(", ") || "—"), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        padding: "6px 8px"
+      }
+    }, pp.runnings.map(rn => {
+      const rep = filtered.find(x => x.running === rn);
+      return React.createElement("span", {
+        key: rn,
+        className: "ticket-id",
+        style: {
+          cursor: "pointer",
+          textDecoration: "underline",
+          marginRight: 4,
+          display: "inline-block",
+          marginBottom: 2
+        },
+        onClick: e => {
+          e.stopPropagation();
+          rep && setDetail(rep.repair);
+        }
+      }, rn);
+    })))))))));
+  }), byMachine.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: "7"
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-industry"
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49")))))) : React.createElement("table", {
     className: "data"
   }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48 / \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", {
     className: "hide-on-mobile"
@@ -23644,6 +23999,777 @@ function SpareParts({
   }));
 }
 window.SpareParts = SpareParts;
+window.pmRecordDialog = async function (m, user) {
+  const esc = v => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const res = await Swal.fire({
+    title: "บันทึกทำ PM แล้ว",
+    html: `<div style="text-align:left;font-size:13px;color:#64748B;margin-bottom:8px">${esc(m.code)} · ${esc(m.name)}</div>
+      <div style="text-align:left;display:grid;gap:10px;font-size:14px">
+      <label>วันที่ทำ PM<input id="pm-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${today}"></label>
+      <label>ชั่วโมงทำงาน ณ วันที่ทำ PM<input id="pm-hours" type="number" min="0" class="swal2-input" style="margin:4px 0 0;width:100%" value="${esc(m.hours || 0)}"></label>
+      <label>หมายเหตุ (เช่น เปลี่ยนถ่ายน้ำมันเครื่อง, กรองอากาศ)<input id="pm-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
+    </div>`,
+    showCancelButton: true,
+    confirmButtonText: "บันทึก",
+    cancelButtonText: "ยกเลิก",
+    confirmButtonColor: "#0E7490",
+    preConfirm: () => {
+      const date = document.getElementById("pm-date").value;
+      if (!date) {
+        Swal.showValidationMessage("กรุณาระบุวันที่");
+        return false;
+      }
+      const hv = document.getElementById("pm-hours").value;
+      return {
+        date,
+        hours: hv === "" ? "" : Number(hv) || 0,
+        note: document.getElementById("pm-note").value.trim()
+      };
+    }
+  });
+  if (!res.isConfirmed) return null;
+  const v = res.value;
+  const entry = {
+    date: v.date,
+    hours: v.hours,
+    note: v.note,
+    by: user.name,
+    recordedAt: new Date().toISOString()
+  };
+  const patch = {
+    lastPmDate: v.date,
+    lastPmHours: v.hours,
+    lastService: v.date,
+    pmHistory: [...(m.pmHistory || []), entry]
+  };
+  if (v.hours !== "" && v.hours > (Number(m.hours) || 0)) patch.hours = v.hours;
+  return patch;
+};
+const PM_STATE = {
+  overdue: {
+    label: "เกินกำหนด",
+    color: "#DC2626",
+    bg: "#FEF2F2",
+    icon: "fa-triangle-exclamation",
+    rank: 0
+  },
+  soon: {
+    label: "ใกล้ถึงกำหนด",
+    color: "#D97706",
+    bg: "#FFFBEB",
+    icon: "fa-hourglass-half",
+    rank: 1
+  },
+  ok: {
+    label: "ปกติ",
+    color: "#0E7490",
+    bg: "#ECFEFF",
+    icon: "fa-circle-check",
+    rank: 2
+  },
+  none: {
+    label: "ยังไม่ตั้งรอบ PM",
+    color: "#64748B",
+    bg: "#F1F5F9",
+    icon: "fa-circle-minus",
+    rank: 3
+  }
+};
+const TH_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+function PmPlan({
+  user
+}) {
+  const [tick, setTick] = React.useState(0);
+  const [q, setQ] = React.useState("");
+  const [proj, setProj] = React.useState("");
+  const [stateF, setStateF] = React.useState("due");
+  const [view, setView] = React.useState("list");
+  const [quick, setQuick] = React.useState("");
+  const canRecord = ["Admin", "Officer", "Engineer", "Technician"].includes(window.effectiveRole ? window.effectiveRole(user) : user.role);
+  const short = p => window.projectShort ? window.projectShort(p) : p;
+  const fmtD = d => d ? window.__DATA.fmtDate(d) : "—";
+  const num = n => (Number(n) || 0).toLocaleString("th-TH");
+  const all = React.useMemo(() => {
+    let list = (window.__DATA.machines || []).filter(m => m.status !== "ส่งคืน");
+    try {
+      list = window.filterByUserProjects(user, list, "project");
+    } catch (e) {}
+    return list.map(m => {
+      const pm = window.machinePmStatus(m);
+      const everyD = Number(m.pmEveryDays) || 0,
+        everyH = Number(m.pmEveryHours) || 0;
+      const u = [pm.daysLeft, pm.hoursLeft != null ? pm.hoursLeft / 8 : null].filter(x => x != null);
+      return {
+        m,
+        pm,
+        everyD,
+        everyH,
+        urgency: u.length ? Math.min(...u) : 1e9,
+        pmCount: (m.pmHistory || []).length
+      };
+    }).sort((a, b) => PM_STATE[a.pm.state].rank - PM_STATE[b.pm.state].rank || a.urgency - b.urgency || String(a.m.code).localeCompare(String(b.m.code), "th", {
+      numeric: true
+    }));
+  }, [user, tick]);
+  const projects = React.useMemo(() => [...new Set(all.map(x => x.m.project).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [all]);
+  const kw = q.trim().toLowerCase();
+  const scoped = all.filter(x => (!proj || x.m.project === proj) && (!kw || [x.m.code, x.m.name, x.m.brand, x.m.model, x.m.project, x.m.subSite, x.m.driverName].some(v => String(v || "").toLowerCase().includes(kw))));
+  const count = st => scoped.filter(x => x.pm.state === st).length;
+  const cnt = {
+    overdue: count("overdue"),
+    soon: count("soon"),
+    ok: count("ok"),
+    none: count("none")
+  };
+  const planned = cnt.overdue + cnt.soon + cnt.ok;
+  const filtered = scoped.filter(x => stateF === "all" ? true : stateF === "due" ? ["overdue", "soon"].includes(x.pm.state) : x.pm.state === stateF);
+  const months = React.useMemo(() => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const buckets = [{
+      key: "over",
+      label: "เกินกำหนด / ยังไม่เคยบันทึก PM",
+      color: "#DC2626",
+      items: []
+    }];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      buckets.push({
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        label: `${TH_MONTHS[d.getMonth()]} ${d.getFullYear() + 543}`,
+        color: i === 0 ? "#D97706" : "#0E7490",
+        items: []
+      });
+    }
+    const later = {
+      key: "later",
+      label: "หลังจากนั้น",
+      color: "#64748B",
+      items: []
+    };
+    const hourOnly = {
+      key: "hours",
+      label: "ตามชั่วโมงทำงาน (ไม่มีรอบวัน)",
+      color: "#7C3AED",
+      items: []
+    };
+    scoped.filter(x => x.pm.state !== "none").forEach(x => {
+      if (!x.everyD) {
+        hourOnly.items.push(x);
+        return;
+      }
+      if (x.pm.noBase || x.pm.daysLeft != null && x.pm.daysLeft < 0) {
+        buckets[0].items.push(x);
+        return;
+      }
+      const nd = x.pm.nextDate;
+      if (!nd) {
+        later.items.push(x);
+        return;
+      }
+      const b = buckets.find(b => b.key === `${nd.getFullYear()}-${nd.getMonth()}`);
+      (b || later).items.push(x);
+    });
+    buckets.forEach(b => b.items.sort((a, c) => (a.pm.nextDate || 0) - (c.pm.nextDate || 0)));
+    hourOnly.items.sort((a, c) => a.pm.hoursLeft - c.pm.hoursLeft);
+    return [...buckets, later, hourOnly].filter(b => b.items.length || b.key !== "later");
+  }, [scoped.map(x => x.m.id).join(","), tick]);
+  const byProject = React.useMemo(() => {
+    const map = {};
+    scoped.forEach(x => {
+      const k = x.m.project || "— ไม่ระบุโครงการ —";
+      if (!map[k]) map[k] = {
+        name: k,
+        total: 0,
+        overdue: 0,
+        soon: 0,
+        ok: 0,
+        none: 0
+      };
+      map[k].total++;
+      map[k][x.pm.state]++;
+    });
+    return Object.values(map).sort((a, b) => b.overdue - a.overdue || b.soon - a.soon || b.total - a.total);
+  }, [scoped.map(x => x.m.id).join(","), tick]);
+  const record = async x => {
+    const patch = await window.pmRecordDialog(x.m, user);
+    if (!patch) return;
+    try {
+      Swal.fire({
+        title: "กำลังบันทึก...",
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+      });
+      await window.api("updateMachine", {
+        id: x.m.id,
+        patch
+      });
+      window.__DATA.machines = (window.__DATA.machines || []).map(m => m.id === x.m.id ? {
+        ...m,
+        ...patch
+      } : m);
+      setTick(t => t + 1);
+      Swal.fire({
+        icon: "success",
+        title: "บันทึก PM แล้ว",
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    }
+  };
+  const cycleText = x => [x.everyD ? `ทุก ${num(x.everyD)} วัน` : "", x.everyH ? `ทุก ${num(x.everyH)} ชม.` : ""].filter(Boolean).join(" หรือ ") || "—";
+  const lastText = m => {
+    const d = m.lastPmDate || m.lastService;
+    return (d ? fmtD(d) : "—") + (m.lastPmHours !== "" && m.lastPmHours != null ? ` · ${num(m.lastPmHours)} ชม.` : "");
+  };
+  const badge = (st, text) => {
+    const s = PM_STATE[st];
+    return React.createElement("span", {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 9px",
+        borderRadius: 999,
+        background: s.bg,
+        color: s.color,
+        fontSize: 12,
+        fontWeight: 600,
+        whiteSpace: "nowrap"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${s.icon}`
+    }), s.label, text ? React.createElement("span", {
+      style: {
+        fontWeight: 400
+      }
+    }, " \xB7 ", text) : null);
+  };
+  const exportExcel = async () => {
+    if (!scoped.length) {
+      Swal.fire({
+        icon: "info",
+        title: "ไม่มีข้อมูลให้ส่งออก"
+      });
+      return;
+    }
+    try {
+      Swal.fire({
+        title: "กำลังสร้างไฟล์ Excel...",
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+      });
+      const XLSX = await ensureXLSX();
+      const iso = d => {
+        if (!d) return "";
+        const x = new Date(d);
+        return isNaN(x) ? "" : `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+      };
+      const data = filtered.map((x, i) => ({
+        "ลำดับ": i + 1,
+        "รหัสเครื่องจักร": x.m.code || "",
+        "ชื่อเครื่องจักร": x.m.name || "",
+        "โครงการ": x.m.project || "",
+        "ไซต์งานย่อย": x.m.subSite || "",
+        "สถานะ PM": PM_STATE[x.pm.state].label,
+        "รายละเอียด": x.pm.text || "",
+        "รอบ PM (วัน)": x.everyD || "",
+        "รอบ PM (ชม.)": x.everyH || "",
+        "PM ล่าสุด (วันที่)": iso(x.m.lastPmDate || x.m.lastService),
+        "PM ล่าสุด (ชม.)": x.m.lastPmHours ?? "",
+        "ครบกำหนดวันที่": iso(x.pm.nextDate),
+        "วันคงเหลือ": x.pm.daysLeft ?? "",
+        "ชั่วโมงปัจจุบัน": Number(x.m.hours) || 0,
+        "ครบกำหนดที่ชั่วโมง": x.pm.nextHours ?? "",
+        "ชั่วโมงคงเหลือ": x.pm.hoursLeft ?? "",
+        "ทำ PM แล้ว (ครั้ง)": x.pmCount,
+        "ผู้ควบคุม": x.m.driverName || ""
+      }));
+      const proj = byProject.map((p, i) => ({
+        "ลำดับ": i + 1,
+        "โครงการ": p.name,
+        "เครื่องจักร": p.total,
+        "เกินกำหนด": p.overdue,
+        "ใกล้ถึงกำหนด": p.soon,
+        "ปกติ": p.ok,
+        "ยังไม่ตั้งรอบ": p.none
+      }));
+      const wb = XLSX.utils.book_new();
+      [[data, "แผน PM"], [proj, "สรุปตามโครงการ"]].forEach(([rows, name]) => {
+        if (!rows.length) return;
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = Object.keys(rows[0]).map(k => ({
+          wch: Math.min(40, Math.max(k.length + 4, ...rows.map(r => String(r[k] ?? "").length + 2)))
+        }));
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      });
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+      XLSX.writeFile(wb, `แผนPM_${stamp}.xlsx`);
+      Swal.fire({
+        icon: "success",
+        title: `ส่งออกแล้ว ${data.length} เครื่อง`,
+        timer: 1400,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "ส่งออกไม่สำเร็จ",
+        text: err.message
+      });
+    }
+  };
+  const stats = [{
+    k: "overdue",
+    label: "เกินกำหนด",
+    val: cnt.overdue
+  }, {
+    k: "soon",
+    label: `ใกล้ถึงกำหนด (≤${window.PM_SOON_DAYS} วัน / ${window.PM_SOON_HOURS} ชม.)`,
+    val: cnt.soon
+  }, {
+    k: "ok",
+    label: "ปกติ",
+    val: cnt.ok
+  }, {
+    k: "none",
+    label: "ยังไม่ตั้งรอบ PM",
+    val: cnt.none
+  }];
+  const tabBtn = (k, icon, label) => React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    style: {
+      borderRadius: 0,
+      background: view === k ? "var(--accent-soft)" : "#fff",
+      color: view === k ? "var(--primary)" : "var(--muted)"
+    },
+    onClick: () => setView(k)
+  }, React.createElement("i", {
+    className: `fa-solid ${icon}`
+  }), " ", label);
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "stat-grid",
+    style: {
+      marginBottom: 12
+    }
+  }, stats.map(s => {
+    const st = PM_STATE[s.k];
+    return React.createElement("div", {
+      className: "stat",
+      key: s.k,
+      style: {
+        cursor: "pointer",
+        outline: stateF === s.k ? `2px solid ${st.color}` : "none"
+      },
+      onClick: () => {
+        setStateF(stateF === s.k ? "all" : s.k);
+        setView("list");
+      },
+      title: "\u0E04\u0E25\u0E34\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E01\u0E23\u0E2D\u0E07"
+    }, React.createElement("div", {
+      className: "ic",
+      style: {
+        background: st.color + "1a",
+        color: st.color
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${st.icon}`
+    })), React.createElement("div", {
+      className: "label"
+    }, s.label), React.createElement("div", {
+      className: "val",
+      style: {
+        color: s.val && s.k !== "ok" && s.k !== "none" ? st.color : undefined
+      }
+    }, num(s.val), " ", React.createElement("span", {
+      style: {
+        fontSize: 13,
+        fontWeight: 400,
+        color: "var(--muted)"
+      }
+    }, "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07")));
+  })), React.createElement("div", {
+    style: {
+      marginBottom: 16,
+      padding: "10px 14px",
+      background: "#fff",
+      border: "1px solid var(--line)",
+      borderRadius: 12,
+      fontSize: 13,
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("span", null, "\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A PM \u0E41\u0E25\u0E49\u0E27 ", React.createElement("b", null, num(planned)), " / ", num(scoped.length), " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07"), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 160,
+      height: 8,
+      borderRadius: 999,
+      background: "#F1F5F9",
+      overflow: "hidden",
+      display: "flex"
+    }
+  }, ["overdue", "soon", "ok"].map(k => scoped.length ? React.createElement("div", {
+    key: k,
+    title: `${PM_STATE[k].label} ${cnt[k]}`,
+    style: {
+      width: `${cnt[k] / scoped.length * 100}%`,
+      background: PM_STATE[k].color
+    }
+  }) : null)), React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u0E17\u0E33\u0E15\u0E32\u0E21\u0E41\u0E1C\u0E19 (\u0E1B\u0E01\u0E15\u0E34) ", planned ? Math.round(cnt.ok / planned * 100) : 0, "% \u0E02\u0E2D\u0E07\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A")), React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "filters"
+  }, React.createElement("div", {
+    className: "search-input"
+  }, React.createElement("i", {
+    className: "fa-solid fa-magnifying-glass"
+  }), React.createElement("input", {
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32 \u0E23\u0E2B\u0E31\u0E2A / \u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07 / \u0E22\u0E35\u0E48\u0E2B\u0E49\u0E2D / \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 / \u0E1C\u0E39\u0E49\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21...",
+    value: q,
+    onChange: e => setQ(e.target.value)
+  })), React.createElement("select", {
+    value: proj,
+    onChange: e => setProj(e.target.value),
+    style: {
+      maxWidth: 240
+    }
+  }, React.createElement("option", {
+    value: ""
+  }, "\u0E17\u0E38\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (", num(all.length), ")"), projects.map(p => React.createElement("option", {
+    key: p,
+    value: p
+  }, short(p)))), view === "list" && React.createElement("select", {
+    value: stateF,
+    onChange: e => setStateF(e.target.value)
+  }, React.createElement("option", {
+    value: "due"
+  }, "\u0E15\u0E49\u0E2D\u0E07\u0E17\u0E33 PM (\u0E40\u0E01\u0E34\u0E19 + \u0E43\u0E01\u0E25\u0E49\u0E16\u0E36\u0E07)"), React.createElement("option", {
+    value: "all"
+  }, "\u0E17\u0E38\u0E01\u0E2A\u0E16\u0E32\u0E19\u0E30"), React.createElement("option", {
+    value: "overdue"
+  }, "\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14"), React.createElement("option", {
+    value: "soon"
+  }, "\u0E43\u0E01\u0E25\u0E49\u0E16\u0E36\u0E07\u0E01\u0E33\u0E2B\u0E19\u0E14"), React.createElement("option", {
+    value: "ok"
+  }, "\u0E1B\u0E01\u0E15\u0E34"), React.createElement("option", {
+    value: "none"
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A PM")), React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, tabBtn("list", "fa-list-check", "รายการตามกำหนด"), tabBtn("month", "fa-calendar-days", "แผนรายเดือน"), tabBtn("project", "fa-diagram-project", "สรุปตามโครงการ")), React.createElement("div", {
+    className: "spacer"
+  }), React.createElement("button", {
+    className: "btn btn-ghost",
+    onClick: exportExcel
+  }, React.createElement("i", {
+    className: "fa-solid fa-file-excel",
+    style: {
+      color: "#1D6F42"
+    }
+  }), " \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 Excel")), view === "list" && React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E2A\u0E16\u0E32\u0E19\u0E30"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E23\u0E2D\u0E1A PM"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "PM \u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"), React.createElement("th", null, "\u0E04\u0E23\u0E1A\u0E01\u0E33\u0E2B\u0E19\u0E14"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E17\u0E33\u0E41\u0E25\u0E49\u0E27"), React.createElement("th", null))), React.createElement("tbody", null, filtered.map(x => React.createElement("tr", {
+    key: x.m.id
+  }, React.createElement("td", null, React.createElement("span", {
+    className: "ticket-id",
+    style: {
+      cursor: "pointer"
+    },
+    onClick: () => setQuick(x.m.code)
+  }, x.m.code || "—"), React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      marginTop: 2
+    }
+  }, x.m.name)), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      fontSize: 13
+    }
+  }, x.m.project ? short(x.m.project) : "—", x.m.subSite ? React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)"
+    }
+  }, x.m.subSite) : null), React.createElement("td", null, badge(x.pm.state), x.pm.text ? React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: PM_STATE[x.pm.state].color,
+      marginTop: 3
+    }
+  }, x.pm.text) : null), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      fontSize: 13
+    }
+  }, cycleText(x)), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      fontSize: 13,
+      whiteSpace: "nowrap"
+    }
+  }, x.pm.state === "none" ? "—" : lastText(x.m)), React.createElement("td", {
+    style: {
+      fontSize: 13,
+      whiteSpace: "nowrap"
+    }
+  }, x.pm.nextDate && React.createElement("div", null, React.createElement("i", {
+    className: "fa-regular fa-calendar",
+    style: {
+      color: "var(--muted)",
+      marginRight: 5
+    }
+  }), fmtD(x.pm.nextDate)), x.pm.nextHours != null && React.createElement("div", null, React.createElement("i", {
+    className: "fa-regular fa-clock",
+    style: {
+      color: "var(--muted)",
+      marginRight: 5
+    }
+  }), num(x.pm.nextHours), " \u0E0A\u0E21. ", React.createElement("span", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 11.5
+    }
+  }, "(\u0E15\u0E2D\u0E19\u0E19\u0E35\u0E49 ", num(x.m.hours), ")")), !x.pm.nextDate && x.pm.nextHours == null && React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, x.pm.noBase ? "ยังไม่เคยบันทึก PM" : "—")), React.createElement("td", {
+    className: "hide-on-mobile"
+  }, x.pmCount ? `${x.pmCount} ครั้ง` : React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u2014")), React.createElement("td", {
+    style: {
+      whiteSpace: "nowrap"
+    }
+  }, canRecord && x.pm.state !== "none" && React.createElement("button", {
+    className: "btn btn-sm btn-primary",
+    style: {
+      background: "#0E7490",
+      borderColor: "#0E7490"
+    },
+    onClick: () => record(x),
+    title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E27\u0E48\u0E32\u0E17\u0E33 PM \u0E41\u0E25\u0E49\u0E27"
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-check"
+  }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01 PM"), x.pm.state === "none" && React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, "\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")))), filtered.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: "8"
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-calendar-check"
+  }), React.createElement("div", {
+    className: "t"
+  }, stateF === "due" ? "ไม่มีเครื่องที่ต้องทำ PM ตอนนี้" : "ไม่พบข้อมูล"), React.createElement("div", null, stateF === "due" ? "เครื่องที่ตั้งรอบไว้ยังไม่ถึงกำหนด — เลือก \"ทุกสถานะ\" เพื่อดูทั้งหมด" : "ลองเปลี่ยนเงื่อนไขการค้นหา"))))))), view === "month" && React.createElement("div", {
+    style: {
+      padding: 16,
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))",
+      gap: 12
+    }
+  }, months.map(b => React.createElement("div", {
+    key: b.key,
+    style: {
+      border: "1px solid var(--line)",
+      borderRadius: 12,
+      overflow: "hidden",
+      background: "#fff"
+    }
+  }, React.createElement("div", {
+    style: {
+      padding: "10px 14px",
+      borderBottom: "1px solid var(--line-soft)",
+      borderTop: `3px solid ${b.color}`,
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    }
+  }, React.createElement("b", {
+    style: {
+      color: b.color,
+      fontSize: 14
+    }
+  }, b.label), React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, b.items.length, " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07")), React.createElement("div", {
+    style: {
+      maxHeight: 300,
+      overflowY: "auto"
+    }
+  }, b.items.length === 0 && React.createElement("div", {
+    style: {
+      padding: "14px",
+      fontSize: 12.5,
+      color: "var(--muted)"
+    }
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E04\u0E23\u0E1A\u0E01\u0E33\u0E2B\u0E19\u0E14"), b.items.map(x => React.createElement("div", {
+    key: x.m.id,
+    style: {
+      padding: "8px 14px",
+      borderBottom: "1px solid var(--line-soft)",
+      display: "flex",
+      gap: 10,
+      alignItems: "center",
+      fontSize: 12.5
+    }
+  }, React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, React.createElement("span", {
+    className: "ticket-id",
+    style: {
+      cursor: "pointer",
+      fontSize: 11
+    },
+    onClick: () => setQuick(x.m.code)
+  }, x.m.code), " ", React.createElement("span", null, x.m.name), React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 11.5,
+      marginTop: 2
+    }
+  }, x.m.project ? short(x.m.project) : "", x.m.project ? " · " : "", b.key === "hours" ? `ครบที่ ${num(x.pm.nextHours)} ชม.` : x.pm.nextDate ? fmtD(x.pm.nextDate) : "")), React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: PM_STATE[x.pm.state].color,
+      whiteSpace: "nowrap",
+      textAlign: "right"
+    }
+  }, x.pm.text), canRecord && React.createElement("button", {
+    className: "ia",
+    title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01 PM",
+    onClick: () => record(x),
+    style: {
+      color: "#0E7490"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-circle-check"
+  })))))))), view === "project" && React.createElement("div", {
+    className: "table-wrap"
+  }, React.createElement("table", {
+    className: "data"
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("th", {
+    style: {
+      color: PM_STATE.overdue.color
+    }
+  }, "\u0E40\u0E01\u0E34\u0E19\u0E01\u0E33\u0E2B\u0E19\u0E14"), React.createElement("th", {
+    style: {
+      color: PM_STATE.soon.color
+    }
+  }, "\u0E43\u0E01\u0E25\u0E49\u0E16\u0E36\u0E07"), React.createElement("th", null, "\u0E1B\u0E01\u0E15\u0E34"), React.createElement("th", {
+    className: "hide-on-mobile"
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E23\u0E2D\u0E1A"), React.createElement("th", {
+    className: "hide-on-mobile",
+    style: {
+      minWidth: 160
+    }
+  }, "\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19"), React.createElement("th", null))), React.createElement("tbody", null, byProject.map(p => React.createElement("tr", {
+    key: p.name
+  }, React.createElement("td", {
+    style: {
+      fontWeight: 500
+    }
+  }, short(p.name)), React.createElement("td", null, p.total), React.createElement("td", {
+    style: {
+      color: p.overdue ? PM_STATE.overdue.color : "var(--muted)",
+      fontWeight: p.overdue ? 600 : 400
+    }
+  }, p.overdue), React.createElement("td", {
+    style: {
+      color: p.soon ? PM_STATE.soon.color : "var(--muted)",
+      fontWeight: p.soon ? 600 : 400
+    }
+  }, p.soon), React.createElement("td", null, p.ok), React.createElement("td", {
+    className: "hide-on-mobile",
+    style: {
+      color: "var(--muted)"
+    }
+  }, p.none), React.createElement("td", {
+    className: "hide-on-mobile"
+  }, React.createElement("div", {
+    style: {
+      height: 8,
+      borderRadius: 999,
+      background: "#F1F5F9",
+      overflow: "hidden",
+      display: "flex"
+    }
+  }, ["overdue", "soon", "ok", "none"].map(k => React.createElement("div", {
+    key: k,
+    style: {
+      width: `${p[k] / p.total * 100}%`,
+      background: k === "none" ? "#CBD5E1" : PM_STATE[k].color
+    }
+  })))), React.createElement("td", null, p.name !== "— ไม่ระบุโครงการ —" && React.createElement("button", {
+    className: "ia",
+    title: "\u0E14\u0E39\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E02\u0E2D\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49",
+    onClick: () => {
+      setProj(p.name);
+      setStateF("all");
+      setView("list");
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-arrow-right"
+  }))))), byProject.length === 0 && React.createElement("tr", null, React.createElement("td", {
+    colSpan: "8"
+  }, React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-diagram-project"
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25")))))))), quick && React.createElement(window.MachineQuickView, {
+    code: quick,
+    onClose: () => setQuick("")
+  }));
+}
+window.PmPlan = PmPlan;
 const IDLE_LIMIT_MS = 15 * 60 * 1000;
 const IDLE_KEY = "rms_last_active";
 function touchActivity() {
@@ -23998,6 +25124,10 @@ function App() {
       t: "รายการแจ้งซ่อม",
       c: "จัดการและติดตามงานซ่อมทั้งหมด"
     },
+    "pm-plan": {
+      t: "แผนบำรุงรักษา (PM)",
+      c: "สรุปแผน PM ของเครื่องจักรทุกเครื่อง · เกินกำหนด / ใกล้ถึง / แผนรายเดือน"
+    },
     "spare-parts": {
       t: "อะไหล่ที่ใช้ซ่อม",
       c: "สรุปอะไหล่ที่ใช้จากทุกใบแจ้งซ่อม · ค่าใช้จ่ายและแหล่งซื้อ"
@@ -24081,6 +25211,9 @@ function App() {
       user: activeUser
     });
     if (safePage === "spare-parts") return React.createElement(SpareParts, {
+      user: activeUser
+    });
+    if (safePage === "pm-plan") return React.createElement(PmPlan, {
       user: activeUser
     });
     if (safePage === "users") return React.createElement(Users, {

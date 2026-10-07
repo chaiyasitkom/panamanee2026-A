@@ -1371,6 +1371,7 @@ async function api(action, payload = {}) {
       const id = key || ref.key;
       clean.id = clean.id || clean.assetCode || id;
       clean.quantity = Number(clean.quantity) || 0;
+      clean.price = (clean.price === '' || clean.price == null || isNaN(Number(clean.price))) ? '' : Math.round(Number(clean.price) * 100) / 100;
       clean.updatedAt = new Date().toISOString();
       await ref.set(clean);
       return { key: id, ...clean };
@@ -1843,6 +1844,7 @@ window.APP_FEATURES = [
   { key:"r-new",            sys:"repairs", group:"งานซ่อม",        label:"แจ้งซ่อมใหม่",           icon:"fa-circle-plus",       roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
   { key:"r-mine",           sys:"repairs", group:"งานซ่อม",        label:"ติดตามสถานะงานของฉัน",  icon:"fa-clipboard-check",   roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
   // ── Asset ──
+  { key:"pm-plan",          sys:"repairs", group:"งานซ่อม",        label:"แผนบำรุงรักษา (PM)",     icon:"fa-calendar-check",    roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer"], addedLater:true },
   { key:"machines",         sys:"assets",  group:"Asset",          label:"ทะเบียนเครื่องจักร",     icon:"fa-industry",          roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"] },
   { key:"asset-registry",   sys:"assets",  group:"Asset",          label:"ทะเบียนทรัพย์สิน",       icon:"fa-boxes-stacked",     roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
   { key:"asset-do",         sys:"assets",  group:"Asset",          label:"ใบส่งของ (DO)",          icon:"fa-file-export",       roles:["Admin","Director","Officer","Engineer","Technician","Reporter"] },
@@ -1863,8 +1865,8 @@ window.APP_FEATURES = [
 
 // หน้าที่อยู่ในแต่ละระบบงาน (หน้า "การแจ้งเตือน" เปิดได้จากทุกระบบ จึงไม่อยู่ในนี้)
 window.SYSTEM_PAGES = {
-  repairs: ["dashboard","repairs","spare-parts","machines","r-dashboard","r-new","r-mine"],
-  assets:  ["machines","asset-registry","asset-do","doc-pj2","transfer-history"],
+  repairs: ["dashboard","repairs","spare-parts","pm-plan","machines","r-dashboard","r-new","r-mine"],
+  assets:  ["machines","pm-plan","asset-registry","asset-do","doc-pj2","transfer-history"],
   consume: ["withdrawals","withdrawal-pending","site-stock"],
   manage:  ["projects","users","categories","login-logs","permissions"],
 };
@@ -2755,7 +2757,7 @@ window.__PMALERT = {
 
 window.ASSET_FIELD_LABELS = {
   assetCode:{label:"รหัสทรัพย์สิน"}, name:{label:"ชื่อทรัพย์สิน"}, brand:{label:"ยี่ห้อ"}, model:{label:"รุ่น"},
-  serial:{label:"Serial No."}, size:{label:"ขนาด"}, quantity:{label:"จำนวน"}, unit:{label:"หน่วย"},
+  serial:{label:"Serial No."}, size:{label:"ขนาด"}, quantity:{label:"จำนวน"}, unit:{label:"หน่วย"}, price:{label:"ราคาต่อหน่วย (บาท)"},
   ownership:{label:"กรรมสิทธิ์"}, holder:{label:"ผู้ถือครอง"},
   site:{label:"สถานที่ (โครงการ)"}, subSite:{label:"ไซต์งานย่อย"},
   receivedAt:{label:"วันที่รับเข้า"}, note:{label:"หมายเหตุ"},
@@ -3786,6 +3788,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม", badge: window.__DATA.repairs.filter(r=>["new","assess"].includes(r.status)).length },
     { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
+    { key:"pm-plan", icon:"fa-calendar-check", label:"แผนบำรุงรักษา (PM)" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   // ระบบการจัดการ — งานตั้งค่าข้อมูลหลักและสิทธิ์ ย้ายมารวมไว้ที่นี่ทั้งหมด
@@ -3800,6 +3803,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
     { key:"dashboard", icon:"fa-gauge-high", label:"แดชบอร์ด" },
     { key:"repairs", icon:"fa-clipboard-list", label:"งานที่รับผิดชอบ" },
     { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
+    { key:"pm-plan", icon:"fa-calendar-check", label:"แผนบำรุงรักษา (PM)" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   const reporterNav = [
@@ -3817,15 +3821,18 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
     { key:"repairs", icon:"fa-clipboard-list", label:"รายการแจ้งซ่อม" },
     { key:"r-new", icon:"fa-circle-plus", label:"แจ้งซ่อมใหม่" },
     { key:"spare-parts", icon:"fa-box-open", label:"อะไหล่ที่ใช้ซ่อม" },
+    { key:"pm-plan", icon:"fa-calendar-check", label:"แผนบำรุงรักษา (PM)" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
   ];
   const safetyAssetNav = [
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"pm-plan", icon:"fa-calendar-check", label:"แผนบำรุงรักษา (PM)" },
     { key:"transfer-history", icon:"fa-clock-rotate-left", label:"ประวัติการย้ายเครื่องจักร" },
   ];
   const assetNav = [
     { key:"machines", icon:"fa-industry", label:"ทะเบียนเครื่องจักร" },
+    { key:"pm-plan", icon:"fa-calendar-check", label:"แผนบำรุงรักษา (PM)" },
     { key:"asset-registry", icon:"fa-boxes-stacked", label:"ทะเบียนทรัพย์สิน" },
     { key:"asset-do", icon:"fa-file-export", label:"ใบส่งของ (DO)" },
     { key:"doc-pj2", icon:"fa-certificate", label:"ปจ2-เอกสารรับรอง" },
@@ -3847,7 +3854,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
   // ป้ายตัวเลขที่เมนูทะเบียนเครื่องจักร = เครื่องที่ต้องทำ PM (เกินกำหนด + ใกล้ถึง)
   const pmDueCount = window.machinesPmDue(user).total;
   const nav = navBySystem.filter(x=>window.canAccessPage(user,x.key))
-    .map(x=>x.key==="machines" && pmDueCount ? {...x, badge:pmDueCount, badgeTitle:`ต้องทำ PM ${pmDueCount} เครื่อง`, badgeWarn:true} : x);
+    .map(x=>(x.key==="machines"||x.key==="pm-plan") && pmDueCount ? {...x, badge:pmDueCount, badgeTitle:`ต้องทำ PM ${pmDueCount} เครื่อง`, badgeWarn:true} : x);
   return (
     <>
       {open && <div className="sidebar-scrim show" onClick={onClose}></div>}
@@ -5387,14 +5394,14 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         <div><div className="k">หมวดหมู่</div><div className="v"><CategoryChip categoryId={r.categoryId}/></div></div>
         <div><div className="k">ผู้แจ้ง</div><div className="v"><Avatar name={r.reporterName}/>{r.reporterName}</div></div>
         <div><div className="k">ผู้รับผิดชอบ</div><div className="v">{r.assignedId ? <><Avatar name={window.getUser(r.assignedId)?.name}/>{window.getUser(r.assignedId)?.name}</> : <span style={{color:"var(--muted)"}}>ยังไม่มอบหมาย</span>}</div></div>
-        <div><div className="k">ค่าใช้จ่ายรวม</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{Number(r.cost).toLocaleString()} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
+        <div><div className="k">ค่าใช้จ่ายรวม</div><div className="v">{r.cost ? <span style={{color:"var(--primary)",fontWeight:500}}>{Number(r.cost).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})} บาท</span> : <span style={{color:"var(--muted)"}}>—</span>}</div></div>
         <div><div className="k">สถานะปัจจุบัน</div><div className="v"><Badge status={r.status}/></div></div>
       </div>
 
       {(r.parts && r.parts.length>0) &&<div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
         <div style={{padding:"12px 16px",background:"#FAFBFC",borderBottom:"1px solid var(--line)",fontWeight:500,fontSize:13,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <span><i className="fa-solid fa-box-open" style={{color:"var(--primary)",marginRight:6}}></i>รายการอะไหล่ ({r.parts.length} รายการ)</span>
-          <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString()}</span>
+          <span style={{color:"var(--muted)",fontSize:12}}>รวมอะไหล่: ฿{r.parts.reduce((s,p)=>s+(Number(p.total)||0),0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
         </div>
         <div className="table-scroll" style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
         <table style={{width:"100%",minWidth:480,borderCollapse:"collapse",fontSize:13}}>
@@ -5413,8 +5420,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
                 </td>
                 <td style={{padding:"9px 12px",color:"var(--muted)",fontSize:12}}>{p.supplier||<span style={{opacity:.45}}>—</span>}</td>
                 <td style={{padding:"9px 10px",textAlign:"center",color:"var(--muted)"}}>{p.qty}</td>
-                <td style={{padding:"9px 12px",textAlign:"right",color:"var(--muted)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.unitPrice||0).toLocaleString()}</td>
-                <td style={{padding:"9px 14px",textAlign:"right",fontWeight:500,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.total||0).toLocaleString()}</td>
+                <td style={{padding:"9px 12px",textAlign:"right",color:"var(--muted)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.unitPrice||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                <td style={{padding:"9px 14px",textAlign:"right",fontWeight:500,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(p.total||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
               </tr>
             ))}
           </tbody>
@@ -5422,7 +5429,7 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         </div>{/* table-scroll */}
         {r.laborCost>0 && <div style={{padding:"10px 14px",borderTop:"1px solid var(--line-soft)",display:"flex",justifyContent:"space-between",fontSize:13,background:"#FFFBF0"}}>
           <span style={{color:"var(--muted)"}}><i className="fa-solid fa-person-digging" style={{marginRight:6}}></i>ค่าแรงช่างซ่อม</span>
-          <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString()}</span>
+          <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
         </div>}
       </div>}
 
@@ -5820,13 +5827,14 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
 
   const partsTotal = parts.reduce((s,p)=>s+(Number(p.qty)||0)*(Number(p.unitPrice)||0),0);
   const total = partsTotal + (Number(laborCost)||0);
-  const fmt = (n) => Math.round(Number(n)||0).toLocaleString();
+  const fmt = (n) => (Number(n)||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const r2 = (n) => Math.round((Number(n)||0)*100)/100;
 
   const inStyle = {width:"100%",padding:"7px 10px",border:"1px solid var(--line)",borderRadius:7,fontFamily:"Kanit",fontSize:13,outline:"none",background:"#fff"};
 
   const submit = () => {
-    const cleanParts = parts.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(),qty:Number(p.qty)||1,unitPrice:Number(p.unitPrice)||0,total:(Number(p.qty)||1)*(Number(p.unitPrice)||0),supplier:p.supplier.trim(),photos:(p.photos||[]).filter(Boolean).slice(0,2)}));
-    onSave(r,{parts:cleanParts,laborCost:Number(laborCost)||0,cost:total});
+    const cleanParts = parts.filter(p=>p.name.trim()).map(p=>({name:p.name.trim(),qty:Number(p.qty)||1,unitPrice:r2(p.unitPrice),total:r2((Number(p.qty)||1)*(Number(p.unitPrice)||0)),supplier:p.supplier.trim(),photos:(p.photos||[]).filter(Boolean).slice(0,2)}));
+    onSave(r,{parts:cleanParts,laborCost:r2(laborCost),cost:r2(total)});
   };
 
   return (
@@ -5872,7 +5880,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
                     <input type="number" min="1" value={p.qty} onChange={e=>upPart(i,"qty",e.target.value)} style={{...inStyle,textAlign:"center"}}/>
                   </td>
                   <td style={{padding:"7px 6px"}}>
-                    <input type="number" min="0" value={p.unitPrice} onChange={e=>upPart(i,"unitPrice",e.target.value)} style={{...inStyle,textAlign:"right"}}/>
+                    <input type="number" min="0" step="0.01" value={p.unitPrice} onChange={e=>upPart(i,"unitPrice",e.target.value)} style={{...inStyle,textAlign:"right"}}/>
                   </td>
                   <td style={{padding:"7px 12px",textAlign:"right",fontWeight:600,color:"var(--primary)",fontFamily:"JetBrains Mono,monospace",fontSize:12.5}}>
                     {fmt((Number(p.qty)||0)*(Number(p.unitPrice)||0))}
@@ -5895,7 +5903,7 @@ function AssessModal({r, onClose, onSave, mode="assess"}){
       <div style={{marginBottom:20}}>
         <div style={{fontWeight:600,fontSize:14,marginBottom:10}}><i className="fa-solid fa-person-digging" style={{color:"var(--warning)",marginRight:6}}></i>ค่าแรงช่างซ่อม</div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <input type="number" min="0" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:"100%",maxWidth:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
+          <input type="number" min="0" step="0.01" value={laborCost} onChange={e=>setLaborCost(e.target.value)} placeholder="0" style={{width:"100%",maxWidth:200,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,fontFamily:"Kanit",fontSize:14,outline:"none"}}/>
           <span style={{color:"var(--muted)",fontSize:13}}>บาท</span>
         </div>
       </div>
@@ -6924,27 +6932,8 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
   };
   // บันทึกว่าทำ PM แล้ว → ตั้งฐานรอบใหม่ (วันที่ + ชั่วโมง) และเก็บประวัติ
   const recordPm = async () => {
-    const esc = v => String(v==null?"":v).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
-    const res = await Swal.fire({
-      title:"บันทึกทำ PM แล้ว",
-      html:`<div style="text-align:left;display:grid;gap:10px;font-size:14px">
-        <label>วันที่ทำ PM<input id="pm-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${toDateStr(new Date())}"></label>
-        <label>ชั่วโมงทำงาน ณ วันที่ทำ PM<input id="pm-hours" type="number" min="0" class="swal2-input" style="margin:4px 0 0;width:100%" value="${esc(m.hours||0)}"></label>
-        <label>หมายเหตุ (เช่น เปลี่ยนถ่ายน้ำมันเครื่อง, กรองอากาศ)<input id="pm-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
-      </div>`,
-      showCancelButton:true, confirmButtonText:"บันทึก", cancelButtonText:"ยกเลิก", confirmButtonColor:"#0E7490",
-      preConfirm:()=>{
-        const date = document.getElementById("pm-date").value;
-        if(!date){ Swal.showValidationMessage("กรุณาระบุวันที่"); return false; }
-        const hv = document.getElementById("pm-hours").value;
-        return { date, hours: hv==="" ? "" : (Number(hv)||0), note: document.getElementById("pm-note").value.trim() };
-      },
-    });
-    if(!res.isConfirmed) return;
-    const v = res.value;
-    const entry = { date:v.date, hours:v.hours, note:v.note, by:user.name, recordedAt:new Date().toISOString() };
-    const patch = { lastPmDate:v.date, lastPmHours:v.hours, lastService:v.date, pmHistory:[...(m.pmHistory||[]), entry] };
-    if(v.hours!=="" && v.hours > (Number(m.hours)||0)) patch.hours = v.hours;   // อัปเดตชั่วโมงสะสมไปด้วยถ้ามากกว่าเดิม
+    const patch = await window.pmRecordDialog(m, user);
+    if(!patch) return;
     await onPatchMachine(patch);
     Swal.fire({icon:"success",title:"บันทึก PM แล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
   };
@@ -8759,6 +8748,8 @@ async function exportAssetsExcel(list){
         "ขนาด": r.size || "",
         "จำนวน": Number(r.quantity) || 0,
         "หน่วย": r.unit || "",
+        "ราคาต่อหน่วย (บาท)": r.price===""||r.price==null ? "" : Number(r.price)||0,
+        "มูลค่ารวม (บาท)": r.price===""||r.price==null ? "" : Math.round((Number(r.price)||0)*(Number(r.quantity)||0)*100)/100,
         "กรรมสิทธิ์": r.ownership || "",
         "ผู้ถือครอง": r.holder || "",
         "สถานที่ (โครงการ)": r.site || "",
@@ -8916,7 +8907,7 @@ function AssetRegistry({user}){
   },[filtered,groupBy]);
 
   const toggleGroup = (k)=>setCollapsed(prev=>({...prev,[k]:!prev[k]}));
-  const colCount = canEdit?9:8;
+  const colCount = canEdit?10:9;
 
   const renderRow = (r)=>(
     <tr key={r.key}>
@@ -8940,6 +8931,12 @@ function AssetRegistry({user}){
       <td className="hide-on-mobile" style={{fontSize:13}}>{[r.brand,r.model].filter(Boolean).join(" ")||"—"}</td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.size||"—"}</td>
       <td style={{whiteSpace:"nowrap"}}>{(Number(r.quantity)||0).toLocaleString("th-TH")} {r.unit||""}</td>
+      <td className="hide-on-mobile" style={{whiteSpace:"nowrap",textAlign:"right",fontFamily:"JetBrains Mono,monospace",fontSize:12}}>
+        {r.price!==""&&r.price!=null ? <>
+          <div>฿{(Number(r.price)||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+          {(Number(r.quantity)||0)>1 && <div style={{fontSize:11,color:"var(--primary)",marginTop:2}} title="มูลค่ารวม = ราคาต่อหน่วย × จำนวน">รวม ฿{((Number(r.price)||0)*(Number(r.quantity)||0)).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</div>}
+        </> : <span style={{color:"var(--muted)"}}>—</span>}
+      </td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.ownership||"—"}</td>
       <td className="hide-on-mobile" style={{fontSize:13}}>{r.holder||"—"}</td>
       <td style={{fontSize:13}}>
@@ -8995,7 +8992,7 @@ function AssetRegistry({user}){
     if(done) commit((rows||[]).filter(x=>x.key!==r.key));
   };
 
-  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",ownership:"",holder:"",site:"",subSite:"",receivedAt:"",note:"",photos:[]};
+  const blank = {assetCode:"",name:"",brand:"",model:"",serial:"",size:"",quantity:1,unit:"",price:"",ownership:"",holder:"",site:"",subSite:"",receivedAt:"",note:"",photos:[]};
 
   if(err) return (
     <div className="card"><div className="card-body">
@@ -9130,7 +9127,7 @@ function AssetRegistry({user}){
           <thead><tr>
             <th>รหัสทรัพย์สิน</th><th>ชื่อทรัพย์สิน</th>
             <th className="hide-on-mobile">ยี่ห้อ / รุ่น</th><th className="hide-on-mobile">ขนาด</th>
-            <th>จำนวน</th><th className="hide-on-mobile">กรรมสิทธิ์</th>
+            <th>จำนวน</th><th className="hide-on-mobile" style={{textAlign:"right"}}>ราคา/หน่วย</th><th className="hide-on-mobile">กรรมสิทธิ์</th>
             <th className="hide-on-mobile">ผู้ถือครอง</th><th>สถานที่ (โครงการ)</th>
             {canEdit && <th>จัดการ</th>}
           </tr></thead>
@@ -9485,6 +9482,11 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
             <input type="number" min="0" value={f.quantity ?? ""} onChange={e=>up("quantity",e.target.value)} />
           </div>
           {txt("unit","หน่วย","เช่น ถัง / ชุด / ตัว")}
+          <div className="form-field">
+            <label>ราคาทรัพย์สิน (บาท / หน่วย)</label>
+            <input type="number" min="0" step="0.01" value={f.price ?? ""} onChange={e=>up("price",e.target.value)} placeholder="0.00" style={{textAlign:"right"}} />
+            {(Number(f.price)||0)>0 && (Number(f.quantity)||0)>1 && <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>มูลค่ารวม {(Number(f.quantity)||0).toLocaleString("th-TH")} {f.unit||"หน่วย"} = <b style={{color:"var(--primary)"}}>฿{((Number(f.price)||0)*(Number(f.quantity)||0)).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</b></div>}
+          </div>
           <div className="form-field">
             <label>กรรมสิทธิ์</label>
             <input list="asset-owners" value={f.ownership||""} onChange={e=>up("ownership",e.target.value)} placeholder="เช่น PNM / TFB" />
@@ -10726,7 +10728,8 @@ function WorkspacePicker({user,onContinue,onLogout}){
 // อะไหล่ที่ใช้ซ่อม — รวมอะไหล่จาก r.parts ของทุกใบแจ้งซ่อมมาสรุปในที่เดียว
 function SpareParts({user}){
   const [q,setQ] = React.useState("");
-  const [view,setView] = React.useState("list");   // list | grouped
+  const [view,setView] = React.useState("list");   // list | grouped | machine
+  const [openMc,setOpenMc] = React.useState({});   // แถวเครื่องจักรที่กางดูอะไหล่
   const [detail,setDetail] = React.useState(null);
 
   const machineName = (code)=>{ const m=(window.__DATA.machines||[]).find(x=>x.code===code); return m?m.name:""; };
@@ -10766,9 +10769,33 @@ function SpareParts({user}){
     return Object.values(map).map(g=>({...g,suppliers:[...g.suppliers]})).sort((a,b)=>b.total-a.total);
   },[filtered]);
 
+  // รวมตามเครื่องจักร — ใบแจ้งซ่อมที่ไม่ได้ระบุเครื่องจักรรวมไว้กลุ่มเดียว
+  const byMachine = React.useMemo(()=>{
+    const map = {};
+    filtered.forEach(r=>{
+      const k = r.machineCode || "__none__";
+      if(!map[k]) map[k] = { key:k, code:r.machineCode, name:r.machineName, projects:new Set(), repairs:new Set(), count:0, qty:0, total:0, parts:{} };
+      const g = map[k];
+      g.count += 1; g.qty += r.qty; g.total += r.total;
+      if(r.project) g.projects.add(r.project);
+      g.repairs.add(r.running);
+      const pk = r.name.toLowerCase();
+      if(!g.parts[pk]) g.parts[pk] = { name:r.name, qty:0, total:0, count:0, suppliers:new Set(), runnings:new Set() };
+      const pp = g.parts[pk];
+      pp.qty += r.qty; pp.total += r.total; pp.count += 1;
+      if(r.supplier) pp.suppliers.add(r.supplier);
+      pp.runnings.add(r.running);
+    });
+    return Object.values(map).map(g=>({
+      ...g, projects:[...g.projects], repairs:[...g.repairs],
+      parts:Object.values(g.parts).map(x=>({...x,suppliers:[...x.suppliers],runnings:[...x.runnings]})).sort((a,b)=>b.total-a.total),
+    })).sort((a,b)=>(a.key==="__none__")-(b.key==="__none__") || b.total-a.total);
+  },[filtered]);
+
   const totalQty = filtered.reduce((s,r)=>s+r.qty,0);
   const totalCost = filtered.reduce((s,r)=>s+r.total,0);
-  const fmt = (n)=>Math.round(Number(n)||0).toLocaleString("th-TH");
+  const fmt = (n)=>(Number(n)||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const r2 = (n)=>Math.round((Number(n)||0)*100)/100;
 
   const exportExcel = async ()=>{
     if(!filtered.length){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
@@ -10776,16 +10803,32 @@ function SpareParts({user}){
       Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
       const XLSX = await ensureXLSX();
       let data, sheetName;
-      if(view==="grouped"){
+      if(view==="machine"){
+        sheetName = "อะไหล่รวมตามเครื่องจักร";
+        data = [];
+        byMachine.forEach(g=>g.parts.forEach(pp=>data.push({
+          "รหัสเครื่องจักร": g.code || "(ไม่ระบุ)", "ชื่อเครื่องจักร": g.name || "", "โครงการ": g.projects.join(", "),
+          "อะไหล่/รายการ": pp.name, "ใช้ (ครั้ง)": pp.count, "จำนวนรวม": pp.qty, "มูลค่ารวม (บาท)": r2(pp.total),
+          "แหล่งซื้อ": pp.suppliers.join(", "), "ใบแจ้งซ่อม": pp.runnings.join(", "),
+        })));
+        // ชีตสรุปยอดต่อเครื่อง
+        var machineSum = byMachine.map((g,i)=>({ "ลำดับ":i+1, "รหัสเครื่องจักร":g.code||"(ไม่ระบุ)", "ชื่อเครื่องจักร":g.name||"", "โครงการ":g.projects.join(", "), "จำนวนใบแจ้งซ่อม":g.repairs.length, "รายการอะไหล่":g.count, "จำนวนชิ้นรวม":g.qty, "มูลค่าอะไหล่รวม (บาท)":r2(g.total) }));
+      } else if(view==="grouped"){
         sheetName = "อะไหล่รวมตามชื่อ";
-        data = grouped.map((g,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":g.name, "จำนวนครั้งที่ใช้":g.count, "จำนวนรวม":g.qty, "มูลค่ารวม (บาท)":Math.round(g.total), "แหล่งซื้อ":g.suppliers.join(", ") }));
+        data = grouped.map((g,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":g.name, "จำนวนครั้งที่ใช้":g.count, "จำนวนรวม":g.qty, "มูลค่ารวม (บาท)":r2(g.total), "แหล่งซื้อ":g.suppliers.join(", ") }));
       } else {
         sheetName = "อะไหล่ที่ใช้ซ่อม";
-        data = filtered.map((r,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":r.name, "จำนวน":r.qty, "ราคา/หน่วย":r.unitPrice, "รวม (บาท)":Math.round(r.total), "แหล่งซื้อ":r.supplier, "ใบแจ้งซ่อม":r.running, "เครื่องจักร":[r.machineCode,r.machineName].filter(Boolean).join(" "), "โครงการ":r.project, "วันที่":window.__DATA.fmtDate(r.createdAt), "จำนวนรูป":r.photos.length }));
+        data = filtered.map((r,i)=>({ "ลำดับ":i+1, "อะไหล่/รายการ":r.name, "จำนวน":r.qty, "ราคา/หน่วย":r.unitPrice, "รวม (บาท)":r2(r.total), "แหล่งซื้อ":r.supplier, "ใบแจ้งซ่อม":r.running, "เครื่องจักร":[r.machineCode,r.machineName].filter(Boolean).join(" "), "โครงการ":r.project, "วันที่":window.__DATA.fmtDate(r.createdAt), "จำนวนรูป":r.photos.length }));
       }
       const ws = XLSX.utils.json_to_sheet(data);
       ws["!cols"] = Object.keys(data[0]).map(k=>({wch:Math.min(40,Math.max(k.length+4,...data.map(row=>String(row[k]??"").length+2)))}));
-      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      const wb = XLSX.utils.book_new();
+      if(view==="machine" && machineSum && machineSum.length){
+        const ws0 = XLSX.utils.json_to_sheet(machineSum);
+        ws0["!cols"] = Object.keys(machineSum[0]).map(k=>({wch:Math.min(40,Math.max(k.length+4,...machineSum.map(row=>String(row[k]??"").length+2)))}));
+        XLSX.utils.book_append_sheet(wb, ws0, "สรุปรายเครื่องจักร");
+      }
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
       const d=new Date(); const stamp=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
       XLSX.writeFile(wb, `อะไหล่ที่ใช้ซ่อม_${stamp}.xlsx`);
       Swal.fire({icon:"success",title:`ส่งออกแล้ว ${data.length} รายการ`,timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
@@ -10793,7 +10836,7 @@ function SpareParts({user}){
   };
 
   const stats = [
-    {label: view==="grouped"?"ชนิดอะไหล่":"รายการอะไหล่", val: view==="grouped"?grouped.length:filtered.length, icon:"fa-box-open", color:"#3B82F6"},
+    {label: view==="grouped"?"ชนิดอะไหล่":view==="machine"?"เครื่องจักรที่ใช้อะไหล่":"รายการอะไหล่", val: view==="grouped"?grouped.length:view==="machine"?byMachine.filter(g=>g.code).length:filtered.length, icon:"fa-box-open", color:"#3B82F6"},
     {label:"จำนวนชิ้นรวม", val:totalQty, icon:"fa-cubes-stacked", color:"#8B5CF6"},
     {label:"มูลค่าอะไหล่รวม", val:totalCost, icon:"fa-coins", color:"#10B981", money:true},
   ];
@@ -10809,6 +10852,7 @@ function SpareParts({user}){
         <div style={{display:"inline-flex",border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
           <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="list"?"var(--accent-soft)":"#fff",color:view==="list"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("list")}><i className="fa-solid fa-list"></i> รายการทั้งหมด</button>
           <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="grouped"?"var(--accent-soft)":"#fff",color:view==="grouped"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("grouped")}><i className="fa-solid fa-layer-group"></i> รวมตามชื่ออะไหล่</button>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="machine"?"var(--accent-soft)":"#fff",color:view==="machine"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("machine")}><i className="fa-solid fa-industry"></i> รวมตามเครื่องจักร</button>
         </div>
         <div className="spacer"></div>
         <button className="btn btn-ghost" onClick={exportExcel} title="ส่งออกที่แสดงอยู่เป็น Excel"><i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel</button>
@@ -10832,6 +10876,56 @@ function SpareParts({user}){
                 </tr>
               ))}
               {filtered.length===0 && (<tr><td colSpan="9"><div className="empty"><i className="fa-solid fa-box-open"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div><div>อะไหล่จะปรากฏที่นี่เมื่อมีการประเมิน/บันทึกรายการอะไหล่ในใบแจ้งซ่อม</div></div></td></tr>)}
+            </tbody>
+          </table>
+        ) : view==="machine" ? (
+          <table className="data">
+            <thead><tr><th style={{width:28}}></th><th>เครื่องจักร</th><th className="hide-on-mobile">โครงการ</th><th>ใบแจ้งซ่อม</th><th className="hide-on-mobile">รายการอะไหล่</th><th>จำนวนชิ้น</th><th style={{textAlign:"right"}}>มูลค่าอะไหล่รวม</th></tr></thead>
+            <tbody>
+              {byMachine.map(g=>{
+                const open = !!openMc[g.key];
+                const share = totalCost>0 ? g.total/totalCost*100 : 0;
+                return (<React.Fragment key={g.key}>
+                  <tr style={{cursor:"pointer"}} onClick={()=>setOpenMc(p=>({...p,[g.key]:!p[g.key]}))}>
+                    <td style={{color:"var(--muted)"}}><i className={`fa-solid fa-chevron-${open?"down":"right"}`}></i></td>
+                    <td>{g.code ? <><span className="ticket-id">{g.code}</span>{g.name?<div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{g.name}</div>:null}</> : <span style={{color:"var(--muted)"}}>— ไม่ระบุเครื่องจักร —</span>}</td>
+                    <td className="hide-on-mobile" style={{fontSize:13}}>{g.projects.length ? g.projects.map(x=>window.projectShort?window.projectShort(x):x).join(", ") : "—"}</td>
+                    <td>{g.repairs.length.toLocaleString("th-TH")} ใบ</td>
+                    <td className="hide-on-mobile">{g.parts.length.toLocaleString("th-TH")} ชนิด · {g.count.toLocaleString("th-TH")} รายการ</td>
+                    <td style={{whiteSpace:"nowrap"}}>{g.qty.toLocaleString("th-TH")}</td>
+                    <td style={{whiteSpace:"nowrap",textAlign:"right"}}>
+                      <div style={{fontWeight:600,color:"var(--primary)"}}>฿{fmt(g.total)}</div>
+                      <div style={{fontSize:11,color:"var(--muted)"}}>{share.toFixed(1)}% ของทั้งหมด</div>
+                    </td>
+                  </tr>
+                  {open && (<tr><td></td><td colSpan="6" style={{background:"#FAFBFC",padding:"8px 12px 12px"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+                      <thead><tr style={{color:"var(--muted)"}}>
+                        <th style={{textAlign:"left",padding:"6px 8px",fontWeight:500}}>อะไหล่ / รายการ</th>
+                        <th style={{textAlign:"center",padding:"6px 8px",fontWeight:500}}>ใช้ (ครั้ง)</th>
+                        <th style={{textAlign:"center",padding:"6px 8px",fontWeight:500}}>จำนวนรวม</th>
+                        <th style={{textAlign:"right",padding:"6px 8px",fontWeight:500}}>มูลค่ารวม</th>
+                        <th className="hide-on-mobile" style={{textAlign:"left",padding:"6px 8px",fontWeight:500}}>แหล่งซื้อ</th>
+                        <th className="hide-on-mobile" style={{textAlign:"left",padding:"6px 8px",fontWeight:500}}>ใบแจ้งซ่อม</th>
+                      </tr></thead>
+                      <tbody>{g.parts.map((pp,k)=>(
+                        <tr key={k} style={{borderTop:"1px solid var(--line-soft)"}}>
+                          <td style={{padding:"6px 8px",fontWeight:500}}>{pp.name}</td>
+                          <td style={{padding:"6px 8px",textAlign:"center"}}>{pp.count}</td>
+                          <td style={{padding:"6px 8px",textAlign:"center"}}>{pp.qty.toLocaleString("th-TH")}</td>
+                          <td style={{padding:"6px 8px",textAlign:"right",whiteSpace:"nowrap",fontFamily:"JetBrains Mono,monospace",color:"var(--primary)"}}>฿{fmt(pp.total)}</td>
+                          <td className="hide-on-mobile" style={{padding:"6px 8px",color:"var(--muted)"}}>{pp.suppliers.join(", ")||"—"}</td>
+                          <td className="hide-on-mobile" style={{padding:"6px 8px"}}>{pp.runnings.map(rn=>{
+                            const rep = filtered.find(x=>x.running===rn);
+                            return <span key={rn} className="ticket-id" style={{cursor:"pointer",textDecoration:"underline",marginRight:4,display:"inline-block",marginBottom:2}} onClick={e=>{e.stopPropagation(); rep&&setDetail(rep.repair);}}>{rn}</span>;
+                          })}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </td></tr>)}
+                </React.Fragment>);
+              })}
+              {byMachine.length===0 && (<tr><td colSpan="7"><div className="empty"><i className="fa-solid fa-industry"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div></div></td></tr>)}
             </tbody>
           </table>
         ) : (
@@ -10859,6 +10953,290 @@ function SpareParts({user}){
   );
 }
 window.SpareParts = SpareParts;
+
+// ===== แผนบำรุงรักษา (PM) — สรุปแผน PM ของเครื่องจักรทุกเครื่องในที่เดียว =====
+// ใช้ window.machinePmStatus ตัวเดียวกับหน้าทะเบียนเครื่องจักร ผลจึงตรงกันเสมอ
+window.pmRecordDialog = async function(m, user){
+  const esc = v => String(v==null?"":v).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+  const d = new Date(); const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const res = await Swal.fire({
+    title:"บันทึกทำ PM แล้ว",
+    html:`<div style="text-align:left;font-size:13px;color:#64748B;margin-bottom:8px">${esc(m.code)} · ${esc(m.name)}</div>
+      <div style="text-align:left;display:grid;gap:10px;font-size:14px">
+      <label>วันที่ทำ PM<input id="pm-date" type="date" class="swal2-input" style="margin:4px 0 0;width:100%" value="${today}"></label>
+      <label>ชั่วโมงทำงาน ณ วันที่ทำ PM<input id="pm-hours" type="number" min="0" class="swal2-input" style="margin:4px 0 0;width:100%" value="${esc(m.hours||0)}"></label>
+      <label>หมายเหตุ (เช่น เปลี่ยนถ่ายน้ำมันเครื่อง, กรองอากาศ)<input id="pm-note" class="swal2-input" style="margin:4px 0 0;width:100%"></label>
+    </div>`,
+    showCancelButton:true, confirmButtonText:"บันทึก", cancelButtonText:"ยกเลิก", confirmButtonColor:"#0E7490",
+    preConfirm:()=>{
+      const date = document.getElementById("pm-date").value;
+      if(!date){ Swal.showValidationMessage("กรุณาระบุวันที่"); return false; }
+      const hv = document.getElementById("pm-hours").value;
+      return { date, hours: hv==="" ? "" : (Number(hv)||0), note: document.getElementById("pm-note").value.trim() };
+    },
+  });
+  if(!res.isConfirmed) return null;
+  const v = res.value;
+  const entry = { date:v.date, hours:v.hours, note:v.note, by:user.name, recordedAt:new Date().toISOString() };
+  const patch = { lastPmDate:v.date, lastPmHours:v.hours, lastService:v.date, pmHistory:[...(m.pmHistory||[]), entry] };
+  if(v.hours!=="" && v.hours > (Number(m.hours)||0)) patch.hours = v.hours;
+  return patch;
+};
+
+const PM_STATE = {
+  overdue:{label:"เกินกำหนด",   color:"#DC2626", bg:"#FEF2F2", icon:"fa-triangle-exclamation", rank:0},
+  soon:   {label:"ใกล้ถึงกำหนด", color:"#D97706", bg:"#FFFBEB", icon:"fa-hourglass-half",       rank:1},
+  ok:     {label:"ปกติ",         color:"#0E7490", bg:"#ECFEFF", icon:"fa-circle-check",         rank:2},
+  none:   {label:"ยังไม่ตั้งรอบ PM", color:"#64748B", bg:"#F1F5F9", icon:"fa-circle-minus",     rank:3},
+};
+const TH_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+
+function PmPlan({user}){
+  const [tick,setTick] = React.useState(0);       // บังคับคำนวณใหม่หลังบันทึก PM
+  const [q,setQ] = React.useState("");
+  const [proj,setProj] = React.useState("");
+  const [stateF,setStateF] = React.useState("due");   // due = เกิน+ใกล้ถึง · all · overdue · soon · ok · none
+  const [view,setView] = React.useState("list");      // list | month | project
+  const [quick,setQuick] = React.useState("");
+  const canRecord = ["Admin","Officer","Engineer","Technician"].includes(window.effectiveRole ? window.effectiveRole(user) : user.role);
+  const short = (p)=> window.projectShort ? window.projectShort(p) : p;
+  const fmtD = (d)=> d ? window.__DATA.fmtDate(d) : "—";
+  const num = (n)=> (Number(n)||0).toLocaleString("th-TH");
+
+  // เครื่องจักรที่ผู้ใช้เห็น (ไม่รวมเครื่องที่ส่งคืนแล้ว) + สถานะ PM
+  const all = React.useMemo(()=>{
+    let list = (window.__DATA.machines||[]).filter(m=>m.status!=="ส่งคืน");
+    try{ list = window.filterByUserProjects(user, list, "project"); }catch(e){}
+    return list.map(m=>{
+      const pm = window.machinePmStatus(m);
+      const everyD = Number(m.pmEveryDays)||0, everyH = Number(m.pmEveryHours)||0;
+      // คะแนนความเร่งด่วน: วันคงเหลือ หรือแปลงชั่วโมงคงเหลือเป็น "วันโดยประมาณ" (8 ชม./วัน) แล้วเอาค่าน้อยสุด
+      const u = [pm.daysLeft, pm.hoursLeft!=null ? pm.hoursLeft/8 : null].filter(x=>x!=null);
+      return { m, pm, everyD, everyH, urgency: u.length ? Math.min(...u) : 1e9, pmCount:(m.pmHistory||[]).length };
+    }).sort((a,b)=>PM_STATE[a.pm.state].rank-PM_STATE[b.pm.state].rank || a.urgency-b.urgency || String(a.m.code).localeCompare(String(b.m.code),"th",{numeric:true}));
+  },[user,tick]);
+
+  const projects = React.useMemo(()=>[...new Set(all.map(x=>x.m.project).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[all]);
+  const kw = q.trim().toLowerCase();
+  const scoped = all.filter(x=>(!proj || x.m.project===proj) &&
+    (!kw || [x.m.code,x.m.name,x.m.brand,x.m.model,x.m.project,x.m.subSite,x.m.driverName].some(v=>String(v||"").toLowerCase().includes(kw))));
+  const count = (st)=>scoped.filter(x=>x.pm.state===st).length;
+  const cnt = {overdue:count("overdue"), soon:count("soon"), ok:count("ok"), none:count("none")};
+  const planned = cnt.overdue+cnt.soon+cnt.ok;
+  const filtered = scoped.filter(x=> stateF==="all" ? true : stateF==="due" ? ["overdue","soon"].includes(x.pm.state) : x.pm.state===stateF);
+
+  // แผนรายเดือน (6 เดือนข้างหน้า) — ใช้วันที่ครบกำหนดตามรอบวัน · เครื่องที่ตั้งรอบชั่วโมงอย่างเดียวแยกไว้อีกกลุ่ม
+  const months = React.useMemo(()=>{
+    const now = new Date(); now.setHours(0,0,0,0);
+    const buckets = [{key:"over",label:"เกินกำหนด / ยังไม่เคยบันทึก PM",color:"#DC2626",items:[]}];
+    for(let i=0;i<6;i++){
+      const d = new Date(now.getFullYear(), now.getMonth()+i, 1);
+      buckets.push({key:`${d.getFullYear()}-${d.getMonth()}`,label:`${TH_MONTHS[d.getMonth()]} ${d.getFullYear()+543}`,color:i===0?"#D97706":"#0E7490",items:[]});
+    }
+    const later = {key:"later",label:"หลังจากนั้น",color:"#64748B",items:[]};
+    const hourOnly = {key:"hours",label:"ตามชั่วโมงทำงาน (ไม่มีรอบวัน)",color:"#7C3AED",items:[]};
+    scoped.filter(x=>x.pm.state!=="none").forEach(x=>{
+      if(!x.everyD){ hourOnly.items.push(x); return; }
+      if(x.pm.noBase || (x.pm.daysLeft!=null && x.pm.daysLeft<0)){ buckets[0].items.push(x); return; }
+      const nd = x.pm.nextDate; if(!nd){ later.items.push(x); return; }
+      const b = buckets.find(b=>b.key===`${nd.getFullYear()}-${nd.getMonth()}`);
+      (b||later).items.push(x);
+    });
+    buckets.forEach(b=>b.items.sort((a,c)=>(a.pm.nextDate||0)-(c.pm.nextDate||0)));
+    hourOnly.items.sort((a,c)=>a.pm.hoursLeft-c.pm.hoursLeft);
+    return [...buckets, later, hourOnly].filter(b=>b.items.length || b.key!=="later");
+  },[scoped.map(x=>x.m.id).join(","),tick]);
+
+  // สรุปตามโครงการ
+  const byProject = React.useMemo(()=>{
+    const map = {};
+    scoped.forEach(x=>{
+      const k = x.m.project || "— ไม่ระบุโครงการ —";
+      if(!map[k]) map[k] = {name:k,total:0,overdue:0,soon:0,ok:0,none:0};
+      map[k].total++; map[k][x.pm.state]++;
+    });
+    return Object.values(map).sort((a,b)=>b.overdue-a.overdue || b.soon-a.soon || b.total-a.total);
+  },[scoped.map(x=>x.m.id).join(","),tick]);
+
+  const record = async (x)=>{
+    const patch = await window.pmRecordDialog(x.m, user);
+    if(!patch) return;
+    try{
+      Swal.fire({title:"กำลังบันทึก...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+      await window.api("updateMachine",{id:x.m.id,patch});
+      window.__DATA.machines = (window.__DATA.machines||[]).map(m=>m.id===x.m.id?{...m,...patch}:m);
+      setTick(t=>t+1);
+      Swal.fire({icon:"success",title:"บันทึก PM แล้ว",timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message}); }
+  };
+
+  const cycleText = (x)=>[x.everyD?`ทุก ${num(x.everyD)} วัน`:"",x.everyH?`ทุก ${num(x.everyH)} ชม.`:""].filter(Boolean).join(" หรือ ")||"—";
+  const lastText = (m)=>{ const d=m.lastPmDate||m.lastService; return (d?fmtD(d):"—")+(m.lastPmHours!==""&&m.lastPmHours!=null?` · ${num(m.lastPmHours)} ชม.`:""); };
+  const badge = (st, text)=>{ const s=PM_STATE[st]; return <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"2px 9px",borderRadius:999,background:s.bg,color:s.color,fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}><i className={`fa-solid ${s.icon}`}></i>{s.label}{text?<span style={{fontWeight:400}}> · {text}</span>:null}</span>; };
+
+  const exportExcel = async ()=>{
+    if(!scoped.length){ Swal.fire({icon:"info",title:"ไม่มีข้อมูลให้ส่งออก"}); return; }
+    try{
+      Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+      const XLSX = await ensureXLSX();
+      const iso = (d)=>{ if(!d) return ""; const x=new Date(d); return isNaN(x)?"":`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
+      const data = filtered.map((x,i)=>({
+        "ลำดับ":i+1, "รหัสเครื่องจักร":x.m.code||"", "ชื่อเครื่องจักร":x.m.name||"", "โครงการ":x.m.project||"", "ไซต์งานย่อย":x.m.subSite||"",
+        "สถานะ PM":PM_STATE[x.pm.state].label, "รายละเอียด":x.pm.text||"",
+        "รอบ PM (วัน)":x.everyD||"", "รอบ PM (ชม.)":x.everyH||"",
+        "PM ล่าสุด (วันที่)":iso(x.m.lastPmDate||x.m.lastService), "PM ล่าสุด (ชม.)":x.m.lastPmHours??"",
+        "ครบกำหนดวันที่":iso(x.pm.nextDate), "วันคงเหลือ":x.pm.daysLeft??"",
+        "ชั่วโมงปัจจุบัน":Number(x.m.hours)||0, "ครบกำหนดที่ชั่วโมง":x.pm.nextHours??"", "ชั่วโมงคงเหลือ":x.pm.hoursLeft??"",
+        "ทำ PM แล้ว (ครั้ง)":x.pmCount, "ผู้ควบคุม":x.m.driverName||"",
+      }));
+      const proj = byProject.map((p,i)=>({"ลำดับ":i+1,"โครงการ":p.name,"เครื่องจักร":p.total,"เกินกำหนด":p.overdue,"ใกล้ถึงกำหนด":p.soon,"ปกติ":p.ok,"ยังไม่ตั้งรอบ":p.none}));
+      const wb = XLSX.utils.book_new();
+      [[data,"แผน PM"],[proj,"สรุปตามโครงการ"]].forEach(([rows,name])=>{
+        if(!rows.length) return;
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws["!cols"] = Object.keys(rows[0]).map(k=>({wch:Math.min(40,Math.max(k.length+4,...rows.map(r=>String(r[k]??"").length+2)))}));
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      });
+      const d=new Date(); const stamp=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+      XLSX.writeFile(wb, `แผนPM_${stamp}.xlsx`);
+      Swal.fire({icon:"success",title:`ส่งออกแล้ว ${data.length} เครื่อง`,timer:1400,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){ Swal.fire({icon:"error",title:"ส่งออกไม่สำเร็จ",text:err.message}); }
+  };
+
+  const stats = [
+    {k:"overdue",label:"เกินกำหนด",val:cnt.overdue},
+    {k:"soon",label:`ใกล้ถึงกำหนด (≤${window.PM_SOON_DAYS} วัน / ${window.PM_SOON_HOURS} ชม.)`,val:cnt.soon},
+    {k:"ok",label:"ปกติ",val:cnt.ok},
+    {k:"none",label:"ยังไม่ตั้งรอบ PM",val:cnt.none},
+  ];
+  const tabBtn = (k,icon,label)=>(
+    <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view===k?"var(--accent-soft)":"#fff",color:view===k?"var(--primary)":"var(--muted)"}} onClick={()=>setView(k)}><i className={`fa-solid ${icon}`}></i> {label}</button>
+  );
+
+  return (
+    <>
+    <div className="stat-grid" style={{marginBottom:12}}>
+      {stats.map(s=>{ const st=PM_STATE[s.k]; return (
+        <div className="stat" key={s.k} style={{cursor:"pointer",outline:stateF===s.k?`2px solid ${st.color}`:"none"}} onClick={()=>{setStateF(stateF===s.k?"all":s.k); setView("list");}} title="คลิกเพื่อกรอง">
+          <div className="ic" style={{background:st.color+"1a",color:st.color}}><i className={`fa-solid ${st.icon}`}></i></div>
+          <div className="label">{s.label}</div>
+          <div className="val" style={{color:s.val&&s.k!=="ok"&&s.k!=="none"?st.color:undefined}}>{num(s.val)} <span style={{fontSize:13,fontWeight:400,color:"var(--muted)"}}>เครื่อง</span></div>
+        </div>); })}
+    </div>
+    <div style={{marginBottom:16,padding:"10px 14px",background:"#fff",border:"1px solid var(--line)",borderRadius:12,fontSize:13,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+      <span>ตั้งรอบ PM แล้ว <b>{num(planned)}</b> / {num(scoped.length)} เครื่อง</span>
+      <div style={{flex:1,minWidth:160,height:8,borderRadius:999,background:"#F1F5F9",overflow:"hidden",display:"flex"}}>
+        {["overdue","soon","ok"].map(k=> scoped.length ? <div key={k} title={`${PM_STATE[k].label} ${cnt[k]}`} style={{width:`${cnt[k]/scoped.length*100}%`,background:PM_STATE[k].color}}></div> : null)}
+      </div>
+      <span style={{color:"var(--muted)"}}>ทำตามแผน (ปกติ) {planned?Math.round(cnt.ok/planned*100):0}% ของเครื่องที่ตั้งรอบ</span>
+    </div>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา รหัส / ชื่อเครื่อง / ยี่ห้อ / โครงการ / ผู้ควบคุม..." value={q} onChange={e=>setQ(e.target.value)} /></div>
+        <select value={proj} onChange={e=>setProj(e.target.value)} style={{maxWidth:240}}>
+          <option value="">ทุกโครงการ ({num(all.length)})</option>
+          {projects.map(p=><option key={p} value={p}>{short(p)}</option>)}
+        </select>
+        {view==="list" && <select value={stateF} onChange={e=>setStateF(e.target.value)}>
+          <option value="due">ต้องทำ PM (เกิน + ใกล้ถึง)</option>
+          <option value="all">ทุกสถานะ</option>
+          <option value="overdue">เกินกำหนด</option>
+          <option value="soon">ใกล้ถึงกำหนด</option>
+          <option value="ok">ปกติ</option>
+          <option value="none">ยังไม่ตั้งรอบ PM</option>
+        </select>}
+        <div style={{display:"inline-flex",border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+          {tabBtn("list","fa-list-check","รายการตามกำหนด")}
+          {tabBtn("month","fa-calendar-days","แผนรายเดือน")}
+          {tabBtn("project","fa-diagram-project","สรุปตามโครงการ")}
+        </div>
+        <div className="spacer"></div>
+        <button className="btn btn-ghost" onClick={exportExcel}><i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel</button>
+      </div>
+
+      {view==="list" && <div className="table-wrap">
+        <table className="data">
+          <thead><tr><th>เครื่องจักร</th><th className="hide-on-mobile">โครงการ</th><th>สถานะ</th><th className="hide-on-mobile">รอบ PM</th><th className="hide-on-mobile">PM ล่าสุด</th><th>ครบกำหนด</th><th className="hide-on-mobile">ทำแล้ว</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map(x=>(
+              <tr key={x.m.id}>
+                <td><span className="ticket-id" style={{cursor:"pointer"}} onClick={()=>setQuick(x.m.code)}>{x.m.code||"—"}</span><div style={{fontSize:12.5,marginTop:2}}>{x.m.name}</div></td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{x.m.project?short(x.m.project):"—"}{x.m.subSite?<div style={{fontSize:11.5,color:"var(--muted)"}}>{x.m.subSite}</div>:null}</td>
+                <td>{badge(x.pm.state)}{x.pm.text?<div style={{fontSize:12,color:PM_STATE[x.pm.state].color,marginTop:3}}>{x.pm.text}</div>:null}</td>
+                <td className="hide-on-mobile" style={{fontSize:13}}>{cycleText(x)}</td>
+                <td className="hide-on-mobile" style={{fontSize:13,whiteSpace:"nowrap"}}>{x.pm.state==="none"?"—":lastText(x.m)}</td>
+                <td style={{fontSize:13,whiteSpace:"nowrap"}}>
+                  {x.pm.nextDate && <div><i className="fa-regular fa-calendar" style={{color:"var(--muted)",marginRight:5}}></i>{fmtD(x.pm.nextDate)}</div>}
+                  {x.pm.nextHours!=null && <div><i className="fa-regular fa-clock" style={{color:"var(--muted)",marginRight:5}}></i>{num(x.pm.nextHours)} ชม. <span style={{color:"var(--muted)",fontSize:11.5}}>(ตอนนี้ {num(x.m.hours)})</span></div>}
+                  {!x.pm.nextDate && x.pm.nextHours==null && <span style={{color:"var(--muted)"}}>{x.pm.noBase?"ยังไม่เคยบันทึก PM":"—"}</span>}
+                </td>
+                <td className="hide-on-mobile">{x.pmCount ? `${x.pmCount} ครั้ง` : <span style={{color:"var(--muted)"}}>—</span>}</td>
+                <td style={{whiteSpace:"nowrap"}}>
+                  {canRecord && x.pm.state!=="none" && <button className="btn btn-sm btn-primary" style={{background:"#0E7490",borderColor:"#0E7490"}} onClick={()=>record(x)} title="บันทึกว่าทำ PM แล้ว"><i className="fa-solid fa-circle-check"></i> บันทึก PM</button>}
+                  {x.pm.state==="none" && <span style={{fontSize:12,color:"var(--muted)"}}>ตั้งรอบได้ที่ทะเบียนเครื่องจักร</span>}
+                </td>
+              </tr>
+            ))}
+            {filtered.length===0 && (<tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-calendar-check"></i>
+              <div className="t">{stateF==="due"?"ไม่มีเครื่องที่ต้องทำ PM ตอนนี้":"ไม่พบข้อมูล"}</div>
+              <div>{stateF==="due"?"เครื่องที่ตั้งรอบไว้ยังไม่ถึงกำหนด — เลือก \"ทุกสถานะ\" เพื่อดูทั้งหมด":"ลองเปลี่ยนเงื่อนไขการค้นหา"}</div></div></td></tr>)}
+          </tbody>
+        </table>
+      </div>}
+
+      {view==="month" && <div style={{padding:16,display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+        {months.map(b=>(
+          <div key={b.key} style={{border:"1px solid var(--line)",borderRadius:12,overflow:"hidden",background:"#fff"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid var(--line-soft)",borderTop:`3px solid ${b.color}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <b style={{color:b.color,fontSize:14}}>{b.label}</b>
+              <span style={{fontSize:12.5,color:"var(--muted)"}}>{b.items.length} เครื่อง</span>
+            </div>
+            <div style={{maxHeight:300,overflowY:"auto"}}>
+              {b.items.length===0 && <div style={{padding:"14px",fontSize:12.5,color:"var(--muted)"}}>ไม่มีเครื่องครบกำหนด</div>}
+              {b.items.map(x=>(
+                <div key={x.m.id} style={{padding:"8px 14px",borderBottom:"1px solid var(--line-soft)",display:"flex",gap:10,alignItems:"center",fontSize:12.5}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <span className="ticket-id" style={{cursor:"pointer",fontSize:11}} onClick={()=>setQuick(x.m.code)}>{x.m.code}</span> <span>{x.m.name}</span>
+                    <div style={{color:"var(--muted)",fontSize:11.5,marginTop:2}}>{x.m.project?short(x.m.project):""}{x.m.project?" · ":""}{b.key==="hours" ? `ครบที่ ${num(x.pm.nextHours)} ชม.` : x.pm.nextDate ? fmtD(x.pm.nextDate) : ""}</div>
+                  </div>
+                  <span style={{fontSize:11.5,color:PM_STATE[x.pm.state].color,whiteSpace:"nowrap",textAlign:"right"}}>{x.pm.text}</span>
+                  {canRecord && <button className="ia" title="บันทึก PM" onClick={()=>record(x)} style={{color:"#0E7490"}}><i className="fa-solid fa-circle-check"></i></button>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      {view==="project" && <div className="table-wrap">
+        <table className="data">
+          <thead><tr><th>โครงการ</th><th>เครื่องจักร</th><th style={{color:PM_STATE.overdue.color}}>เกินกำหนด</th><th style={{color:PM_STATE.soon.color}}>ใกล้ถึง</th><th>ปกติ</th><th className="hide-on-mobile">ยังไม่ตั้งรอบ</th><th className="hide-on-mobile" style={{minWidth:160}}>สัดส่วน</th><th></th></tr></thead>
+          <tbody>
+            {byProject.map(p=>(
+              <tr key={p.name}>
+                <td style={{fontWeight:500}}>{short(p.name)}</td>
+                <td>{p.total}</td>
+                <td style={{color:p.overdue?PM_STATE.overdue.color:"var(--muted)",fontWeight:p.overdue?600:400}}>{p.overdue}</td>
+                <td style={{color:p.soon?PM_STATE.soon.color:"var(--muted)",fontWeight:p.soon?600:400}}>{p.soon}</td>
+                <td>{p.ok}</td>
+                <td className="hide-on-mobile" style={{color:"var(--muted)"}}>{p.none}</td>
+                <td className="hide-on-mobile"><div style={{height:8,borderRadius:999,background:"#F1F5F9",overflow:"hidden",display:"flex"}}>
+                  {["overdue","soon","ok","none"].map(k=><div key={k} style={{width:`${p[k]/p.total*100}%`,background:k==="none"?"#CBD5E1":PM_STATE[k].color}}></div>)}
+                </div></td>
+                <td>{p.name!=="— ไม่ระบุโครงการ —" && <button className="ia" title="ดูรายการของโครงการนี้" onClick={()=>{setProj(p.name);setStateF("all");setView("list");}}><i className="fa-solid fa-arrow-right"></i></button>}</td>
+              </tr>
+            ))}
+            {byProject.length===0 && (<tr><td colSpan="8"><div className="empty"><i className="fa-solid fa-diagram-project"></i><div className="t">ไม่พบข้อมูล</div></div></td></tr>)}
+          </tbody>
+        </table>
+      </div>}
+    </div>
+    {quick && <window.MachineQuickView code={quick} onClose={()=>setQuick("")}/>}
+    </>
+  );
+}
+window.PmPlan = PmPlan;
+
 
 // ===== หมดเวลาใช้งาน =====
 // ล็อกอินทิ้งไว้แล้วไม่ได้แตะเลยเกิน 15 นาที ให้เด้งออกไปล็อกอินใหม่
@@ -11105,6 +11483,7 @@ function App(){
   const pageTitles = {
     "dashboard":{t:"แดชบอร์ด",c:"ภาพรวมและสถิติงานซ่อม"},
     "repairs":{t:"รายการแจ้งซ่อม",c:"จัดการและติดตามงานซ่อมทั้งหมด"},
+    "pm-plan":{t:"แผนบำรุงรักษา (PM)",c:"สรุปแผน PM ของเครื่องจักรทุกเครื่อง · เกินกำหนด / ใกล้ถึง / แผนรายเดือน"},
     "spare-parts":{t:"อะไหล่ที่ใช้ซ่อม",c:"สรุปอะไหล่ที่ใช้จากทุกใบแจ้งซ่อม · ค่าใช้จ่ายและแหล่งซื้อ"},
     "users":{t:"จัดการผู้ใช้งาน",c:"Users · เพิ่ม / แก้ไข / ลบ"},
     "categories":{t:"จัดการหมวดหมู่งาน",c:"Categories · เพิ่ม / แก้ไข / ลบ"},
@@ -11130,6 +11509,7 @@ function App(){
     if(safePage==="dashboard") return <Dashboard user={activeUser} goTo={setPage}/>;
     if(safePage==="repairs") return <Repairs user={activeUser}/>;
     if(safePage==="spare-parts") return <SpareParts user={activeUser}/>;
+    if(safePage==="pm-plan") return <PmPlan user={activeUser}/>;
     if(safePage==="users") return <Users user={activeUser}/>;
     if(safePage==="categories") return <Categories user={activeUser}/>;
     if(safePage==="machines") return <Machines user={activeUser}/>;
