@@ -1453,6 +1453,10 @@ async function api(action, payload = {}) {
       });
       if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
       const docKey = String((doc && doc.docNo) || ('DO-' + when)).replace(/[.#$/\[\]]/g, '-');
+      // เลขที่ซ้ำ (เช่น 2 คนออกใบพร้อมกันจากโครงการต้นทางเดียวกัน) — ห้ามเขียนทับใบเดิม
+      if ((await _assetDb.ref('/deliveryOrders/' + docKey).get()).exists()) {
+        throw new Error('เลขที่ใบส่งของ ' + ((doc && doc.docNo) || docKey) + ' ถูกใช้ไปแล้ว (อาจมีคนออกใบพร้อมกัน) — กรุณาเลือกโครงการต้นทางใหม่เพื่อออกเลขถัดไป แล้วบันทึกอีกครั้ง');
+      }
       const record = { ...(doc || {}), key: docKey, toProject, toSubSite: dstSubSite, note: note || '', by: by || '', when, items };
       updates['/deliveryOrders/' + docKey] = record;
       await _assetDb.ref().update(updates);
@@ -9311,13 +9315,14 @@ function TransferAssetsModal({user,onClose,onSaved}){
     return ()=>{ alive=false; };
   },[assets]);
 
-  // เลขที่ใบส่งของ: DO-<รหัสโครงการปลายทาง>-<ปีพ.ศ.><เดือน>/<ลำดับ> — รูปแบบเดียวกับเลขที่ใบแจ้งซ่อม
+  // เลขที่ใบส่งของ: DO-<รหัสโครงการต้นทาง>-<ปีพ.ศ.><เดือน>/<ลำดับ> — รูปแบบเดียวกับเลขที่ใบแจ้งซ่อม
+  // ลำดับนับแยกตามโครงการต้นทาง (โครงการที่ส่งของออก) รายเดือน
   React.useEffect(()=>{
-    if(!toProject){ setDocNo(""); return; }
+    if(!fromProject){ setDocNo(""); return; }
     let alive = true;
     window.api("loadDeliveryOrders").then(list=>{
       if(!alive) return;
-      const code = String(window.getProjectCode(toProject)||toProject).trim().replace(/\s+/g,"-").toUpperCase();
+      const code = String(window.getProjectCode(fromProject)||fromProject).trim().replace(/\s+/g,"-").toUpperCase();
       const d = new Date();
       const prefix = "DO-"+code+"-"+String(d.getFullYear()+543)+String(d.getMonth()+1).padStart(2,"0")+"/";
       let max = 0;
@@ -9328,7 +9333,7 @@ function TransferAssetsModal({user,onClose,onSaved}){
       setDocNo(prefix+String(max+1).padStart(3,"0"));
     }).catch(()=>setDocNo(""));
     return ()=>{ alive=false; };
-  },[toProject]);
+  },[fromProject]);
 
   const sites = React.useMemo(()=>[...new Set((assets||[]).map(a=>a.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[assets]);
 
@@ -9453,7 +9458,7 @@ function TransferAssetsModal({user,onClose,onSaved}){
           </div>
           <div className="form-field">
             <label>เลขที่ใบส่งของ</label>
-            <input value={docNo} onChange={e=>setDocNo(e.target.value)} placeholder={toProject?"กำลังออกเลขที่...":"เลือกโครงการปลายทางก่อน"} />
+            <input value={docNo} onChange={e=>setDocNo(e.target.value)} placeholder={fromProject?"กำลังออกเลขที่...":"เลือกโครงการต้นทางก่อน"} />
           </div>
           <div className="form-field">
             <label>วันที่</label>

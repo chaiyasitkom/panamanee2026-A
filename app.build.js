@@ -1218,6 +1218,9 @@ async function api(action, payload = {}) {
         });
         if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
         const docKey = String(doc && doc.docNo || 'DO-' + when).replace(/[.#$/\[\]]/g, '-');
+        if ((await _assetDb.ref('/deliveryOrders/' + docKey).get()).exists()) {
+          throw new Error('เลขที่ใบส่งของ ' + (doc && doc.docNo || docKey) + ' ถูกใช้ไปแล้ว (อาจมีคนออกใบพร้อมกัน) — กรุณาเลือกโครงการต้นทางใหม่เพื่อออกเลขถัดไป แล้วบันทึกอีกครั้ง');
+        }
         const record = {
           ...(doc || {}),
           key: docKey,
@@ -1735,7 +1738,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1765) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1769) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2530,7 +2533,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2207) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2211) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2685,7 +2688,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2337) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2341) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2867,10 +2870,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2482) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2486) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2485) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2489) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3048,7 +3051,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2612) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2616) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3765,7 +3768,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3038) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3042) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4255,7 +4258,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3274) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3278) ---- */
 const {
   useState,
   useEffect,
@@ -4504,7 +4507,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3377) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3381) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4732,7 +4735,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3560) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3564) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -5912,7 +5915,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3990) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3994) ---- */
 function Projects({
   user
 }) {
@@ -6549,7 +6552,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4243) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4247) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6946,7 +6949,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4489) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4493) ---- */
 function Dashboard({
   user,
   goTo
@@ -8330,7 +8333,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5066) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5070) ---- */
 function Repairs({
   user
 }) {
@@ -10872,7 +10875,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6016) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6020) ---- */
 function Users({
   user
 }) {
@@ -11410,7 +11413,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6192) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6196) ---- */
 function Categories({
   user
 }) {
@@ -11673,7 +11676,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6280) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6284) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -14827,7 +14830,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7278) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7282) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18503,7 +18506,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8478) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8482) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19602,7 +19605,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8785) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8789) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -20587,14 +20590,14 @@ function TransferAssetsModal({
     };
   }, [assets]);
   React.useEffect(() => {
-    if (!toProject) {
+    if (!fromProject) {
       setDocNo("");
       return;
     }
     let alive = true;
     window.api("loadDeliveryOrders").then(list => {
       if (!alive) return;
-      const code = String(window.getProjectCode(toProject) || toProject).trim().replace(/\s+/g, "-").toUpperCase();
+      const code = String(window.getProjectCode(fromProject) || fromProject).trim().replace(/\s+/g, "-").toUpperCase();
       const d = new Date();
       const prefix = "DO-" + code + "-" + String(d.getFullYear() + 543) + String(d.getMonth() + 1).padStart(2, "0") + "/";
       let max = 0;
@@ -20610,7 +20613,7 @@ function TransferAssetsModal({
     return () => {
       alive = false;
     };
-  }, [toProject]);
+  }, [fromProject]);
   const sites = React.useMemo(() => [...new Set((assets || []).map(a => a.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [assets]);
   const fromOptions = React.useMemo(() => {
     const counts = {};
@@ -20902,7 +20905,7 @@ function TransferAssetsModal({
   }, React.createElement("label", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07"), React.createElement("input", {
     value: docNo,
     onChange: e => setDocNo(e.target.value),
-    placeholder: toProject ? "กำลังออกเลขที่..." : "เลือกโครงการปลายทางก่อน"
+    placeholder: fromProject ? "กำลังออกเลขที่..." : "เลือกโครงการต้นทางก่อน"
   })), React.createElement("div", {
     className: "form-field"
   }, React.createElement("label", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("input", {
@@ -22193,7 +22196,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10044) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10049) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22666,7 +22669,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10379) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10384) ---- */
 function Permissions({
   user
 }) {
@@ -23286,7 +23289,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10732) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10737) ---- */
 function WorkspacePicker({
   user,
   onContinue,
