@@ -973,9 +973,13 @@ async function api(action, payload = {}) {
       {
         const {
           id,
-          dataUrl
+          dataUrl,
+          by
         } = payload;
         if (!id) throw new Error('ไม่พบผู้ใช้งาน');
+        if (by && String(by.id) !== String(id) && !(window.canAccessPage && window.canAccessPage(by, 'users'))) {
+          throw new Error('เฉพาะผู้มีสิทธิ์จัดการผู้ใช้งานเท่านั้นที่ตั้งลายเซ็นให้ผู้อื่นได้');
+        }
         if (!dataUrl) {
           await _db.ref('/signatures/' + id).remove();
           return {
@@ -1738,7 +1742,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1769) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1773) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2533,7 +2537,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2211) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2215) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2688,7 +2692,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2341) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2345) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2870,10 +2874,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2486) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2490) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2489) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2493) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3051,7 +3055,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2616) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2620) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3768,7 +3772,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3042) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3046) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4258,7 +4262,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3278) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3282) ---- */
 const {
   useState,
   useEffect,
@@ -4507,7 +4511,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3381) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3385) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4735,7 +4739,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3564) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3568) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -4873,21 +4877,24 @@ function SignaturePad({
   }), " \u0E43\u0E0A\u0E49\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E19\u0E35\u0E49")));
 }
 function SignatureSettings({
-  user
+  user,
+  target
 }) {
+  const owner = target || user;
+  const isMine = String(owner.id) === String(user.id);
   const [sig, setSig] = React.useState(null);
   const [drawing, setDrawing] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const fileRef = React.useRef(null);
   React.useEffect(() => {
     let alive = true;
-    window.__SIG.get(user.id).then(v => {
+    window.__SIG.get(owner.id).then(v => {
       if (alive) setSig(v || "");
     });
     return () => {
       alive = false;
     };
-  }, [user.id]);
+  }, [owner.id]);
   const save = async dataUrl => {
     if (!dataUrl) {
       Swal.fire({
@@ -4898,7 +4905,7 @@ function SignatureSettings({
     }
     setBusy(true);
     try {
-      await window.__SIG.save(user.id, dataUrl);
+      await window.__SIG.save(owner.id, dataUrl, user);
       setSig(dataUrl);
       setDrawing(false);
       Swal.fire({
@@ -4924,7 +4931,7 @@ function SignatureSettings({
       isConfirmed
     } = await Swal.fire({
       title: "ลบลายเซ็น?",
-      text: "เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของคุณ",
+      text: isMine ? "เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของคุณ" : `เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของ ${owner.name || ""}`,
       icon: "warning",
       showCancelButton: true,
       confirmButtonText: "ลบ",
@@ -4934,7 +4941,7 @@ function SignatureSettings({
     if (!isConfirmed) return;
     setBusy(true);
     try {
-      await window.__SIG.save(user.id, "");
+      await window.__SIG.save(owner.id, "", user);
       setSig("");
     } catch (err) {
       Swal.fire({
@@ -4995,7 +5002,7 @@ function SignatureSettings({
       color: "var(--primary)",
       marginRight: 7
     }
-  }), "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E02\u0E2D\u0E07\u0E09\u0E31\u0E19"), React.createElement("div", {
+  }), isMine ? "ลายเซ็นของฉัน" : `ลายเซ็นของ ${owner.name || ""}`), React.createElement("div", {
     style: {
       fontSize: 12.5,
       color: "var(--muted)",
@@ -5915,7 +5922,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3994) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4001) ---- */
 function Projects({
   user
 }) {
@@ -6552,7 +6559,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4247) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4254) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6949,7 +6956,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4493) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4500) ---- */
 function Dashboard({
   user,
   goTo
@@ -8333,7 +8340,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5070) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5077) ---- */
 function Repairs({
   user
 }) {
@@ -9774,11 +9781,16 @@ window.__SIG = {
   preload(ids) {
     return Promise.all([...new Set((ids || []).filter(Boolean))].map(id => this.get(id)));
   },
-  async save(userId, dataUrl) {
+  async save(userId, dataUrl, by) {
     if (dataUrl && !SIG_DATAURL_RE.test(dataUrl)) throw new Error("รูปแบบลายเซ็นไม่ถูกต้อง");
     await window.api("saveSignature", {
       id: userId,
-      dataUrl: dataUrl || ""
+      dataUrl: dataUrl || "",
+      by: by ? {
+        id: by.id,
+        role: by.role,
+        name: by.name
+      } : undefined
     });
     this._cache[userId] = dataUrl || "";
   },
@@ -10875,12 +10887,13 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6020) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6027) ---- */
 function Users({
   user
 }) {
   const [rows, setRows] = React.useState(window.__DATA.users);
   const [edit, setEdit] = React.useState(null);
+  const [sigFor, setSigFor] = React.useState(null);
   const [q, setQ] = React.useState("");
   const filtered = rows.filter(u => !q || (u.name.toLowerCase() + u.username).includes(q.toLowerCase()));
   const save = async form => {
@@ -11130,6 +11143,15 @@ function Users({
     className: "row-actions"
   }, React.createElement("button", {
     className: "ia",
+    title: "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19 (\u0E40\u0E1E\u0E34\u0E48\u0E21 / \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 / \u0E25\u0E1A)",
+    style: {
+      color: "#0B1F5C"
+    },
+    onClick: () => setSigFor(u)
+  }, React.createElement("i", {
+    className: "fa-solid fa-signature"
+  })), React.createElement("button", {
+    className: "ia",
     title: "\u0E41\u0E01\u0E49\u0E44\u0E02",
     onClick: () => setEdit({
       ...u,
@@ -11147,7 +11169,31 @@ function Users({
     init: edit,
     onClose: () => setEdit(null),
     onSave: save
-  }));
+  }), sigFor && React.createElement(Modal, {
+    open: true,
+    onClose: () => setSigFor(null),
+    title: React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-signature",
+      style: {
+        color: "var(--primary)",
+        marginRight: 8
+      }
+    }), "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19 \xB7 ", sigFor.name),
+    footer: React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: () => setSigFor(null)
+    }, "\u0E1B\u0E34\u0E14")
+  }, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 10,
+      lineHeight: 1.6
+    }
+  }, "\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E19\u0E35\u0E49\u0E08\u0E30\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E17\u0E35\u0E48 ", React.createElement("b", null, sigFor.name), " \u0E40\u0E1B\u0E47\u0E19\u0E1C\u0E39\u0E49\u0E25\u0E07\u0E0A\u0E37\u0E48\u0E2D (\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21 \u0E43\u0E1A\u0E02\u0E2D\u0E40\u0E1A\u0E34\u0E01 \u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07) \u2014 \u0E40\u0E0B\u0E47\u0E19\u0E43\u0E19\u0E01\u0E23\u0E2D\u0E1A \u0E2B\u0E23\u0E37\u0E2D\u0E2D\u0E31\u0E1B\u0E42\u0E2B\u0E25\u0E14\u0E23\u0E39\u0E1B\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19\u0E1A\u0E19\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E02\u0E32\u0E27"), React.createElement(SignatureSettings, {
+    user: user,
+    target: sigFor
+  })));
 }
 function UserForm({
   init,
@@ -11413,7 +11459,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6196) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6211) ---- */
 function Categories({
   user
 }) {
@@ -11676,7 +11722,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6284) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6299) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -14830,7 +14876,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7282) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7297) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18506,7 +18552,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8482) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8497) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19605,7 +19651,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8789) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8804) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -20605,6 +20651,10 @@ function TransferAssetsModal({
   const [docDate, setDocDate] = React.useState(() => window.__DATA.fmtDate(new Date()));
   const [sender, setSender] = React.useState(user.name || "");
   const [receiver, setReceiver] = React.useState("");
+  const [approver, setApprover] = React.useState("");
+  const [vehicleType, setVehicleType] = React.useState("");
+  const [vehiclePlate, setVehiclePlate] = React.useState("");
+  const [driverName, setDriverName] = React.useState("");
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [q, setQ] = React.useState("");
@@ -20775,11 +20825,16 @@ function TransferAssetsModal({
           docDate,
           sender,
           receiver,
+          approver,
+          vehicleType,
+          vehiclePlate,
+          driverName,
           fromProject,
           fromSubSite,
           toSubSite,
           senderId: window.__SIG.resolve(sender, "", "", user),
           receiverId: window.__SIG.resolve(receiver, "", "", user),
+          approverId: approver ? window.__SIG.resolve(approver, "", "", user) : "",
           fromProjectLabel: fromProject + (fromSubSite ? ` · ${fromSubSite}` : "")
         }
       });
@@ -20956,14 +21011,37 @@ function TransferAssetsModal({
     onChange: e => setDocDate(e.target.value)
   })), React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07\u0E21\u0E2D\u0E1A"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E08\u0E31\u0E14\u0E40\u0E15\u0E23\u0E35\u0E22\u0E21 (\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07 / \u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07)"), React.createElement("input", {
     value: sender,
     onChange: e => setSender(e.target.value)
   })), React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A\u0E21\u0E2D\u0E1A"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34 (\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07)"), React.createElement("input", {
+    value: approver,
+    onChange: e => setApprover(e.target.value),
+    placeholder: "\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E04\u0E31\u0E1A"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E08\u0E31\u0E14\u0E40\u0E15\u0E23\u0E35\u0E22\u0E21 (\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 / \u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A)"), React.createElement("input", {
     value: receiver,
     onChange: e => setReceiver(e.target.value)
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E23\u0E16\u0E02\u0E19\u0E2A\u0E48\u0E07"), React.createElement("input", {
+    value: vehicleType,
+    onChange: e => setVehicleType(e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E01\u0E23\u0E30\u0E1A\u0E30, 6 \u0E25\u0E49\u0E2D, \u0E40\u0E17\u0E23\u0E25\u0E40\u0E25\u0E2D\u0E23\u0E4C"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E23\u0E16"), React.createElement("input", {
+    value: vehiclePlate,
+    onChange: e => setVehiclePlate(e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 7808"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A"), React.createElement("input", {
+    value: driverName,
+    onChange: e => setDriverName(e.target.value)
   })), React.createElement("div", {
     className: "form-field full"
   }, React.createElement("label", null, "\u0E40\u0E2B\u0E15\u0E38\u0E1C\u0E25 / \u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("textarea", {
@@ -21340,56 +21418,74 @@ window.buildDeliveryOrderHtml = function (doc) {
   }));
   const rows = items.slice();
   while (rows.length < 18) rows.push({
-    no: rows.length + 1
+    no: "",
+    __blank: true
   });
-  const trs = rows.map(it => `<tr>
+  const trs = rows.map(it => {
+    const sub = it.__blank ? "" : [[it.brand, it.model].filter(Boolean).join(" "), it.serial ? "S/N " + it.serial : ""].filter(Boolean).join(" · ");
+    return `<tr>
     <td>${it.no}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.assetCode || "")}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.name || "")}</td>
-    <td style="text-align:left;padding-left:6px">${esc([it.brand, it.model].filter(Boolean).join(" "))}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.serial || "")}</td>
-    <td>${it.quantity != null ? esc(it.quantity) : ""}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.name || "")}${sub ? `<span style="color:#444;font-size:11px"> (${esc(sub)})</span>` : ""}</td>
+    <td>${esc(it.assetCode || "")}</td>
     <td>${esc(it.unit || "")}</td>
-    <td style="text-align:left;padding-left:6px">${esc((it.from || "") + (it.fromSubSite ? " · " + it.fromSubSite : ""))}</td>
-  </tr>`).join("");
-  const totalQty = items.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
+    <td>${it.__blank || it.quantity == null ? "" : esc(Number(it.quantity).toLocaleString("th-TH"))}</td>
+    <td style="text-align:left;padding-left:4px;font-size:11px">${esc(it.sendNote || "")}</td>
+    <td>${it.receivedQty != null && it.receivedQty !== "" ? esc(it.receivedQty) : ""}</td>
+    <td style="text-align:left;padding-left:4px;font-size:11px">${esc(it.receiveNote || "")}</td>
+  </tr>`;
+  }).join("");
+  const line = (v, minW) => `<span style="flex:1;${minW ? `min-width:${minW};` : ""}border-bottom:1px dotted #000;padding:0 3mm;text-align:center;font-size:18px;line-height:1.25">${v ? esc(v) : "&nbsp;"}</span>`;
+  const field = (label, v, minW) => `<div style="display:flex;align-items:flex-end;gap:2mm;flex:1"><span style="font-weight:700;font-size:15px;white-space:nowrap">${label}</span>${line(v, minW)}</div>`;
+  const sigCell = (title, name, sigId, date) => `<td style="width:25%;border:1px solid #000;vertical-align:top;padding:1.5mm 2mm 1mm;text-align:center">
+      <div style="font-size:14px">${title}</div>
+      <div style="height:10mm;border-bottom:1px solid #000;margin:0 4mm;display:flex;align-items:flex-end;justify-content:center">${sigId ? window.__SIG.img(sigId, "display:block;max-height:10mm;max-width:90%") : ""}</div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:1mm"><span>(</span><span style="flex:1;text-align:center">${esc(name || "")}</span><span>)</span></div>
+      <div style="font-size:12px;text-align:left;margin-top:1mm;white-space:nowrap">วันที่${date ? `<span style="border-bottom:1px dotted #000;padding:0 1.5mm">${esc(date)}</span>` : "................"}เวลา.............</div>
+    </td>`;
+  const sigBlock = (heading, cells) => `<tr><td colspan="4" style="border:1px solid #000;text-align:center;font-weight:700;font-size:14px;padding:.6mm 0">${heading}</td></tr><tr>${cells}</tr>`;
+  const dateTxt = (() => {
+    const d = new Date(doc.docDate || doc.when);
+    return (doc.docDate || doc.when) && !isNaN(d) ? d.toLocaleDateString("th-TH", {
+      day: "numeric",
+      month: "numeric",
+      year: "2-digit"
+    }) : "";
+  })();
   const cancelStamp = doc.cancelled ? `
-    <div style="position:absolute;top:95mm;left:50%;transform:translateX(-50%) rotate(-22deg);border:6px solid #DC2626;color:#DC2626;padding:6mm 18mm;font-size:52px;font-weight:700;letter-spacing:6px;border-radius:6mm;opacity:.32;white-space:nowrap;pointer-events:none">ยกเลิก</div>
-    <div style="position:absolute;top:8mm;right:10mm;border:2px solid #DC2626;color:#DC2626;padding:2mm 5mm;font-size:15px;border-radius:2mm;text-align:right;line-height:1.4">
+    <div style="position:absolute;top:110mm;left:50%;transform:translateX(-50%) rotate(-22deg);border:6px solid #DC2626;color:#DC2626;padding:6mm 18mm;font-size:52px;font-weight:700;letter-spacing:6px;border-radius:6mm;opacity:.32;white-space:nowrap;pointer-events:none">ยกเลิก</div>
+    <div style="position:absolute;top:8mm;right:10mm;border:2px solid #DC2626;color:#DC2626;padding:2mm 5mm;font-size:15px;border-radius:2mm;text-align:right;line-height:1.4;background:#fff">
       <div style="font-weight:700">เอกสารถูกยกเลิก</div>
       <div style="font-size:12px">${fmt(doc.cancelledAt)}${doc.cancelledBy ? " · " + esc(doc.cancelledBy) : ""}</div>
       ${doc.cancelReason ? `<div style="font-size:12px">เหตุผล: ${esc(doc.cancelReason)}</div>` : ""}
     </div>` : "";
-  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:16mm 10mm 12mm;background:#fff;box-sizing:border-box">${cancelStamp}
-    <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:6mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:23px;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap}</style>
-    <div style="display:grid;grid-template-columns:38mm 1fr 40mm;gap:5mm;align-items:start;margin-bottom:4mm;position:relative;min-height:32mm">
-      <div>${DO_LOGO_SVG}</div>
-      <div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:110mm;text-align:center">
-        <div style="font-size:25px">บริษัท พานามณี จำกัด</div>
-        <div style="font-size:24px;margin-top:1mm">ใบส่งของ / Delivery Order</div>
-      </div><div></div>
+  const fromTxt = doc.fromProjectLabel || [doc.fromProject, doc.fromSubSite].filter(Boolean).join(" · ");
+  const toTxt = [doc.toProject, doc.toSubSite].filter(Boolean).join(" · ");
+  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
+    <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:4mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:6.6mm;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{font-size:13px;font-weight:400;white-space:nowrap;height:5.5mm}table.sg{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:-1px}</style>
+    <div style="position:relative;height:30mm;margin-bottom:2mm">
+      <div style="position:absolute;left:4mm;top:0">${DO_LOGO_SVG}</div>
+      <div style="position:absolute;left:50%;top:3mm;transform:translateX(-50%);width:100mm;text-align:center">
+        <div style="font-size:22px;font-weight:700">บริษัท พานามณี จำกัด</div>
+        <div style="font-size:21px;font-weight:700;margin-top:3mm">ใบ DO ส่งของ</div>
+      </div>
+      <div style="position:absolute;right:0;top:${doc.cancelled ? "24mm" : "2mm"};font-size:15px;text-align:right">เลขที่ <span style="border-bottom:1px dotted #000;padding:0 2mm;font-size:16px">${esc(doc.docNo || "")}</span></div>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;margin-bottom:4mm">
-      <div>เลขที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:52mm;text-align:center">${esc(doc.docNo || "")}</span></div>
-      <div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:40mm;text-align:center">${fmt(doc.docDate || doc.when)}</span></div>
-    </div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>จากโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.fromProjectLabel || "")}</span></div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc((doc.toProject || "") + (doc.toSubSite ? " · " + doc.toSubSite : ""))}</span></div>
+    <div style="display:flex;gap:6mm;margin-bottom:1.5mm;width:55%">${field("วันที่", dateTxt)}</div>
+    <div style="display:flex;gap:6mm;margin-bottom:1.5mm">${field("ต้นทาง", fromTxt)}${field("ปลายทาง", toTxt)}</div>
+    <div style="display:flex;gap:4mm;margin-bottom:1mm">${field("ประเภทรถขนส่ง", doc.vehicleType)}${field("ทะเบียน", doc.vehiclePlate)}${field("ชื่อพนักงานขับ", doc.driverName)}</div>
     <table class="do">
-      <thead><tr>
-        <th style="width:10mm">ลำดับ</th><th style="width:26mm">รหัสทรัพย์สิน</th><th>รายการ</th>
-        <th style="width:30mm">ยี่ห้อ / รุ่น</th><th style="width:26mm">Serial No.</th>
-        <th style="width:15mm">จำนวน</th><th style="width:16mm">หน่วย</th><th style="width:32mm">จากโครงการ</th>
-      </tr></thead>
+      <colgroup><col style="width:11mm"><col><col style="width:22mm"><col style="width:15mm"><col style="width:15mm"><col style="width:24mm"><col style="width:15mm"><col style="width:24mm"></colgroup>
+      <thead>
+        <tr><th rowspan="2">ลำดับ</th><th rowspan="2">รายการ</th><th rowspan="2">รหัส</th><th rowspan="2">หน่วย</th><th colspan="2">ผู้ส่ง</th><th colspan="2">ผู้รับ</th></tr>
+        <tr><th>จำนวน</th><th>หมายเหตุ</th><th>จำนวน</th><th>หมายเหตุ</th></tr>
+      </thead>
       <tbody>${trs}</tbody>
-      <tfoot><tr><td colspan="5" style="text-align:right;padding-right:6px">รวม</td><td>${totalQty.toLocaleString("th-TH")}</td><td colspan="2"></td></tr></tfoot>
     </table>
-    ${doc.note ? `<div style="font-size:16px;margin-top:3mm">หมายเหตุ: ${esc(doc.note)}</div>` : ""}
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:10mm;font-size:17px;text-align:center">
-      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.senderId, "display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้ส่งมอบ</div><div style="font-size:14px;color:#333">${esc(doc.sender || "")}</div></div>
-      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.receiverId, "display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้รับมอบ</div><div style="font-size:14px;color:#333">${esc(doc.receiver || "")}</div></div>
-      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div><div style="font-size:14px;color:#333">&nbsp;</div></div>
-    </div>
+    ${doc.note ? `<div style="font-size:15px;border:1px solid #000;border-top:none;padding:1mm 2mm">หมายเหตุ: ${esc(doc.note)}</div>` : ""}
+    <table class="sg">
+      ${sigBlock("ต้นทาง (ผู้ส่ง) กรุณาลงนามตัวบรรจง", sigCell("ผู้จัดเตรียม", doc.sender, doc.senderId) + sigCell("ผู้อนุมัติ", doc.approver, doc.approverId) + sigCell("พนักงานขับรถ", doc.driverName, "") + sigCell("หน่วยงาน รปภ.", "", ""))}
+      ${sigBlock("ปลายทาง (ผู้รับ) กรุณาลงนามตัวบรรจง", sigCell("ผู้จัดเตรียม", doc.receiver, doc.receiverId) + sigCell("ผู้อนุมัติ", "", "") + sigCell("พนักงานขับรถ", doc.driverName, "") + sigCell("หน่วยงาน รปภ.", "", ""))}
+    </table>
   </div>`;
 };
 window.downloadDeliveryOrderPdf = async function (doc) {
@@ -21399,7 +21495,7 @@ window.downloadDeliveryOrderPdf = async function (doc) {
       allowOutsideClick: false,
       didOpen: () => Swal.showLoading()
     });
-    await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId])]);
+    await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId, doc.approverId])]);
     Swal.close();
   } catch (e) {
     Swal.fire({
@@ -21451,7 +21547,8 @@ function DeliveryOrders({
     patch = {
       ...patch,
       senderId: window.__SIG.resolve(patch.sender, doc.sender, doc.senderId, user),
-      receiverId: window.__SIG.resolve(patch.receiver, doc.receiver, doc.receiverId, user)
+      receiverId: window.__SIG.resolve(patch.receiver, doc.receiver, doc.receiverId, user),
+      approverId: patch.approver ? window.__SIG.resolve(patch.approver, doc.approver, doc.approverId, user) : ""
     };
     const res = await window.api("updateDeliveryOrder", {
       key: doc.key,
@@ -22003,6 +22100,10 @@ function DeliveryOrderEdit({
     toSubSite: doc.toSubSite || "",
     sender: doc.sender || "",
     receiver: doc.receiver || "",
+    approver: doc.approver || "",
+    vehicleType: doc.vehicleType || "",
+    vehiclePlate: doc.vehiclePlate || "",
+    driverName: doc.driverName || "",
     note: doc.note || ""
   });
   const [items, setItems] = React.useState(() => (doc.items || []).map(it => ({
@@ -22033,6 +22134,10 @@ function DeliveryOrderEdit({
       toSubSite: f.toSubSite,
       sender: f.sender,
       receiver: f.receiver,
+      approver: f.approver,
+      vehicleType: f.vehicleType,
+      vehiclePlate: f.vehiclePlate,
+      driverName: f.driverName,
       note: f.note,
       items: items.map(it => ({
         ...it,
@@ -22138,14 +22243,35 @@ function DeliveryOrderEdit({
     }, "\u0E41\u0E01\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E1A\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 \u0E44\u0E21\u0E48\u0E22\u0E49\u0E32\u0E22\u0E2A\u0E15\u0E4A\u0E2D\u0E01\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19")) : null;
   })(), React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07\u0E21\u0E2D\u0E1A"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E08\u0E31\u0E14\u0E40\u0E15\u0E23\u0E35\u0E22\u0E21 (\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07 / \u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07)"), React.createElement("input", {
     value: f.sender,
     onChange: e => set("sender", e.target.value)
   })), React.createElement("div", {
     className: "form-field"
-  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A\u0E21\u0E2D\u0E1A"), React.createElement("input", {
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E2D\u0E19\u0E38\u0E21\u0E31\u0E15\u0E34 (\u0E15\u0E49\u0E19\u0E17\u0E32\u0E07)"), React.createElement("input", {
+    value: f.approver,
+    onChange: e => set("approver", e.target.value)
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E1C\u0E39\u0E49\u0E08\u0E31\u0E14\u0E40\u0E15\u0E23\u0E35\u0E22\u0E21 (\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07 / \u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A)"), React.createElement("input", {
     value: f.receiver,
     onChange: e => set("receiver", e.target.value)
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17\u0E23\u0E16\u0E02\u0E19\u0E2A\u0E48\u0E07"), React.createElement("input", {
+    value: f.vehicleType,
+    onChange: e => set("vehicleType", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E01\u0E23\u0E30\u0E1A\u0E30, 6 \u0E25\u0E49\u0E2D"
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E23\u0E16"), React.createElement("input", {
+    value: f.vehiclePlate,
+    onChange: e => set("vehiclePlate", e.target.value)
+  })), React.createElement("div", {
+    className: "form-field"
+  }, React.createElement("label", null, "\u0E0A\u0E37\u0E48\u0E2D\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A"), React.createElement("input", {
+    value: f.driverName,
+    onChange: e => set("driverName", e.target.value)
   })), React.createElement("div", {
     className: "form-field full"
   }, React.createElement("label", null, "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("textarea", {
@@ -22238,7 +22364,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10056) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10109) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22711,7 +22837,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10391) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10444) ---- */
 function Permissions({
   user
 }) {
@@ -23331,7 +23457,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10744) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10797) ---- */
 function WorkspacePicker({
   user,
   onContinue,

@@ -1290,8 +1290,12 @@ async function api(action, payload = {}) {
     }
 
     case 'saveSignature': {
-      const { id, dataUrl } = payload;
+      const { id, dataUrl, by } = payload;
       if (!id) throw new Error('ไม่พบผู้ใช้งาน');
+      // เซ็นของตัวเองได้ทุกคน · ตั้ง/ลบลายเซ็นของคนอื่นได้เฉพาะคนที่มีสิทธิ์ "จัดการผู้ใช้งาน"
+      if (by && String(by.id) !== String(id) && !(window.canAccessPage && window.canAccessPage(by, 'users'))) {
+        throw new Error('เฉพาะผู้มีสิทธิ์จัดการผู้ใช้งานเท่านั้นที่ตั้งลายเซ็นให้ผู้อื่นได้');
+      }
       if (!dataUrl) { await _db.ref('/signatures/' + id).remove(); return { removed: true }; }
       await _db.ref('/signatures/' + id).set({ dataUrl, updatedAt: new Date().toISOString() });
       return { saved: true };
@@ -3619,28 +3623,31 @@ function SignaturePad({onCancel,onDone}){
   );
 }
 
-// ลายเซ็นของฉัน — ใช้ลงในใบแจ้งซ่อม / ใบขอเบิก / ใบส่งของ ตรงช่องที่เป็นชื่อเรา
-function SignatureSettings({user}){
+// ลายเซ็น — ใช้ลงในใบแจ้งซ่อม / ใบขอเบิก / ใบส่งของ ตรงช่องที่เป็นชื่อเจ้าของลายเซ็น
+// target = เจ้าของลายเซ็น (ไม่ส่ง = ตัวเอง) · ผู้มีสิทธิ์จัดการผู้ใช้งานตั้งให้คนอื่นได้จากหน้าจัดการผู้ใช้งาน
+function SignatureSettings({user, target}){
+  const owner = target || user;
+  const isMine = String(owner.id) === String(user.id);
   const [sig,setSig] = React.useState(null);   // null = กำลังโหลด
   const [drawing,setDrawing] = React.useState(false);
   const [busy,setBusy] = React.useState(false);
   const fileRef = React.useRef(null);
-  React.useEffect(()=>{ let alive=true; window.__SIG.get(user.id).then(v=>{ if(alive) setSig(v||""); }); return ()=>{ alive=false; }; },[user.id]);
+  React.useEffect(()=>{ let alive=true; window.__SIG.get(owner.id).then(v=>{ if(alive) setSig(v||""); }); return ()=>{ alive=false; }; },[owner.id]);
   const save = async (dataUrl) => {
     if(!dataUrl){ Swal.fire({icon:"warning",title:"ไม่พบลายเซ็นในรูป"}); return; }
     setBusy(true);
     try{
-      await window.__SIG.save(user.id, dataUrl);
+      await window.__SIG.save(owner.id, dataUrl, user);
       setSig(dataUrl); setDrawing(false);
       Swal.fire({icon:"success",title:"บันทึกลายเซ็นแล้ว",timer:1500,showConfirmButton:false,toast:true,position:"top-end"});
     }catch(err){ Swal.fire({icon:"error",title:"บันทึกลายเซ็นไม่สำเร็จ",text:err.message}); }
     finally{ setBusy(false); }
   };
   const remove = async () => {
-    const { isConfirmed } = await Swal.fire({title:"ลบลายเซ็น?",text:"เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของคุณ",icon:"warning",showCancelButton:true,confirmButtonText:"ลบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#DC2626"});
+    const { isConfirmed } = await Swal.fire({title:"ลบลายเซ็น?",text:isMine?"เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของคุณ":`เอกสารที่ออกหลังจากนี้จะไม่มีลายเซ็นของ ${owner.name||""}`,icon:"warning",showCancelButton:true,confirmButtonText:"ลบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#DC2626"});
     if(!isConfirmed) return;
     setBusy(true);
-    try{ await window.__SIG.save(user.id, ""); setSig(""); }
+    try{ await window.__SIG.save(owner.id, "", user); setSig(""); }
     catch(err){ Swal.fire({icon:"error",title:"ลบไม่สำเร็จ",text:err.message}); }
     finally{ setBusy(false); }
   };
@@ -3665,7 +3672,7 @@ function SignatureSettings({user}){
   return (
     <div style={{border:"1px solid var(--line)",borderRadius:10,padding:"12px 14px"}}>
       <div style={{fontWeight:500,fontSize:13.5,marginBottom:4}}>
-        <i className="fa-solid fa-signature" style={{color:"var(--primary)",marginRight:7}}></i>ลายเซ็นของฉัน
+        <i className="fa-solid fa-signature" style={{color:"var(--primary)",marginRight:7}}></i>{isMine?"ลายเซ็นของฉัน":`ลายเซ็นของ ${owner.name||""}`}
       </div>
       <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:10,lineHeight:1.6}}>
         ใช้ลงในใบแจ้งซ่อม ใบขอเบิก และใบส่งของ — ขึ้นเฉพาะช่องที่เป็นชื่อคุณ และเอกสารที่คุณเป็นคนบันทึกเอง
@@ -5597,9 +5604,9 @@ window.__SIG = {
   },
   cached(userId){ return (userId && this._cache[userId]) || ""; },
   preload(ids){ return Promise.all([...new Set((ids||[]).filter(Boolean))].map(id=>this.get(id))); },
-  async save(userId, dataUrl){
+  async save(userId, dataUrl, by){
     if(dataUrl && !SIG_DATAURL_RE.test(dataUrl)) throw new Error("รูปแบบลายเซ็นไม่ถูกต้อง");
-    await window.api("saveSignature",{id:userId, dataUrl:dataUrl||""});
+    await window.api("saveSignature",{id:userId, dataUrl:dataUrl||"", by: by ? {id:by.id, role:by.role, name:by.name} : undefined});
     this._cache[userId] = dataUrl || "";
   },
   // ผู้ลงนามของช่องหนึ่ง: ชื่อตรงกับคนที่บันทึก = คนนั้นเซ็น · ชื่อเดิมไม่เปลี่ยน = คงผู้ลงนามเดิม · เปลี่ยนชื่อ = ล้าง
@@ -6021,6 +6028,7 @@ window.AssessModal = AssessModal;
 function Users({user}){
   const [rows,setRows] = React.useState(window.__DATA.users);
   const [edit,setEdit] = React.useState(null);
+  const [sigFor,setSigFor] = React.useState(null);   // ผู้ใช้ที่กำลังตั้งลายเซ็นให้
   const [q,setQ] = React.useState("");
   const filtered = rows.filter(u=>!q||(u.name.toLowerCase()+u.username).includes(q.toLowerCase()));
 
@@ -6101,13 +6109,20 @@ function Users({user}){
                     <i className={`fa-solid ${revealedPw[u.id]!==undefined?"fa-eye-slash":"fa-eye"}`}></i>
                   </button>
                 </div></td>}
-                <td><div className="row-actions"><button className="ia" title="แก้ไข" onClick={()=>setEdit({...u,projects:Array.isArray(u.projects)?u.projects:[]})}><i className="fa-solid fa-pen"></i></button><button className="ia danger" title="ลบ" onClick={()=>del(u)}><i className="fa-solid fa-trash"></i></button></div></td>
+                <td><div className="row-actions"><button className="ia" title="ลายเซ็น (เพิ่ม / เปลี่ยน / ลบ)" style={{color:"#0B1F5C"}} onClick={()=>setSigFor(u)}><i className="fa-solid fa-signature"></i></button><button className="ia" title="แก้ไข" onClick={()=>setEdit({...u,projects:Array.isArray(u.projects)?u.projects:[]})}><i className="fa-solid fa-pen"></i></button><button className="ia danger" title="ลบ" onClick={()=>del(u)}><i className="fa-solid fa-trash"></i></button></div></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {edit && <UserForm init={edit} onClose={()=>setEdit(null)} onSave={save}/>}
+      {sigFor && <Modal open={true} onClose={()=>setSigFor(null)} title={<><i className="fa-solid fa-signature" style={{color:"var(--primary)",marginRight:8}}></i>ลายเซ็น · {sigFor.name}</>}
+        footer={<button className="btn btn-ghost" onClick={()=>setSigFor(null)}>ปิด</button>}>
+        <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:10,lineHeight:1.6}}>
+          ลายเซ็นนี้จะขึ้นบนเอกสารที่ <b>{sigFor.name}</b> เป็นผู้ลงชื่อ (ใบแจ้งซ่อม ใบขอเบิก ใบส่งของ) — เซ็นในกรอบ หรืออัปโหลดรูปลายเซ็นบนกระดาษขาว
+        </div>
+        <SignatureSettings user={user} target={sigFor}/>
+      </Modal>}
     </div>
   );
 }
@@ -9303,6 +9318,10 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
   const [docDate,setDocDate] = React.useState(()=>window.__DATA.fmtDate(new Date()));
   const [sender,setSender] = React.useState(user.name||"");
   const [receiver,setReceiver] = React.useState("");
+  const [approver,setApprover] = React.useState("");
+  const [vehicleType,setVehicleType] = React.useState("");
+  const [vehiclePlate,setVehiclePlate] = React.useState("");
+  const [driverName,setDriverName] = React.useState("");
   const [note,setNote] = React.useState("");
   const [busy,setBusy] = React.useState(false);
   const [q,setQ] = React.useState("");
@@ -9401,8 +9420,9 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
     try{
       const res = await window.api("transferAssets",{
         moves, toProject, toSubSite, note, by:user.name,
-        doc:{ docNo, docDate, sender, receiver, fromProject, fromSubSite, toSubSite,
+        doc:{ docNo, docDate, sender, receiver, approver, vehicleType, vehiclePlate, driverName, fromProject, fromSubSite, toSubSite,
               senderId: window.__SIG.resolve(sender,"","",user), receiverId: window.__SIG.resolve(receiver,"","",user),
+              approverId: approver ? window.__SIG.resolve(approver,"","",user) : "",
               fromProjectLabel: fromProject + (fromSubSite?` · ${fromSubSite}`:"") },
       });
       // ย้ายบางส่วนจะแตกรายการใหม่ที่ปลายทาง — ล้าง cache ให้ทั้งสองหน้าโหลดใหม่
@@ -9471,8 +9491,12 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
             <label>วันที่</label>
             <input type="date" value={docDate} onChange={e=>setDocDate(e.target.value)} />
           </div>
-          <div className="form-field"><label>ผู้ส่งมอบ</label><input value={sender} onChange={e=>setSender(e.target.value)} /></div>
-          <div className="form-field"><label>ผู้รับมอบ</label><input value={receiver} onChange={e=>setReceiver(e.target.value)} /></div>
+          <div className="form-field"><label>ผู้จัดเตรียม (ต้นทาง / ผู้ส่ง)</label><input value={sender} onChange={e=>setSender(e.target.value)} /></div>
+          <div className="form-field"><label>ผู้อนุมัติ (ต้นทาง)</label><input value={approver} onChange={e=>setApprover(e.target.value)} placeholder="ไม่บังคับ" /></div>
+          <div className="form-field"><label>ผู้จัดเตรียม (ปลายทาง / ผู้รับ)</label><input value={receiver} onChange={e=>setReceiver(e.target.value)} /></div>
+          <div className="form-field"><label>ประเภทรถขนส่ง</label><input value={vehicleType} onChange={e=>setVehicleType(e.target.value)} placeholder="เช่น กระบะ, 6 ล้อ, เทรลเลอร์" /></div>
+          <div className="form-field"><label>ทะเบียนรถ</label><input value={vehiclePlate} onChange={e=>setVehiclePlate(e.target.value)} placeholder="เช่น 7808" /></div>
+          <div className="form-field"><label>ชื่อพนักงานขับ</label><input value={driverName} onChange={e=>setDriverName(e.target.value)} /></div>
           <div className="form-field full"><label>เหตุผล / หมายเหตุ</label><textarea rows="2" value={note} onChange={e=>setNote(e.target.value)} placeholder="เช่น ย้ายตามแผนงาน, ส่งมอบให้โครงการปลายทาง..."></textarea></div>
         </div>
 
@@ -9636,66 +9660,82 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
 const DO_LOGO_SVG = `<img src="${window.PNM_LOGO_DATAURL}" alt="โลโก้ บริษัท พานามณี จำกัด" style="display:block;width:31mm;height:auto">`;
 
 window.buildDeliveryOrderHtml = function(doc){
+  // รูปแบบตามฟอร์มกระดาษ "ใบ DO ส่งของ" ของบริษัท
   const esc = s => String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const fmt = v => { const d=new Date(v); return v && !isNaN(d) ? d.toLocaleDateString("th-TH",{day:"numeric",month:"long",year:"numeric"}) : (v||""); };
   const items = (doc.items||[]).map((x,i)=>({...x,no:i+1}));
   const rows = items.slice();
-  while(rows.length < 18) rows.push({no:rows.length+1});
-  const trs = rows.map(it=>`<tr>
+  while(rows.length < 18) rows.push({no:"",__blank:true});
+  const trs = rows.map(it=>{
+    const sub = it.__blank ? "" : [[it.brand,it.model].filter(Boolean).join(" "), it.serial?("S/N "+it.serial):""].filter(Boolean).join(" · ");
+    return `<tr>
     <td>${it.no}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.assetCode||"")}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.name||"")}</td>
-    <td style="text-align:left;padding-left:6px">${esc([it.brand,it.model].filter(Boolean).join(" "))}</td>
-    <td style="text-align:left;padding-left:6px">${esc(it.serial||"")}</td>
-    <td>${it.quantity!=null?esc(it.quantity):""}</td>
+    <td style="text-align:left;padding-left:6px">${esc(it.name||"")}${sub?`<span style="color:#444;font-size:11px"> (${esc(sub)})</span>`:""}</td>
+    <td>${esc(it.assetCode||"")}</td>
     <td>${esc(it.unit||"")}</td>
-    <td style="text-align:left;padding-left:6px">${esc((it.from||"") + (it.fromSubSite?" · "+it.fromSubSite:""))}</td>
-  </tr>`).join("");
-  const totalQty = items.reduce((s,x)=>s+(Number(x.quantity)||0),0);
+    <td>${it.__blank||it.quantity==null?"":esc(Number(it.quantity).toLocaleString("th-TH"))}</td>
+    <td style="text-align:left;padding-left:4px;font-size:11px">${esc(it.sendNote||"")}</td>
+    <td>${it.receivedQty!=null&&it.receivedQty!==""?esc(it.receivedQty):""}</td>
+    <td style="text-align:left;padding-left:4px;font-size:11px">${esc(it.receiveNote||"")}</td>
+  </tr>`; }).join("");
+  const line = (v,minW) => `<span style="flex:1;${minW?`min-width:${minW};`:""}border-bottom:1px dotted #000;padding:0 3mm;text-align:center;font-size:18px;line-height:1.25">${v?esc(v):"&nbsp;"}</span>`;
+  const field = (label,v,minW) => `<div style="display:flex;align-items:flex-end;gap:2mm;flex:1"><span style="font-weight:700;font-size:15px;white-space:nowrap">${label}</span>${line(v,minW)}</div>`;
+  // ช่องลงนาม: ลายเซ็น (ถ้ามีในระบบ) / (ชื่อตัวบรรจง) / วันที่...เวลา...
+  const sigCell = (title, name, sigId, date) => `<td style="width:25%;border:1px solid #000;vertical-align:top;padding:1.5mm 2mm 1mm;text-align:center">
+      <div style="font-size:14px">${title}</div>
+      <div style="height:10mm;border-bottom:1px solid #000;margin:0 4mm;display:flex;align-items:flex-end;justify-content:center">${sigId?window.__SIG.img(sigId,"display:block;max-height:10mm;max-width:90%"):""}</div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:1mm"><span>(</span><span style="flex:1;text-align:center">${esc(name||"")}</span><span>)</span></div>
+      <div style="font-size:12px;text-align:left;margin-top:1mm;white-space:nowrap">วันที่${date?`<span style="border-bottom:1px dotted #000;padding:0 1.5mm">${esc(date)}</span>`:"................"}เวลา.............</div>
+    </td>`;
+  const sigBlock = (heading, cells) => `<tr><td colspan="4" style="border:1px solid #000;text-align:center;font-weight:700;font-size:14px;padding:.6mm 0">${heading}</td></tr><tr>${cells}</tr>`;
+  const dateTxt = (()=>{ const d=new Date(doc.docDate||doc.when); return (doc.docDate||doc.when)&&!isNaN(d) ? d.toLocaleDateString("th-TH",{day:"numeric",month:"numeric",year:"2-digit"}) : ""; })();
   const cancelStamp = doc.cancelled ? `
-    <div style="position:absolute;top:95mm;left:50%;transform:translateX(-50%) rotate(-22deg);border:6px solid #DC2626;color:#DC2626;padding:6mm 18mm;font-size:52px;font-weight:700;letter-spacing:6px;border-radius:6mm;opacity:.32;white-space:nowrap;pointer-events:none">ยกเลิก</div>
-    <div style="position:absolute;top:8mm;right:10mm;border:2px solid #DC2626;color:#DC2626;padding:2mm 5mm;font-size:15px;border-radius:2mm;text-align:right;line-height:1.4">
+    <div style="position:absolute;top:110mm;left:50%;transform:translateX(-50%) rotate(-22deg);border:6px solid #DC2626;color:#DC2626;padding:6mm 18mm;font-size:52px;font-weight:700;letter-spacing:6px;border-radius:6mm;opacity:.32;white-space:nowrap;pointer-events:none">ยกเลิก</div>
+    <div style="position:absolute;top:8mm;right:10mm;border:2px solid #DC2626;color:#DC2626;padding:2mm 5mm;font-size:15px;border-radius:2mm;text-align:right;line-height:1.4;background:#fff">
       <div style="font-weight:700">เอกสารถูกยกเลิก</div>
       <div style="font-size:12px">${fmt(doc.cancelledAt)}${doc.cancelledBy?" · "+esc(doc.cancelledBy):""}</div>
       ${doc.cancelReason?`<div style="font-size:12px">เหตุผล: ${esc(doc.cancelReason)}</div>`:""}
     </div>` : "";
-  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:16mm 10mm 12mm;background:#fff;box-sizing:border-box">${cancelStamp}
-    <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:6mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:23px;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{background:#F3A26E;font-size:12px;font-weight:400;white-space:nowrap}</style>
-    <div style="display:grid;grid-template-columns:38mm 1fr 40mm;gap:5mm;align-items:start;margin-bottom:4mm;position:relative;min-height:32mm">
-      <div>${DO_LOGO_SVG}</div>
-      <div style="position:absolute;left:50%;top:2mm;transform:translateX(-50%);width:110mm;text-align:center">
-        <div style="font-size:25px">บริษัท พานามณี จำกัด</div>
-        <div style="font-size:24px;margin-top:1mm">ใบส่งของ / Delivery Order</div>
-      </div><div></div>
+  const fromTxt = doc.fromProjectLabel || [doc.fromProject, doc.fromSubSite].filter(Boolean).join(" · ");
+  const toTxt = [doc.toProject, doc.toSubSite].filter(Boolean).join(" · ");
+  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
+    <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:4mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:6.6mm;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{font-size:13px;font-weight:400;white-space:nowrap;height:5.5mm}table.sg{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:-1px}</style>
+    <div style="position:relative;height:30mm;margin-bottom:2mm">
+      <div style="position:absolute;left:4mm;top:0">${DO_LOGO_SVG}</div>
+      <div style="position:absolute;left:50%;top:3mm;transform:translateX(-50%);width:100mm;text-align:center">
+        <div style="font-size:22px;font-weight:700">บริษัท พานามณี จำกัด</div>
+        <div style="font-size:21px;font-weight:700;margin-top:3mm">ใบ DO ส่งของ</div>
+      </div>
+      <div style="position:absolute;right:0;top:${doc.cancelled?"24mm":"2mm"};font-size:15px;text-align:right">เลขที่ <span style="border-bottom:1px dotted #000;padding:0 2mm;font-size:16px">${esc(doc.docNo||"")}</span></div>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;font-size:18px;margin-bottom:4mm">
-      <div>เลขที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:52mm;text-align:center">${esc(doc.docNo||"")}</span></div>
-      <div>วันที่ <span style="border-bottom:1px dotted #000;display:inline-block;min-width:40mm;text-align:center">${fmt(doc.docDate||doc.when)}</span></div>
-    </div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>จากโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc(doc.fromProjectLabel||"")}</span></div>
-    <div style="display:flex;align-items:flex-end;gap:2mm;font-size:18px;margin-bottom:2mm"><span>ส่งไปยังโครงการ</span><span style="border-bottom:1px dotted #000;flex:1;padding-left:4mm">${esc((doc.toProject||"") + (doc.toSubSite?" · "+doc.toSubSite:""))}</span></div>
+    <div style="display:flex;gap:6mm;margin-bottom:1.5mm;width:55%">${field("วันที่", dateTxt)}</div>
+    <div style="display:flex;gap:6mm;margin-bottom:1.5mm">${field("ต้นทาง", fromTxt)}${field("ปลายทาง", toTxt)}</div>
+    <div style="display:flex;gap:4mm;margin-bottom:1mm">${field("ประเภทรถขนส่ง", doc.vehicleType)}${field("ทะเบียน", doc.vehiclePlate)}${field("ชื่อพนักงานขับ", doc.driverName)}</div>
     <table class="do">
-      <thead><tr>
-        <th style="width:10mm">ลำดับ</th><th style="width:26mm">รหัสทรัพย์สิน</th><th>รายการ</th>
-        <th style="width:30mm">ยี่ห้อ / รุ่น</th><th style="width:26mm">Serial No.</th>
-        <th style="width:15mm">จำนวน</th><th style="width:16mm">หน่วย</th><th style="width:32mm">จากโครงการ</th>
-      </tr></thead>
+      <colgroup><col style="width:11mm"><col><col style="width:22mm"><col style="width:15mm"><col style="width:15mm"><col style="width:24mm"><col style="width:15mm"><col style="width:24mm"></colgroup>
+      <thead>
+        <tr><th rowspan="2">ลำดับ</th><th rowspan="2">รายการ</th><th rowspan="2">รหัส</th><th rowspan="2">หน่วย</th><th colspan="2">ผู้ส่ง</th><th colspan="2">ผู้รับ</th></tr>
+        <tr><th>จำนวน</th><th>หมายเหตุ</th><th>จำนวน</th><th>หมายเหตุ</th></tr>
+      </thead>
       <tbody>${trs}</tbody>
-      <tfoot><tr><td colspan="5" style="text-align:right;padding-right:6px">รวม</td><td>${totalQty.toLocaleString("th-TH")}</td><td colspan="2"></td></tr></tfoot>
     </table>
-    ${doc.note?`<div style="font-size:16px;margin-top:3mm">หมายเหตุ: ${esc(doc.note)}</div>`:""}
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12mm;margin-top:10mm;font-size:17px;text-align:center">
-      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.senderId,"display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้ส่งมอบ</div><div style="font-size:14px;color:#333">${esc(doc.sender||"")}</div></div>
-      <div><div style="height:12mm;border-bottom:1px dotted #000;display:flex;align-items:flex-end;justify-content:center">${window.__SIG.img(doc.receiverId,"display:block;max-height:12mm;max-width:90%")}</div><div style="margin-top:2mm">ผู้รับมอบ</div><div style="font-size:14px;color:#333">${esc(doc.receiver||"")}</div></div>
-      <div><div style="height:12mm;border-bottom:1px dotted #000"></div><div style="margin-top:2mm">ผู้อนุมัติ</div><div style="font-size:14px;color:#333">&nbsp;</div></div>
-    </div>
+    ${doc.note?`<div style="font-size:15px;border:1px solid #000;border-top:none;padding:1mm 2mm">หมายเหตุ: ${esc(doc.note)}</div>`:""}
+    <table class="sg">
+      ${sigBlock("ต้นทาง (ผู้ส่ง) กรุณาลงนามตัวบรรจง",
+        sigCell("ผู้จัดเตรียม", doc.sender, doc.senderId) + sigCell("ผู้อนุมัติ", doc.approver, doc.approverId) +
+        sigCell("พนักงานขับรถ", doc.driverName, "") + sigCell("หน่วยงาน รปภ.", "", ""))}
+      ${sigBlock("ปลายทาง (ผู้รับ) กรุณาลงนามตัวบรรจง",
+        sigCell("ผู้จัดเตรียม", doc.receiver, doc.receiverId) + sigCell("ผู้อนุมัติ", "", "") +
+        sigCell("พนักงานขับรถ", doc.driverName, "") + sigCell("หน่วยงาน รปภ.", "", ""))}
+    </table>
   </div>`;
 };
+
 
 window.downloadDeliveryOrderPdf = async function(doc){
   try{
     Swal.fire({title:"กำลังเตรียมไฟล์ PDF...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
-    await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId])]);
+    await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId, doc.approverId])]);
     Swal.close();
   }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return; }
   const name = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-")+".pdf";
@@ -9722,7 +9762,8 @@ function DeliveryOrders({user}){
   const saveEdit = async (doc, patch) => {
     patch = { ...patch,
       senderId: window.__SIG.resolve(patch.sender, doc.sender, doc.senderId, user),
-      receiverId: window.__SIG.resolve(patch.receiver, doc.receiver, doc.receiverId, user) };
+      receiverId: window.__SIG.resolve(patch.receiver, doc.receiver, doc.receiverId, user),
+      approverId: patch.approver ? window.__SIG.resolve(patch.approver, doc.approver, doc.approverId, user) : "" };
     const res = await window.api("updateDeliveryOrder",{key:doc.key, patch, by:user.name, adjustStock:true});
     const upd = rows.map(x=>x.key===doc.key?{...x,...patch}:x);
     window.__DATA.deliveryOrders = upd; setRows(upd);
@@ -9960,6 +10001,10 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
     toSubSite: doc.toSubSite||"",
     sender: doc.sender||"",
     receiver: doc.receiver||"",
+    approver: doc.approver||"",
+    vehicleType: doc.vehicleType||"",
+    vehiclePlate: doc.vehiclePlate||"",
+    driverName: doc.driverName||"",
     note: doc.note||"",
   });
   const [items,setItems] = React.useState(()=>(doc.items||[]).map(it=>({...it})));
@@ -9977,6 +10022,10 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
       toSubSite: f.toSubSite,
       sender: f.sender,
       receiver: f.receiver,
+      approver: f.approver,
+      vehicleType: f.vehicleType,
+      vehiclePlate: f.vehiclePlate,
+      driverName: f.driverName,
       note: f.note,
       items: items.map(it=>({...it, name: it.name, quantity: Number(it.quantity)||0, unit: it.unit||""})),
     };
@@ -10021,8 +10070,12 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
               <div className="hint">แก้เฉพาะข้อความบนเอกสาร ไม่ย้ายสต๊อกทรัพย์สิน</div>
             </div>
           ) : null; })()}
-        <div className="form-field"><label>ผู้ส่งมอบ</label><input value={f.sender} onChange={e=>set("sender",e.target.value)} /></div>
-        <div className="form-field"><label>ผู้รับมอบ</label><input value={f.receiver} onChange={e=>set("receiver",e.target.value)} /></div>
+        <div className="form-field"><label>ผู้จัดเตรียม (ต้นทาง / ผู้ส่ง)</label><input value={f.sender} onChange={e=>set("sender",e.target.value)} /></div>
+        <div className="form-field"><label>ผู้อนุมัติ (ต้นทาง)</label><input value={f.approver} onChange={e=>set("approver",e.target.value)} /></div>
+        <div className="form-field"><label>ผู้จัดเตรียม (ปลายทาง / ผู้รับ)</label><input value={f.receiver} onChange={e=>set("receiver",e.target.value)} /></div>
+        <div className="form-field"><label>ประเภทรถขนส่ง</label><input value={f.vehicleType} onChange={e=>set("vehicleType",e.target.value)} placeholder="เช่น กระบะ, 6 ล้อ" /></div>
+        <div className="form-field"><label>ทะเบียนรถ</label><input value={f.vehiclePlate} onChange={e=>set("vehiclePlate",e.target.value)} /></div>
+        <div className="form-field"><label>ชื่อพนักงานขับ</label><input value={f.driverName} onChange={e=>set("driverName",e.target.value)} /></div>
         <div className="form-field full"><label>หมายเหตุ</label><textarea className="inp" rows={2} value={f.note} onChange={e=>set("note",e.target.value)} /></div>
       </div>
       <div style={{marginTop:16,fontWeight:500,fontSize:14,display:"flex",alignItems:"center",gap:8}}>
