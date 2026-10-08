@@ -8886,6 +8886,7 @@ function AssetRegistry({user}){
   const [history,setHistory] = React.useState(null);   // ทรัพย์สินที่กำลังดูประวัติการย้าย
   const [src,setSrc] = React.useState("all");          // all | asset | machine — แหล่งข้อมูลที่แสดง
   const [machineView,setMachineView] = React.useState("");   // รหัสเครื่องจักรที่กำลังดูข้อมูล
+  const [moveOpen,setMoveOpen] = React.useState(null);        // เปิดหน้าต่างย้าย/ออกใบส่งของ (null = ปิด, {} = ว่าง, {preset})
 
   // คำขอแก้ไขทะเบียนทรัพย์สินที่ตัวเองส่งไว้ — ขึ้นป้าย "รออนุมัติ" และโหลดค่าใหม่หลังอนุมัติ
   const { mine: myReqs } = window.useDeleteRequests(user);
@@ -9040,6 +9041,9 @@ function AssetRegistry({user}){
         {r.__src==="machine" ? (
           <button className="ia" title="ดูข้อมูลเครื่องจักร" onClick={()=>setMachineView(r.machineCode)} style={{color:"#6D28D9"}}><i className="fa-solid fa-eye"></i></button>
         ) : (<>
+          <button className="ia" title="ย้ายโครงการ (ออกใบส่งของ)" style={{color:"#7C3AED"}}
+            onClick={()=>setMoveOpen({preset:{fromProject:r.site||"", fromSubSite:"", pick: (Number(r.quantity)||0)>0 ? {[r.key]:Number(r.quantity)||0} : {}}})}>
+            <i className="fa-solid fa-right-left"></i></button>
           <button className="ia" title="แก้ไข" onClick={()=>setEdit({mode:"edit",data:{...r}})}><i className="fa-solid fa-pen"></i></button>
           <button className="ia danger" title="ลบ" onClick={()=>remove(r)}><i className="fa-solid fa-trash"></i></button>
         </>)}
@@ -9142,6 +9146,7 @@ function AssetRegistry({user}){
         <button className="btn btn-ghost" title="โหลดข้อมูลล่าสุดจากฐานข้อมูล (เช่น หลังออก/ยกเลิกใบส่งของ)" onClick={()=>{ window.__DATA.assetRegistry=null; setRows(null); }}>
           <i className="fa-solid fa-rotate"></i> รีเฟรช
         </button>
+        {canEdit && <button className="btn btn-ghost" style={{color:"#7C3AED",borderColor:"#DDD6FE"}} onClick={()=>setMoveOpen({preset:{fromProject:site||"",fromSubSite:site?(subSite||""):"",pick:{}}})} title="ย้ายทรัพย์สินระหว่างโครงการ พร้อมออกใบส่งของ (DO)"><i className="fa-solid fa-right-left"></i> ย้ายทรัพย์สิน</button>}
         {canEdit && <button className="btn btn-primary" onClick={()=>setEdit({mode:"add",data:{...blank}})}><i className="fa-solid fa-plus"></i> เพิ่มทรัพย์สิน</button>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"0 16px 12px"}}>
@@ -9252,6 +9257,7 @@ function AssetRegistry({user}){
     {edit && <AssetForm mode={edit.mode} initial={edit.data} sites={sites} owners={owners} user={user} onClose={()=>setEdit(null)} onSave={save}/>}
     {history && <AssetHistoryModal asset={history} onClose={()=>setHistory(null)}/>}
     {machineView && <window.MachineQuickView code={machineView} onClose={()=>setMachineView("")}/>}
+    {moveOpen && <TransferAssetsModal user={user} preset={moveOpen.preset} onClose={()=>setMoveOpen(null)} onSaved={()=>setMoveOpen(null)}/>}
     </>
   );
 }
@@ -9287,7 +9293,8 @@ function AssetHistoryModal({asset,onClose}){
 
 // เลือกโครงการปลายทาง + ข้อมูลใบส่งของ
 // ย้ายโครงการ + ออกใบส่งของ — เลือกทรัพย์สินได้ในตัว (เรียกจากหน้าใบส่งของ)
-function TransferAssetsModal({user,onClose,onSaved}){
+// preset (ไม่บังคับ) = เปิดจากหน้าทะเบียนทรัพย์สิน: {fromProject, fromSubSite, pick:{assetKey: จำนวน}} — เลือกต้นทาง/รายการไว้ให้ก่อน
+function TransferAssetsModal({user,onClose,onSaved,preset}){
   const projects = React.useMemo(()=>window.visibleProjects(user),[user]);
   const [assets,setAssets] = React.useState(()=>window.__DATA.assetRegistry || null);
   const [loadErr,setLoadErr] = React.useState("");
@@ -9299,10 +9306,10 @@ function TransferAssetsModal({user,onClose,onSaved}){
   const [note,setNote] = React.useState("");
   const [busy,setBusy] = React.useState(false);
   const [q,setQ] = React.useState("");
-  const [fromProject,setFromProject] = React.useState("");   // โครงการต้นทาง — เลือกก่อน แล้วค่อยเลือกทรัพย์สินในโครงการนั้น
-  const [fromSubSite,setFromSubSite] = React.useState("");   // ไซต์งานย่อยต้นทาง (ไม่เลือก = ทั้งโครงการ)
+  const [fromProject,setFromProject] = React.useState((preset&&preset.fromProject)||"");   // โครงการต้นทาง — เลือกก่อน แล้วค่อยเลือกทรัพย์สินในโครงการนั้น
+  const [fromSubSite,setFromSubSite] = React.useState((preset&&preset.fromSubSite)||"");   // ไซต์งานย่อยต้นทาง (ไม่เลือก = ทั้งโครงการ)
   const [toSubSite,setToSubSite] = React.useState("");       // ไซต์งานย่อยปลายทาง
-  const [qty,setQty] = React.useState({});   // {assetKey: จำนวนที่จะย้าย} — มีคีย์ = ถูกเลือก
+  const [qty,setQty] = React.useState(()=>({...((preset&&preset.pick)||{})}));   // {assetKey: จำนวนที่จะย้าย} — มีคีย์ = ถูกเลือก
 
   // จำนวนคงเหลือต้องเป็นค่าล่าสุดเสมอ (อีกเครื่องอาจย้ายของชิ้นเดียวกันอยู่)
   React.useEffect(()=>window.__ASSETSYNC.subscribe(kind=>{ if(kind==="assets" && window.__ASSETSYNC.assets) setAssets(window.__ASSETSYNC.assets); }),[]);

@@ -19737,6 +19737,7 @@ function AssetRegistry({
   const [history, setHistory] = React.useState(null);
   const [src, setSrc] = React.useState("all");
   const [machineView, setMachineView] = React.useState("");
+  const [moveOpen, setMoveOpen] = React.useState(null);
   const {
     mine: myReqs
   } = window.useDeleteRequests(user);
@@ -20013,6 +20014,23 @@ function AssetRegistry({
     className: "fa-solid fa-eye"
   })) : React.createElement(React.Fragment, null, React.createElement("button", {
     className: "ia",
+    title: "\u0E22\u0E49\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E2D\u0E2D\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07)",
+    style: {
+      color: "#7C3AED"
+    },
+    onClick: () => setMoveOpen({
+      preset: {
+        fromProject: r.site || "",
+        fromSubSite: "",
+        pick: (Number(r.quantity) || 0) > 0 ? {
+          [r.key]: Number(r.quantity) || 0
+        } : {}
+      }
+    })
+  }, React.createElement("i", {
+    className: "fa-solid fa-right-left"
+  })), React.createElement("button", {
+    className: "ia",
     title: "\u0E41\u0E01\u0E49\u0E44\u0E02",
     onClick: () => setEdit({
       mode: "edit",
@@ -20241,6 +20259,22 @@ function AssetRegistry({
   }, React.createElement("i", {
     className: "fa-solid fa-rotate"
   }), " \u0E23\u0E35\u0E40\u0E1F\u0E23\u0E0A"), canEdit && React.createElement("button", {
+    className: "btn btn-ghost",
+    style: {
+      color: "#7C3AED",
+      borderColor: "#DDD6FE"
+    },
+    onClick: () => setMoveOpen({
+      preset: {
+        fromProject: site || "",
+        fromSubSite: site ? subSite || "" : "",
+        pick: {}
+      }
+    }),
+    title: "\u0E22\u0E49\u0E32\u0E22\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E2D\u0E2D\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07 (DO)"
+  }, React.createElement("i", {
+    className: "fa-solid fa-right-left"
+  }), " \u0E22\u0E49\u0E32\u0E22\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19"), canEdit && React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => setEdit({
       mode: "add",
@@ -20479,6 +20513,11 @@ function AssetRegistry({
   }), machineView && React.createElement(window.MachineQuickView, {
     code: machineView,
     onClose: () => setMachineView("")
+  }), moveOpen && React.createElement(TransferAssetsModal, {
+    user: user,
+    preset: moveOpen.preset,
+    onClose: () => setMoveOpen(null),
+    onSaved: () => setMoveOpen(null)
   }));
 }
 function AssetHistoryModal({
@@ -20555,7 +20594,8 @@ function AssetHistoryModal({
 function TransferAssetsModal({
   user,
   onClose,
-  onSaved
+  onSaved,
+  preset
 }) {
   const projects = React.useMemo(() => window.visibleProjects(user), [user]);
   const [assets, setAssets] = React.useState(() => window.__DATA.assetRegistry || null);
@@ -20568,10 +20608,12 @@ function TransferAssetsModal({
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [q, setQ] = React.useState("");
-  const [fromProject, setFromProject] = React.useState("");
-  const [fromSubSite, setFromSubSite] = React.useState("");
+  const [fromProject, setFromProject] = React.useState(preset && preset.fromProject || "");
+  const [fromSubSite, setFromSubSite] = React.useState(preset && preset.fromSubSite || "");
   const [toSubSite, setToSubSite] = React.useState("");
-  const [qty, setQty] = React.useState({});
+  const [qty, setQty] = React.useState(() => ({
+    ...(preset && preset.pick || {})
+  }));
   React.useEffect(() => window.__ASSETSYNC.subscribe(kind => {
     if (kind === "assets" && window.__ASSETSYNC.assets) setAssets(window.__ASSETSYNC.assets);
   }), []);
@@ -22196,7 +22238,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10049) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10056) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22669,7 +22711,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10384) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10391) ---- */
 function Permissions({
   user
 }) {
@@ -23289,7 +23331,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10737) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10744) ---- */
 function WorkspacePicker({
   user,
   onContinue,
