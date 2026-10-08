@@ -26,6 +26,7 @@ if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const _db = firebase.database();
 const _assetApp = firebase.apps.find(a => a.name === 'assets') || firebase.initializeApp(assetFirebaseConfig, 'assets');
 const _assetDb = _assetApp.database();
+window.__assetDb = _assetDb;
 const CONFIG_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyOLdoS83MVCh5ThGUf7WbR3IrNU2dfKL2P-dcde4PjJ8o6-tsb7ZItHdo8TmVBn_w6/exec';
 async function getAppsScriptUrl() {
   const current = window.APPS_SCRIPT_URL || localStorage.getItem('APPS_SCRIPT_URL') || CONFIG_APPS_SCRIPT_URL;
@@ -277,6 +278,8 @@ const _DELETE_OPS = {
     label: 'ใบส่งของ (DO)',
     key: 'key',
     exec: async p => {
+      const d = (await _assetDb.ref('/deliveryOrders/' + p.key).get()).val();
+      if (d && !d.cancelled) throw new Error('ใบส่งของนี้ยังมีผลกับทะเบียนทรัพย์สินอยู่ — กรุณา "ยกเลิก" (เลือกคืนของกลับต้นทาง) ก่อน แล้วจึงลบ');
       await _assetDb.ref('/deliveryOrders/' + p.key).remove();
     }
   },
@@ -1099,6 +1102,33 @@ async function api(action, payload = {}) {
         delete clean.key;
         const ref = key ? _assetDb.ref('/assets/' + key) : _assetDb.ref('/assets').push();
         const id = key || ref.key;
+        if (key) {
+          const cur = (await ref.get()).val();
+          if (!cur) throw new Error('ไม่พบทรัพย์สินนี้ในทะเบียนแล้ว (อาจถูกลบหรือถูกรวมจากการยกเลิกใบส่งของ)');
+          const stockChanged = ['site', 'subSite', 'quantity'].some(f => String(cur[f] ?? '') !== String(clean[f] ?? ''));
+          if (String(clean.updatedAt || '') !== String(cur.updatedAt || '') && stockChanged) {
+            throw new Error(`ทรัพย์สินนี้ถูกปรับโดยรายการอื่นระหว่างที่แก้ไขอยู่ (ตอนนี้อยู่ที่ "${cur.site || '-'}" จำนวน ${Number(cur.quantity) || 0}) — กรุณาปิดฟอร์มแล้วเปิดแก้ไขใหม่`);
+          }
+          const hist = Array.isArray(cur.transferHistory) ? cur.transferHistory.slice() : [];
+          if (String(cur.site || '') !== String(clean.site || '') || String(cur.subSite || '') !== String(clean.subSite || '')) {
+            hist.push({
+              from: cur.site || '',
+              to: clean.site || '',
+              fromSubSite: cur.subSite || '',
+              toSubSite: clean.subSite || '',
+              when: new Date().toISOString(),
+              by: payload.by || '',
+              qty: Number(clean.quantity) || 0,
+              direct: true,
+              note: 'แก้ไขโครงการที่ทะเบียนทรัพย์สินโดยตรง (ไม่มีใบส่งของ)'
+            });
+          }
+          clean.transferHistory = hist;
+          if (cur.splitFrom) clean.splitFrom = cur.splitFrom;else delete clean.splitFrom;
+        } else {
+          delete clean.transferHistory;
+          delete clean.splitFrom;
+        }
         clean.id = clean.id || clean.assetCode || id;
         clean.quantity = Number(clean.quantity) || 0;
         clean.price = clean.price === '' || clean.price == null || isNaN(Number(clean.price)) ? '' : Math.round(Number(clean.price) * 100) / 100;
@@ -1705,7 +1735,7 @@ async function api(action, payload = {}) {
 }
 window.api = api;
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1738) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1765) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2500,7 +2530,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2180) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2207) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2655,7 +2685,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2310) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2337) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2837,10 +2867,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2455) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2482) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2458) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2485) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3018,7 +3048,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2585) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2612) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3040,6 +3070,100 @@ window.useDeleteRequests = function (user) {
     ready: window.__DELREQ.ready,
     _tick: tick
   };
+};
+window.__ASSETSYNC = {
+  assets: null,
+  orders: null,
+  live: false,
+  _subs: new Set(),
+  _refs: null,
+  subscribe(fn) {
+    this._subs.add(fn);
+    this.start();
+    if (this.assets) {
+      try {
+        fn('assets');
+      } catch (e) {}
+    }
+    if (this.orders) {
+      try {
+        fn('orders');
+      } catch (e) {}
+    }
+    return () => this._subs.delete(fn);
+  },
+  _emit(kind) {
+    this._subs.forEach(fn => {
+      try {
+        fn(kind);
+      } catch (e) {}
+    });
+  },
+  start() {
+    if (this._refs) return;
+    const db = window.__assetDb;
+    if (!db) return;
+    const aRef = db.ref('/assets'),
+      dRef = db.ref('/deliveryOrders');
+    this._refs = [aRef, dRef];
+    const fail = what => err => {
+      this.live = false;
+      console.warn('[assetSync] ฟัง' + what + 'ไม่สำเร็จ:', err && err.message);
+      this._emit('error');
+    };
+    aRef.on('value', snap => {
+      const list = Object.entries(snap.val() || {}).map(([key, v]) => ({
+        key,
+        ...(v || {})
+      })).sort((a, b) => String(a.assetCode || a.id || "").localeCompare(String(b.assetCode || b.id || ""), "th"));
+      this.assets = list;
+      this.live = true;
+      window.__DATA.assetRegistry = list;
+      this._emit('assets');
+    }, fail('ทะเบียนทรัพย์สิน'));
+    dRef.on('value', snap => {
+      const list = Object.entries(snap.val() || {}).map(([key, v]) => ({
+        key,
+        ...(v || {})
+      })).sort((a, b) => String(b.when || "").localeCompare(String(a.when || "")));
+      this.orders = list;
+      window.__DATA.deliveryOrders = list;
+      this._emit('orders');
+    }, fail('ใบส่งของ'));
+  },
+  stop() {
+    (this._refs || []).forEach(r => {
+      try {
+        r.off();
+      } catch (e) {}
+    });
+    this._refs = null;
+    this.assets = null;
+    this.orders = null;
+    this.live = false;
+  }
+};
+window.AssetSyncBadge = function () {
+  const live = window.__ASSETSYNC.live;
+  return React.createElement("span", {
+    title: live ? "ข้อมูลทะเบียนทรัพย์สินกับใบส่งของซิงค์กันอัตโนมัติ — มีการเปลี่ยนแปลงจากเครื่องอื่นจะอัปเดตทันที" : "กำลังเชื่อมต่อการซิงค์...",
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 5,
+      fontSize: 12,
+      color: live ? "#047857" : "var(--muted)",
+      whiteSpace: "nowrap"
+    }
+  }, React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: 999,
+      background: live ? "#10B981" : "#CBD5E1",
+      boxShadow: live ? "0 0 0 3px rgba(16,185,129,.18)" : "none"
+    }
+  }), live ? "ซิงค์อัตโนมัติ" : "กำลังเชื่อมต่อ...");
 };
 window.applyDeleteLocally = function (action, payload = {}) {
   const D = window.__DATA;
@@ -3641,7 +3765,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 2961) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3038) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4131,7 +4255,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3197) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3274) ---- */
 const {
   useState,
   useEffect,
@@ -4380,7 +4504,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3300) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3377) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4608,7 +4732,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3483) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3560) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -5788,7 +5912,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 3913) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 3990) ---- */
 function Projects({
   user
 }) {
@@ -6425,7 +6549,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4166) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4243) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6822,7 +6946,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4412) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4489) ---- */
 function Dashboard({
   user,
   goTo
@@ -8206,7 +8330,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 4989) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5066) ---- */
 function Repairs({
   user
 }) {
@@ -10748,7 +10872,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 5939) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6016) ---- */
 function Users({
   user
 }) {
@@ -11286,7 +11410,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6115) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6192) ---- */
 function Categories({
   user
 }) {
@@ -11549,7 +11673,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6203) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6280) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -14703,7 +14827,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7201) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7278) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18379,7 +18503,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8401) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8478) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19478,7 +19602,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8708) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8785) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -19618,6 +19742,14 @@ function AssetRegistry({
   React.useEffect(() => {
     if (Array.isArray(window.__DATA.assetRegistry)) setRows(window.__DATA.assetRegistry.slice());
   }, [decidedCount]);
+  const [, setSyncTick] = React.useState(0);
+  React.useEffect(() => window.__ASSETSYNC.subscribe(kind => {
+    if (kind === "assets" && window.__ASSETSYNC.assets) {
+      setErr("");
+      setRows(window.__ASSETSYNC.assets);
+    }
+    setSyncTick(t => t + 1);
+  }), []);
   React.useEffect(() => {
     if (rows) return;
     let alive = true;
@@ -19909,7 +20041,8 @@ function AssetRegistry({
         action: "saveAssetRegistry",
         payload: {
           key: form.key,
-          asset: form
+          asset: form,
+          by: user.name
         },
         entityLabel: "ทะเบียนทรัพย์สิน",
         targetName: `${form.assetCode || form.id || ""} ${form.name || ""}`.trim(),
@@ -19922,7 +20055,8 @@ function AssetRegistry({
     }
     const saved = await window.api("saveAssetRegistry", {
       key: form.key || "",
-      asset: form
+      asset: form,
+      by: user.name
     });
     const base = rows || [];
     commit(base.some(x => x.key === saved.key) ? base.map(x => x.key === saved.key ? saved : x) : base.concat([saved]));
@@ -20081,7 +20215,11 @@ function AssetRegistry({
       fontSize: 13,
       alignSelf: "center"
     }
-  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("button", {
+  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 \u0E23\u0E27\u0E21 ", totalQty.toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22", React.createElement("span", {
+    style: {
+      marginLeft: 10
+    }
+  }, React.createElement(window.AssetSyncBadge, null))), React.createElement("button", {
     className: "btn btn-ghost",
     onClick: () => exportAssetsExcel(filtered),
     title: "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E35\u0E48\u0E41\u0E2A\u0E14\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E44\u0E1F\u0E25\u0E4C Excel"
@@ -20431,6 +20569,9 @@ function TransferAssetsModal({
   const [fromSubSite, setFromSubSite] = React.useState("");
   const [toSubSite, setToSubSite] = React.useState("");
   const [qty, setQty] = React.useState({});
+  React.useEffect(() => window.__ASSETSYNC.subscribe(kind => {
+    if (kind === "assets" && window.__ASSETSYNC.assets) setAssets(window.__ASSETSYNC.assets);
+  }), []);
   React.useEffect(() => {
     if (assets) return;
     let alive = true;
@@ -20507,7 +20648,7 @@ function TransferAssetsModal({
       return [a.assetCode, a.name, a.brand, a.model, a.serial, a.site, a.subSite].some(v => String(v || "").toLowerCase().includes(kw));
     });
   }, [assets, q, fromProject, fromSubSite]);
-  const picked = React.useMemo(() => (assets || []).filter(a => qty[a.key] !== undefined), [assets, qty]);
+  const picked = React.useMemo(() => (assets || []).filter(a => qty[a.key] !== undefined && a.site === fromProject && (!fromSubSite || (a.subSite || "") === fromSubSite)), [assets, qty, fromProject, fromSubSite]);
   const totalMoving = picked.reduce((s, a) => s + (Number(qty[a.key]) || 0), 0);
   const toggle = a => setQty(prev => {
     const n = {
@@ -20968,6 +21109,20 @@ function AssetForm({
       });
       return;
     }
+    if (mode === "edit" && (String(initial.site || "") !== String(f.site || "") || String(initial.subSite || "") !== String(f.subSite || ""))) {
+      const c = await Swal.fire({
+        icon: "question",
+        title: "ย้ายโครงการโดยไม่ออกใบส่งของ?",
+        html: `จาก <b>${String(initial.site || "-").replace(/</g, "&lt;")}</b> → <b>${String(f.site || "-").replace(/</g, "&lt;")}</b><br/><br/>
+          การย้ายของระหว่างโครงการควรทำที่ <b>ใบส่งของ (DO)</b> เพื่อให้มีเอกสารและยกเลิก/คืนของได้<br/>
+          <span style="font-size:12.5px;color:#64748B">ถ้ายืนยัน ระบบจะบันทึกในประวัติการย้ายว่า "แก้ไขโดยตรง ไม่มีใบส่งของ"</span>`,
+        showCancelButton: true,
+        confirmButtonText: "ยืนยันแก้ไขโดยตรง",
+        cancelButtonText: "กลับไปแก้",
+        confirmButtonColor: "#D97706"
+      });
+      if (!c.isConfirmed) return;
+    }
     setBusy(true);
     try {
       await onSave(f);
@@ -21286,6 +21441,14 @@ function DeliveryOrders({
       });
     }
   };
+  const [, setSyncTick] = React.useState(0);
+  React.useEffect(() => window.__ASSETSYNC.subscribe(kind => {
+    if (kind === "orders" && window.__ASSETSYNC.orders) {
+      setErr("");
+      setRows(window.__ASSETSYNC.orders);
+    }
+    setSyncTick(t => t + 1);
+  }), []);
   React.useEffect(() => {
     if (rows) return;
     let alive = true;
@@ -21382,6 +21545,19 @@ function DeliveryOrders({
     }
   };
   const remove = async doc => {
+    if (!doc.cancelled) {
+      const r = await Swal.fire({
+        icon: "info",
+        title: "ต้องยกเลิกใบส่งของก่อน",
+        html: "ใบส่งของนี้ยังมีผลกับทะเบียนทรัพย์สินอยู่ (ของยังอยู่ที่ <b>" + String(doc.toProject || "-").replace(/</g, "&lt;") + "</b>)<br/>ถ้าลบเอกสารทิ้งเลย ทะเบียนจะไม่มีที่มาของการย้าย<br/><br/>กรุณา <b>ยกเลิก</b> ใบนี้ก่อน (เลือกคืนของกลับต้นทางได้) แล้วจึงลบ",
+        showCancelButton: true,
+        confirmButtonText: "ยกเลิกใบส่งของนี้",
+        cancelButtonText: "ปิด",
+        confirmButtonColor: "#D97706"
+      });
+      if (r.isConfirmed) cancel(doc);
+      return;
+    }
     const done = await window.deleteWithApproval({
       user,
       action: "deleteDeliveryOrder",
@@ -21479,7 +21655,11 @@ function DeliveryOrders({
       fontSize: 13,
       alignSelf: "center"
     }
-  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E43\u0E1A"), canEdit && React.createElement("button", {
+  }, filtered.length.toLocaleString("th-TH"), " / ", scoped.length.toLocaleString("th-TH"), " \u0E43\u0E1A"), React.createElement("div", {
+    style: {
+      alignSelf: "center"
+    }
+  }, React.createElement(window.AssetSyncBadge, null)), canEdit && React.createElement("button", {
     className: "btn btn-primary",
     onClick: () => setTransferOpen(true)
   }, React.createElement("i", {
@@ -22013,7 +22193,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 9934) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10044) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22486,7 +22666,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10269) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10379) ---- */
 function Permissions({
   user
 }) {
@@ -23106,7 +23286,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10622) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10732) ---- */
 function WorkspacePicker({
   user,
   onContinue,

@@ -657,6 +657,7 @@ const _db = firebase.database();
 // แยก app instance ชื่อ "assets" ไม่ให้ชนกับ default app ของระบบแจ้งซ่อม
 const _assetApp = firebase.apps.find(a => a.name === 'assets') || firebase.initializeApp(assetFirebaseConfig, 'assets');
 const _assetDb = _assetApp.database();
+window.__assetDb = _assetDb;   // ให้ตัวซิงค์แบบ realtime (ทะเบียนทรัพย์สิน ↔ ใบส่งของ) ใช้ร่วม
 const CONFIG_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyOLdoS83MVCh5ThGUf7WbR3IrNU2dfKL2P-dcde4PjJ8o6-tsb7ZItHdo8TmVBn_w6/exec';
 
 async function getAppsScriptUrl() {
@@ -804,7 +805,12 @@ const _DELETE_OPS = {
   deleteRepair:        { label:'ใบแจ้งซ่อม',          key:'id',  exec: async (p) => { await _db.ref('/repairs/' + p.id).remove(); } },
   deleteWithdrawal:    { label:'รายการเบิกของ',      key:'key', exec: async (p) => { await _db.ref('/withdrawals/' + p.key).remove(); } },
   deleteAssetRegistry: { label:'ทะเบียนทรัพย์สิน',    key:'key', exec: async (p) => { await _assetDb.ref('/assets/' + p.key).remove(); } },
-  deleteDeliveryOrder: { label:'ใบส่งของ (DO)',      key:'key', exec: async (p) => { await _assetDb.ref('/deliveryOrders/' + p.key).remove(); } },
+  deleteDeliveryOrder: { label:'ใบส่งของ (DO)',      key:'key', exec: async (p) => {
+    // ใบที่ยังไม่ยกเลิก = ทรัพย์สินยังถูกย้ายตามใบนี้อยู่ ลบเอกสารทิ้งแล้วทะเบียนจะไม่มีที่มา → ต้องยกเลิก (คืนของ) ก่อน
+    const d = (await _assetDb.ref('/deliveryOrders/' + p.key).get()).val();
+    if (d && !d.cancelled) throw new Error('ใบส่งของนี้ยังมีผลกับทะเบียนทรัพย์สินอยู่ — กรุณา "ยกเลิก" (เลือกคืนของกลับต้นทาง) ก่อน แล้วจึงลบ');
+    await _assetDb.ref('/deliveryOrders/' + p.key).remove();
+  } },
   // ลบรายการในคลัง — ประวัติรับ/เบิกเก็บไว้ตามเดิมเพื่อตรวจย้อนหลัง
   deleteStockItem:     { label:'รายการสต๊อกหน้างาน',  key:'key', exec: async (p) => { await _db.ref('/stockItems/' + p.key).remove(); } },
   // ประวัติการย้ายเก็บเป็น array ในตัวเครื่องจักร — อ่านของจริงตอนลบเสมอ เผื่อมีการย้ายเพิ่มระหว่างรออนุมัติ
@@ -1369,6 +1375,27 @@ async function api(action, payload = {}) {
       // เพิ่มใหม่ = ให้ Firebase ออก key ให้ (รหัสทรัพย์สินมีอักขระที่ใช้เป็น key ไม่ได้)
       const ref = key ? _assetDb.ref('/assets/' + key) : _assetDb.ref('/assets').push();
       const id = key || ref.key;
+      if (key) {
+        // ซิงค์กับใบส่งของ (DO): ข้อมูลตำแหน่ง/จำนวนถูกเปลี่ยนโดย DO ได้ตลอดเวลา
+        // ห้ามเขียนทับด้วยค่าเก่าจากฟอร์มที่เปิดค้างไว้ — ถ้าระหว่างนั้นมี DO ย้าย/ปรับจำนวนไปแล้ว ให้ปฏิเสธ
+        const cur = (await ref.get()).val();
+        if (!cur) throw new Error('ไม่พบทรัพย์สินนี้ในทะเบียนแล้ว (อาจถูกลบหรือถูกรวมจากการยกเลิกใบส่งของ)');
+        const stockChanged = ['site', 'subSite', 'quantity'].some(f => String(cur[f] ?? '') !== String(clean[f] ?? ''));
+        if (String(clean.updatedAt || '') !== String(cur.updatedAt || '') && stockChanged) {
+          throw new Error(`ทรัพย์สินนี้ถูกปรับโดยรายการอื่นระหว่างที่แก้ไขอยู่ (ตอนนี้อยู่ที่ "${cur.site || '-'}" จำนวน ${Number(cur.quantity) || 0}) — กรุณาปิดฟอร์มแล้วเปิดแก้ไขใหม่`);
+        }
+        // ประวัติการย้าย/การแตกรายการเป็นของระบบ ใช้ค่าจากฐานข้อมูลเสมอ
+        const hist = Array.isArray(cur.transferHistory) ? cur.transferHistory.slice() : [];
+        if (String(cur.site || '') !== String(clean.site || '') || String(cur.subSite || '') !== String(clean.subSite || '')) {
+          hist.push({ from: cur.site || '', to: clean.site || '', fromSubSite: cur.subSite || '', toSubSite: clean.subSite || '',
+            when: new Date().toISOString(), by: payload.by || '', qty: Number(clean.quantity) || 0, direct: true,
+            note: 'แก้ไขโครงการที่ทะเบียนทรัพย์สินโดยตรง (ไม่มีใบส่งของ)' });
+        }
+        clean.transferHistory = hist;
+        if (cur.splitFrom) clean.splitFrom = cur.splitFrom; else delete clean.splitFrom;
+      } else {
+        delete clean.transferHistory; delete clean.splitFrom;
+      }
       clean.id = clean.id || clean.assetCode || id;
       clean.quantity = Number(clean.quantity) || 0;
       clean.price = (clean.price === '' || clean.price == null || isNaN(Number(clean.price))) ? '' : Math.round(Number(clean.price) * 100) / 100;
@@ -2606,6 +2633,56 @@ window.useDeleteRequests = function(user){
     ready: window.__DELREQ.ready,
     _tick: tick,
   };
+};
+
+// ===== ซิงค์ทะเบียนทรัพย์สิน ↔ ใบส่งของ (DO) แบบ realtime =====
+// ทั้งสองหน้าใช้ฐานข้อมูลเดียวกัน (panamanee-3a15a) — ฟัง /assets และ /deliveryOrders ตลอดเวลา
+// ใครออก/แก้/ยกเลิกใบส่งของ หรือแก้ทะเบียน จากเครื่องไหนก็ตาม ทุกหน้าที่เปิดอยู่จะเห็นค่าล่าสุดทันที
+window.__ASSETSYNC = {
+  assets: null, orders: null, live: false, _subs: new Set(), _refs: null,
+  subscribe(fn){
+    this._subs.add(fn); this.start();
+    // หน้าที่เพิ่งเปิดทีหลัง — ส่งข้อมูลที่มีอยู่แล้วให้ทันที ไม่ต้องรอการเปลี่ยนแปลงครั้งถัดไป
+    if(this.assets) { try{ fn('assets'); }catch(e){} }
+    if(this.orders) { try{ fn('orders'); }catch(e){} }
+    return () => this._subs.delete(fn);
+  },
+  _emit(kind){ this._subs.forEach(fn => { try{ fn(kind); }catch(e){} }); },
+  start(){
+    if(this._refs) return;
+    const db = window.__assetDb;
+    if(!db) return;
+    const aRef = db.ref('/assets'), dRef = db.ref('/deliveryOrders');
+    this._refs = [aRef, dRef];
+    const fail = (what) => (err) => { this.live = false; console.warn('[assetSync] ฟัง'+what+'ไม่สำเร็จ:', err && err.message); this._emit('error'); };
+    aRef.on('value', (snap) => {
+      const list = Object.entries(snap.val() || {}).map(([key, v]) => ({ key, ...(v || {}) }))
+        .sort((a,b)=>String(a.assetCode||a.id||"").localeCompare(String(b.assetCode||b.id||""),"th"));
+      this.assets = list; this.live = true;
+      window.__DATA.assetRegistry = list;
+      this._emit('assets');
+    }, fail('ทะเบียนทรัพย์สิน'));
+    dRef.on('value', (snap) => {
+      const list = Object.entries(snap.val() || {}).map(([key, v]) => ({ key, ...(v || {}) }))
+        .sort((a,b)=>String(b.when||"").localeCompare(String(a.when||"")));
+      this.orders = list;
+      window.__DATA.deliveryOrders = list;
+      this._emit('orders');
+    }, fail('ใบส่งของ'));
+  },
+  stop(){
+    (this._refs||[]).forEach(r => { try{ r.off(); }catch(e){} });
+    this._refs = null; this.assets = null; this.orders = null; this.live = false;
+  },
+};
+// ป้ายสถานะซิงค์ — ใช้ทั้งหน้าทะเบียนทรัพย์สินและหน้าใบส่งของ
+window.AssetSyncBadge = function(){
+  const live = window.__ASSETSYNC.live;
+  return <span title={live?"ข้อมูลทะเบียนทรัพย์สินกับใบส่งของซิงค์กันอัตโนมัติ — มีการเปลี่ยนแปลงจากเครื่องอื่นจะอัปเดตทันที":"กำลังเชื่อมต่อการซิงค์..."}
+    style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,color:live?"#047857":"var(--muted)",whiteSpace:"nowrap"}}>
+    <span style={{width:7,height:7,borderRadius:999,background:live?"#10B981":"#CBD5E1",boxShadow:live?"0 0 0 3px rgba(16,185,129,.18)":"none"}}></span>
+    {live?"ซิงค์อัตโนมัติ":"กำลังเชื่อมต่อ..."}
+  </span>;
 };
 
 // ตัดข้อมูลที่ถูกลบออกจากแคชในหน้าเว็บ ไม่ต้องโหลดใหม่ทั้งหน้า
@@ -8816,6 +8893,13 @@ function AssetRegistry({user}){
     if(Array.isArray(window.__DATA.assetRegistry)) setRows(window.__DATA.assetRegistry.slice());
   },[decidedCount]);
 
+  // ซิงค์ realtime กับใบส่งของ — ย้าย/ยกเลิก/แก้ DO ที่ไหนก็ตาม ตารางนี้อัปเดตเอง
+  const [,setSyncTick] = React.useState(0);
+  React.useEffect(()=>window.__ASSETSYNC.subscribe(kind=>{
+    if(kind==="assets" && window.__ASSETSYNC.assets){ setErr(""); setRows(window.__ASSETSYNC.assets); }
+    setSyncTick(t=>t+1);
+  }),[]);
+
   React.useEffect(()=>{
     if(rows) return;
     let alive = true;
@@ -8968,7 +9052,7 @@ function AssetRegistry({user}){
       const before = (rows||[]).find(x=>x.key===form.key) || {};
       const changes = window.diffFields(before, form, window.ASSET_FIELD_LABELS);
       const sent = await window.requestEditApproval({
-        user, action:"saveAssetRegistry", payload:{ key: form.key, asset: form },
+        user, action:"saveAssetRegistry", payload:{ key: form.key, asset: form, by: user.name },
         entityLabel:"ทะเบียนทรัพย์สิน", targetName:`${form.assetCode||form.id||""} ${form.name||""}`.trim(), project:form.site||"",
         targetInfo:[form.brand,form.model,form.serial,form.holder].filter(Boolean).join(" · "),
         changes,
@@ -8976,7 +9060,7 @@ function AssetRegistry({user}){
       if(sent) setEdit(null);
       return;
     }
-    const saved = await window.api("saveAssetRegistry",{ key: form.key || "", asset: form });
+    const saved = await window.api("saveAssetRegistry",{ key: form.key || "", asset: form, by: user.name });
     const base = rows || [];
     commit(base.some(x=>x.key===saved.key) ? base.map(x=>x.key===saved.key?saved:x) : base.concat([saved]));
     setEdit(null);
@@ -9046,6 +9130,7 @@ function AssetRegistry({user}){
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>
           {filtered.length.toLocaleString("th-TH")} / {scoped.length.toLocaleString("th-TH")} รายการ · รวม {totalQty.toLocaleString("th-TH")} หน่วย
+          <span style={{marginLeft:10}}><window.AssetSyncBadge/></span>
         </div>
         <button className="btn btn-ghost" onClick={()=>exportAssetsExcel(filtered)} title="ส่งออกข้อมูลที่แสดงอยู่เป็นไฟล์ Excel">
           <i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel
@@ -9215,6 +9300,8 @@ function TransferAssetsModal({user,onClose,onSaved}){
   const [toSubSite,setToSubSite] = React.useState("");       // ไซต์งานย่อยปลายทาง
   const [qty,setQty] = React.useState({});   // {assetKey: จำนวนที่จะย้าย} — มีคีย์ = ถูกเลือก
 
+  // จำนวนคงเหลือต้องเป็นค่าล่าสุดเสมอ (อีกเครื่องอาจย้ายของชิ้นเดียวกันอยู่)
+  React.useEffect(()=>window.__ASSETSYNC.subscribe(kind=>{ if(kind==="assets" && window.__ASSETSYNC.assets) setAssets(window.__ASSETSYNC.assets); }),[]);
   React.useEffect(()=>{
     if(assets) return;
     let alive = true;
@@ -9270,7 +9357,8 @@ function TransferAssetsModal({user,onClose,onSaved}){
     });
   },[assets,q,fromProject,fromSubSite]);
 
-  const picked = React.useMemo(()=>(assets||[]).filter(a=>qty[a.key]!==undefined),[assets,qty]);
+  // เฉพาะของที่ยังอยู่โครงการต้นทางจริง — ถ้าระหว่างเลือกมีคนย้ายออกไปแล้ว จะหลุดจากรายการอัตโนมัติ
+  const picked = React.useMemo(()=>(assets||[]).filter(a=>qty[a.key]!==undefined && a.site===fromProject && (!fromSubSite || (a.subSite||"")===fromSubSite)),[assets,qty,fromProject,fromSubSite]);
   const totalMoving = picked.reduce((s,a)=>s+(Number(qty[a.key])||0),0);
 
   const toggle = (a) => setQty(prev=>{
@@ -9446,6 +9534,14 @@ function AssetForm({mode,initial,sites,owners,user,onClose,onSave}){
     if(!String(f.assetCode||"").trim() || !String(f.name||"").trim()){
       Swal.fire({icon:"warning",title:"กรอกข้อมูลไม่ครบ",text:"กรุณากรอก รหัสทรัพย์สิน และ ชื่อทรัพย์สิน"});
       return;
+    }
+    if(mode==="edit" && (String(initial.site||"")!==String(f.site||"") || String(initial.subSite||"")!==String(f.subSite||""))){
+      const c = await Swal.fire({icon:"question",title:"ย้ายโครงการโดยไม่ออกใบส่งของ?",
+        html:`จาก <b>${String(initial.site||"-").replace(/</g,"&lt;")}</b> → <b>${String(f.site||"-").replace(/</g,"&lt;")}</b><br/><br/>
+          การย้ายของระหว่างโครงการควรทำที่ <b>ใบส่งของ (DO)</b> เพื่อให้มีเอกสารและยกเลิก/คืนของได้<br/>
+          <span style="font-size:12.5px;color:#64748B">ถ้ายืนยัน ระบบจะบันทึกในประวัติการย้ายว่า "แก้ไขโดยตรง ไม่มีใบส่งของ"</span>`,
+        showCancelButton:true,confirmButtonText:"ยืนยันแก้ไขโดยตรง",cancelButtonText:"กลับไปแก้",confirmButtonColor:"#D97706"});
+      if(!c.isConfirmed) return;
     }
     setBusy(true);
     try{ await onSave(f); }
@@ -9628,6 +9724,12 @@ function DeliveryOrders({user}){
     }
   };
 
+  const [,setSyncTick] = React.useState(0);
+  React.useEffect(()=>window.__ASSETSYNC.subscribe(kind=>{
+    if(kind==="orders" && window.__ASSETSYNC.orders){ setErr(""); setRows(window.__ASSETSYNC.orders); }
+    setSyncTick(t=>t+1);
+  }),[]);
+
   React.useEffect(()=>{
     if(rows) return;
     let alive = true;
@@ -9684,6 +9786,13 @@ function DeliveryOrders({user}){
   };
 
   const remove = async (doc) => {
+    if(!doc.cancelled){
+      const r = await Swal.fire({icon:"info",title:"ต้องยกเลิกใบส่งของก่อน",
+        html:"ใบส่งของนี้ยังมีผลกับทะเบียนทรัพย์สินอยู่ (ของยังอยู่ที่ <b>"+String(doc.toProject||"-").replace(/</g,"&lt;")+"</b>)<br/>ถ้าลบเอกสารทิ้งเลย ทะเบียนจะไม่มีที่มาของการย้าย<br/><br/>กรุณา <b>ยกเลิก</b> ใบนี้ก่อน (เลือกคืนของกลับต้นทางได้) แล้วจึงลบ",
+        showCancelButton:true,confirmButtonText:"ยกเลิกใบส่งของนี้",cancelButtonText:"ปิด",confirmButtonColor:"#D97706"});
+      if(r.isConfirmed) cancel(doc);
+      return;
+    }
     const done = await window.deleteWithApproval({
       user, action:"deleteDeliveryOrder", payload:{key:doc.key},
       entityLabel:"ใบส่งของ (DO)", targetName:doc.docNo||doc.key, project:doc.toProject||"",
@@ -9728,6 +9837,7 @@ function DeliveryOrders({user}){
         )}
         <div className="spacer"></div>
         <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length.toLocaleString("th-TH")} / {scoped.length.toLocaleString("th-TH")} ใบ</div>
+        <div style={{alignSelf:"center"}}><window.AssetSyncBadge/></div>
         {canEdit && (
           <button className="btn btn-primary" onClick={()=>setTransferOpen(true)}>
             <i className="fa-solid fa-right-left"></i> ย้ายโครงการ / ออกใบส่งของ
