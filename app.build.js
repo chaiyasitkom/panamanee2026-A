@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 628) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 656) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -1913,7 +1913,7 @@ window.api = async function (action, payload = {}) {
   return res;
 };
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1873) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1901) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2781,7 +2781,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2354) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2382) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2936,7 +2936,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2484) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2512) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -3118,10 +3118,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2629) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2657) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2632) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2660) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3299,7 +3299,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2759) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2787) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -4016,7 +4016,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3185) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3213) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4506,7 +4506,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3421) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3449) ---- */
 const {
   useState,
   useEffect,
@@ -4755,7 +4755,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3524) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3552) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4983,7 +4983,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3707) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3735) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -6166,7 +6166,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4140) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4168) ---- */
 function Projects({
   user
 }) {
@@ -6803,7 +6803,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4393) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4421) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -7200,7 +7200,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4639) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4667) ---- */
 function Dashboard({
   user,
   goTo
@@ -8837,7 +8837,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5298) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5326) ---- */
 function Repairs({
   user
 }) {
@@ -11384,7 +11384,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6248) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6276) ---- */
 function Users({
   user
 }) {
@@ -11956,7 +11956,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6432) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6460) ---- */
 function Categories({
   user
 }) {
@@ -12219,7 +12219,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6520) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6548) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -15373,7 +15373,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7518) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7546) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -19539,7 +19539,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8880) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8908) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -20638,7 +20638,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9187) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9215) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -23351,7 +23351,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10492) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10520) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -23824,7 +23824,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10827) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10855) ---- */
 function Permissions({
   user
 }) {
@@ -24444,7 +24444,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11180) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11208) ---- */
 function WorkspacePicker({
   user,
   onContinue,
