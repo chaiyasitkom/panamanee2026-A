@@ -848,6 +848,7 @@ function _delTargetKey(action, payload = {}) {
 // ประวัติการล็อกอิน: เก็บแค่ 100 รายการล่าสุด ที่เกินมาลบทิ้งอัตโนมัติ
 // (เป็นการหมุนเวียน log ตามนโยบายระบบ ไม่ผ่านขั้นตอนขออนุมัติลบเหมือนข้อมูลงาน)
 const LOGIN_LOG_KEEP = 100;
+const ACTIVITY_KEEP = 3000;   // ประวัติกิจกรรมผู้ใช้งาน (เข้าหน้า / ทำรายการ) เก็บล่าสุดกี่รายการ
 
 async function _pruneLoginLogs() {
   try {
@@ -1753,6 +1754,29 @@ async function api(action, payload = {}) {
       return { ok: true };
     }
 
+    // ประวัติกิจกรรมผู้ใช้งาน (เข้าหน้าไหน / ทำรายการอะไร) — เก็บล่าสุด ACTIVITY_KEEP รายการ
+    case 'logActivity': {
+      const e = payload.entry || {};
+      if (!e.userId) return { skipped: true };
+      const ref = _db.ref('/activityLogs').push();
+      await ref.set({ ...e, id: ref.key, when: new Date().toISOString() });
+      return { logged: true };
+    }
+
+    case 'getActivityLogs': {
+      const snap = await _db.ref('/activityLogs').get();
+      const all = Object.entries(snap.val() || {});
+      // push key เรียงตามเวลาอยู่แล้ว — เกินโควตาให้ลบรายการเก่าที่สุดทิ้ง
+      if (all.length > ACTIVITY_KEEP) {
+        const updates = {};
+        all.slice(0, all.length - ACTIVITY_KEEP).forEach(([k]) => { updates[k] = null; });
+        try { await _db.ref('/activityLogs').update(updates); } catch (err) { console.warn('[activityLogs] ลบรายการเก่าไม่สำเร็จ:', err && err.message); }
+      }
+      const logs = all.slice(-ACTIVITY_KEEP).map(([, v]) => v).filter(Boolean)
+        .sort((a, b) => String(b.when || '').localeCompare(String(a.when || '')));
+      return { logs, keep: ACTIVITY_KEEP };
+    }
+
     case 'getLoginLogs': {
       // เผื่อฐานข้อมูลเดิมมีค้างเกิน 100 (หรือมีคนล็อกอินพร้อมกันจนเกิน) — เก็บกวาดตอนเปิดหน้าด้วย
       const removed = await _pruneLoginLogs();
@@ -1767,7 +1791,83 @@ async function api(action, payload = {}) {
   }
 }
 
-window.api = api;
+// ===== บันทึกกิจกรรมผู้ใช้งาน =====
+// ต้องเก็บตัวจริงไว้ก่อน — api เป็นฟังก์ชัน global การเขียนทับ window.api จะทับชื่อ api ไปด้วย (ไม่งั้นเรียกตัวเองวนไม่จบ)
+const _rawApi = api;
+// ทุกการเรียก api ที่ "เปลี่ยนข้อมูล" จะถูกบันทึกหลังทำสำเร็จ (ไม่บันทึกการโหลด/อ่านข้อมูล)
+// การเข้าหน้า บันทึกจาก App เมื่อเปลี่ยนหน้า · บันทึกแบบไม่รอผล ไม่ทำให้ระบบช้า และพลาดก็ไม่กระทบงาน
+const ACT_LABELS = {
+  createRepair:"แจ้งซ่อมใหม่", updateRepair:"แก้ไขใบแจ้งซ่อม", updateRepairStatus:"เปลี่ยนสถานะใบแจ้งซ่อม", updateRepairProblems:"ปรับรายการอาการ",
+  uploadRepairPhoto:"อัปโหลดรูปใบแจ้งซ่อม", uploadPartPhoto:"อัปโหลดรูป",
+  createMachine:"เพิ่มเครื่องจักร", updateMachine:"แก้ไขเครื่องจักร", createProject:"เพิ่มโครงการ", updateProject:"แก้ไขโครงการ",
+  createUser:"เพิ่มผู้ใช้งาน", updateUser:"แก้ไขผู้ใช้งาน", createCategory:"เพิ่มหมวดหมู่", updateCategory:"แก้ไขหมวดหมู่",
+  saveSignature:"ตั้ง/ลบลายเซ็น", savePermissions:"แก้ไขสิทธิ์การใช้งาน", getUserPassword:"ดูรหัสผ่านผู้ใช้งาน",
+  upsertWithdrawal:"บันทึกใบขอเบิก", saveStockItem:"บันทึกรายการสต๊อก", receiveToStock:"รับของเข้าสต๊อก", stockMove:"เบิก/ย้ายของในสต๊อก",
+  saveAssetRegistry:"บันทึกทะเบียนทรัพย์สิน", transferAssets:"ย้ายทรัพย์สิน / ออกใบส่งของ", cancelDeliveryOrder:"ยกเลิกใบส่งของ", updateDeliveryOrder:"แก้ไขใบส่งของ",
+  deleteProject:"ลบโครงการ", deleteUser:"ลบผู้ใช้งาน", deleteCategory:"ลบหมวดหมู่", deleteMachine:"ลบเครื่องจักร", deleteRepair:"ลบใบแจ้งซ่อม",
+  deleteWithdrawal:"ลบใบขอเบิก", deleteAssetRegistry:"ลบทรัพย์สิน", deleteDeliveryOrder:"ลบใบส่งของ", deleteStockItem:"ลบรายการสต๊อก", deleteTransferEntry:"ลบประวัติการย้าย",
+  requestDelete:"ส่งคำขออนุมัติลบ", requestChange:"ส่งคำขออนุมัติแก้ไข", approveDelete:"อนุมัติคำขอ", rejectDelete:"ไม่อนุมัติคำขอ",
+};
+const ACT_SKIP = /^(load|get|list|bootstrap|login|logUnlock|verifyPassword|logActivity)/;
+const ACT_KIND = (a) => /^delete/.test(a) ? "delete" : /^(approve|reject)/.test(a) ? "approve" : /^request/.test(a) ? "request" : /^(create|createRepair)/.test(a) ? "create" : "update";
+
+function _actTarget(action, p = {}, res){
+  const D = window.__DATA || {};
+  const rep = (id) => (D.repairs||[]).find(x => x.id === id);
+  const mc  = (id) => (D.machines||[]).find(x => x.id === id);
+  const usr = (id) => (D.users||[]).find(x => x.id === id);
+  try{
+    if (action === 'createRepair') return (res && res.running) || (p.repair && p.repair.running) || '';
+    if (/Repair/.test(action)) { const r = rep(p.id); return (r && r.running) || p.running || p.id || ''; }
+    if (/Machine$/.test(action)) { const m = mc(p.id) || p.machine || p.patch || {}; return [m.code, m.name].filter(Boolean).join(' ') || p.id || ''; }
+    if (/User$|getUserPassword|saveSignature/.test(action)) { const u = usr(p.id) || p.user || p.patch || {}; return u.name || u.username || p.id || ''; }
+    if (action === 'transferAssets') return [res && res.doc && res.doc.docNo, p.toProject && ('→ ' + p.toProject)].filter(Boolean).join(' ');
+    if (/DeliveryOrder/.test(action)) return (p.patch && p.patch.docNo) || p.key || '';
+    if (action === 'saveAssetRegistry') { const a = p.asset || {}; return [a.assetCode, a.name].filter(Boolean).join(' '); }
+    if (/^(request|approve|reject)/.test(action)) return [p.entityLabel, p.targetName].filter(Boolean).join(' · ') || p.id || '';
+    return p.targetName || (p.project && p.project.name) || (p.category && p.category.name) || p.name || p.docNo || p.key || p.id || '';
+  }catch(e){ return ''; }
+}
+function _actDetail(action, p = {}){
+  try{
+    if (action === 'updateRepairStatus' && p.status) return '→ ' + ((window.getStatus && window.getStatus(p.status).label) || p.status) + (p.note ? ' · ' + String(p.note).slice(0, 60) : '');
+    if (action === 'cancelDeliveryOrder') return (p.restoreStock ? 'คืนของกลับต้นทาง' : 'ยกเลิกเฉพาะเอกสาร') + (p.reason ? ' · ' + String(p.reason).slice(0, 60) : '');
+    if (action === 'transferAssets') return (p.moves || []).length + ' รายการ';
+    if (action === 'saveSignature') return p.dataUrl ? 'ตั้งลายเซ็น' : 'ลบลายเซ็น';
+    if (action === 'stockMove' || action === 'receiveToStock') return [p.project, p.qty != null ? ('จำนวน ' + p.qty) : ''].filter(Boolean).join(' · ');
+  }catch(e){}
+  return '';
+}
+
+window.__ACT = {
+  user: null, page: '', _lastPage: '',
+  _send(entry){
+    const u = this.user;
+    if (!u || !u.id) return;
+    _rawApi('logActivity', { entry: { userId: u.id, username: u.username || '', name: u.name || '', role: u.role || '', page: this.page || '', ...entry } })
+      .catch(() => {});
+  },
+  // เรียกจาก App ทุกครั้งที่ render — บันทึกเฉพาะตอนหน้าเปลี่ยนจริง
+  visit(user, pageKey, pageLabel){
+    this.user = user || null;
+    this.page = pageKey || '';
+    const sig = (user && user.id) + '|' + pageKey;
+    if (!user || !pageKey || sig === this._lastPage) return;
+    this._lastPage = sig;
+    this._send({ type: 'page', page: pageKey, label: pageLabel || pageKey });
+  },
+  action(action, p, res){
+    if (ACT_SKIP.test(action) && action !== 'getUserPassword') return;
+    this._send({ type: 'action', action, kind: ACT_KIND(action), label: ACT_LABELS[action] || action,
+      target: String(_actTarget(action, p, res) || '').slice(0, 120), detail: String(_actDetail(action, p) || '').slice(0, 140) });
+  },
+};
+
+window.api = async function(action, payload = {}){
+  const res = await _rawApi(action, payload);
+  try{ window.__ACT.action(action, payload, res); }catch(e){}
+  return res;
+};
 </script>
 
 <script type="text/babel">
@@ -8390,7 +8490,169 @@ function DocPJ2({user}){
   );
 }
 
+// หน้า "ประวัติการล็อกอิน" — 2 แท็บ: ประวัติการล็อกอิน / กิจกรรมผู้ใช้งาน (เข้าหน้าไหน ทำอะไร)
 function LoginLogs(){
+  const [tab,setTab] = React.useState("activity");
+  const btn = (k,icon,label) => (
+    <button key={k} onClick={()=>setTab(k)}
+      style={{padding:"8px 16px",borderRadius:8,border:"none",fontSize:13.5,cursor:"pointer",fontFamily:"Kanit",
+              background:tab===k?"var(--primary)":"transparent",color:tab===k?"#fff":"var(--muted)"}}>
+      <i className={`fa-solid ${icon}`}></i> {label}
+    </button>);
+  return (<>
+    <div style={{display:"inline-flex",background:"#fff",border:"1px solid var(--line)",borderRadius:10,padding:3,marginBottom:14,gap:2}}>
+      {btn("activity","fa-person-walking-arrow-right","กิจกรรมผู้ใช้งาน")}
+      {btn("login","fa-right-to-bracket","ประวัติการล็อกอิน")}
+    </div>
+    {tab==="activity" ? <ActivityLogs/> : <LoginHistoryList/>}
+  </>);
+}
+
+const ACT_KIND_UI = {
+  page:    {label:"เข้าหน้า",   color:"#64748B", bg:"#F1F5F9", icon:"fa-eye"},
+  create:  {label:"เพิ่ม",      color:"#047857", bg:"#DCFCE7", icon:"fa-plus"},
+  update:  {label:"แก้ไข/บันทึก", color:"#1D4ED8", bg:"#DBEAFE", icon:"fa-pen"},
+  delete:  {label:"ลบ",        color:"#B91C1C", bg:"#FEE2E2", icon:"fa-trash"},
+  request: {label:"ส่งคำขอ",    color:"#B45309", bg:"#FEF3C7", icon:"fa-paper-plane"},
+  approve: {label:"อนุมัติ/ปฏิเสธ", color:"#7C3AED", bg:"#EDE9FE", icon:"fa-gavel"},
+};
+const actKindOf = (l) => l.type==="page" ? "page" : (ACT_KIND_UI[l.kind] ? l.kind : "update");
+
+function ActivityLogs(){
+  const [logs,setLogs] = React.useState([]);
+  const [keep,setKeep] = React.useState(3000);
+  const [loading,setLoading] = React.useState(true);
+  const [err,setErr] = React.useState(null);
+  const [q,setQ] = React.useState("");
+  const [fUser,setFUser] = React.useState("all");
+  const [fKind,setFKind] = React.useState("all");     // all | page | action | create | update | delete | request | approve
+  const [fDays,setFDays] = React.useState("7");       // 1 | 7 | 30 | all
+  const [view,setView] = React.useState("timeline");  // timeline | people
+  const [limit,setLimit] = React.useState(200);
+
+  const fetchLogs = () => {
+    setLoading(true); setErr(null);
+    window.api("getActivityLogs").then(r=>{ setLogs(r.logs||[]); if(r.keep) setKeep(r.keep); setLoading(false); })
+      .catch(e=>{ setErr(e.message||"โหลดข้อมูลไม่สำเร็จ"); setLoading(false); });
+  };
+  React.useEffect(()=>{ fetchLogs(); },[]);
+
+  const users = React.useMemo(()=>{
+    const m = {}; logs.forEach(l=>{ if(l.userId && !m[l.userId]) m[l.userId] = l.name||l.username||l.userId; });
+    return Object.entries(m).sort((a,b)=>String(a[1]).localeCompare(String(b[1]),"th"));
+  },[logs]);
+
+  const since = fDays==="all" ? 0 : (()=>{ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-(Number(fDays)-1)); return d.getTime(); })();
+  const filtered = React.useMemo(()=>logs.filter(l=>{
+    if(since && new Date(l.when).getTime() < since) return false;
+    if(fUser!=="all" && l.userId!==fUser) return false;
+    const k = actKindOf(l);
+    if(fKind==="page" && k!=="page") return false;
+    if(fKind==="action" && k==="page") return false;
+    if(!["all","page","action"].includes(fKind) && k!==fKind) return false;
+    if(q){ const qq=q.toLowerCase(); if(![l.name,l.username,l.role,l.label,l.target,l.detail].map(x=>String(x||"").toLowerCase()).join(" ").includes(qq)) return false; }
+    return true;
+  }),[logs,since,fUser,fKind,q]);
+
+  // สรุปรายคน: ล่าสุดเมื่อไร, เข้าหน้าไหนบ่อย, ทำรายการอะไรบ้าง
+  const people = React.useMemo(()=>{
+    const m = {};
+    filtered.forEach(l=>{
+      const u = m[l.userId] || (m[l.userId] = {id:l.userId,name:l.name||l.username,role:l.role,last:l.when,pages:{},actions:{},nPage:0,nAct:0});
+      if(String(l.when) > String(u.last)) u.last = l.when;
+      if(l.type==="page"){ u.nPage++; u.pages[l.label] = (u.pages[l.label]||0)+1; }
+      else { u.nAct++; u.actions[l.label] = (u.actions[l.label]||0)+1; }
+    });
+    const top = (o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]);
+    return Object.values(m).map(u=>({...u,pages:top(u.pages),actions:top(u.actions)})).sort((a,b)=>String(b.last).localeCompare(String(a.last)));
+  },[filtered]);
+
+  const fmtWhen = (iso) => { if(!iso) return "—"; const d=new Date(iso); return `${d.getDate()}/${d.getMonth()+1}/${String(d.getFullYear()+543).slice(2)} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
+  const todayStart = (()=>{ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+  const today = logs.filter(l=>new Date(l.when).getTime()>=todayStart);
+  const stats = [
+    {label:"กิจกรรมวันนี้", val:today.length, icon:"fa-bolt", color:"#3B82F6"},
+    {label:"ผู้ใช้ที่ใช้งานวันนี้", val:new Set(today.map(l=>l.userId)).size, icon:"fa-user-check", color:"#8B5CF6"},
+    {label:"ทำรายการวันนี้", val:today.filter(l=>l.type!=="page").length, icon:"fa-pen-to-square", color:"#10B981"},
+    {label:"ลบ/อนุมัติ วันนี้", val:today.filter(l=>["delete","approve"].includes(actKindOf(l))).length, icon:"fa-shield-halved", color:"#EF4444"},
+  ];
+  const kindBadge = (l) => { const k=ACT_KIND_UI[actKindOf(l)]; return <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"2px 8px",borderRadius:999,background:k.bg,color:k.color,fontSize:11.5,fontWeight:600,whiteSpace:"nowrap"}}><i className={`fa-solid ${k.icon}`}></i>{k.label}</span>; };
+  const shown = filtered.slice(0,limit);
+
+  return (<>
+    <div className="stat-grid" style={{marginBottom:16}}>
+      {stats.map((s,i)=>(<div className="stat" key={i}><div className="ic" style={{background:s.color+"1a",color:s.color}}><i className={`fa-solid ${s.icon}`}></i></div><div className="label">{s.label}</div><div className="val">{s.val.toLocaleString("th-TH")}</div></div>))}
+    </div>
+    <div className="card">
+      <div className="filters">
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา ชื่อ / การทำรายการ / เลขที่เอกสาร..." value={q} onChange={e=>setQ(e.target.value)}/></div>
+        <select value={fUser} onChange={e=>setFUser(e.target.value)}>
+          <option value="all">ผู้ใช้ทุกคน</option>
+          {users.map(([id,n])=><option key={id} value={id}>{n}</option>)}
+        </select>
+        <select value={fKind} onChange={e=>setFKind(e.target.value)}>
+          <option value="all">ทุกกิจกรรม</option>
+          <option value="page">เข้าหน้า</option>
+          <option value="action">ทำรายการ (ทั้งหมด)</option>
+          <option value="create">เพิ่ม</option>
+          <option value="update">แก้ไข/บันทึก</option>
+          <option value="delete">ลบ</option>
+          <option value="request">ส่งคำขอ</option>
+          <option value="approve">อนุมัติ/ปฏิเสธ</option>
+        </select>
+        <select value={fDays} onChange={e=>setFDays(e.target.value)}>
+          <option value="1">วันนี้</option><option value="7">7 วันล่าสุด</option><option value="30">30 วันล่าสุด</option><option value="all">ทั้งหมด</option>
+        </select>
+        <div style={{display:"inline-flex",border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="timeline"?"var(--accent-soft)":"#fff",color:view==="timeline"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("timeline")}><i className="fa-solid fa-list"></i> ไทม์ไลน์</button>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="people"?"var(--accent-soft)":"#fff",color:view==="people"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("people")}><i className="fa-solid fa-users"></i> สรุปรายคน</button>
+        </div>
+        <div className="spacer"></div>
+        <div style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length.toLocaleString("th-TH")} รายการ <span style={{color:"#B45309",marginLeft:6}} title={`ระบบเก็บล่าสุด ${keep} รายการ ที่เกินลบอัตโนมัติ`}>· เก็บล่าสุด {keep.toLocaleString("th-TH")}</span></div>
+        <button className="btn btn-ghost" onClick={fetchLogs} disabled={loading} title="โหลดใหม่"><i className={`fa-solid fa-rotate${loading?" fa-spin":""}`}></i></button>
+      </div>
+      {loading ? (
+        <div style={{display:"grid",placeItems:"center",padding:60,gap:12}}><div className="spinner" style={{width:32,height:32,borderWidth:3}}></div><div style={{color:"var(--muted)",fontSize:13}}>กำลังโหลด...</div></div>
+      ) : err ? (
+        <div style={{padding:32,textAlign:"center"}}><div style={{fontWeight:500,marginBottom:6}}>โหลดข้อมูลไม่สำเร็จ</div><div style={{fontSize:13,color:"var(--muted)",marginBottom:14}}>{err}</div><button className="btn btn-primary" onClick={fetchLogs}><i className="fa-solid fa-rotate"></i> ลองใหม่</button></div>
+      ) : filtered.length===0 ? (
+        <div className="empty" style={{padding:40}}><i className="fa-solid fa-person-walking-arrow-right"></i><div className="t">ยังไม่มีกิจกรรม{logs.length?"ในช่วงที่เลือก":""}</div><div>ระบบเริ่มบันทึกการเข้าหน้าและการทำรายการตั้งแต่อัปเดตนี้เป็นต้นไป</div></div>
+      ) : view==="people" ? (
+        <div className="table-wrap"><table className="data">
+          <thead><tr><th>ผู้ใช้</th><th>ใช้งานล่าสุด</th><th className="hide-on-mobile">หน้าที่เข้าบ่อย</th><th>ทำรายการ</th><th></th></tr></thead>
+          <tbody>{people.map(u=>(
+            <tr key={u.id}>
+              <td><Avatar name={u.name}/>{u.name}<div style={{fontSize:11.5,color:"var(--muted)"}}>{u.role}</div></td>
+              <td style={{whiteSpace:"nowrap",fontSize:13}}>{fmtWhen(u.last)}</td>
+              <td className="hide-on-mobile" style={{fontSize:12.5}}>{u.pages.slice(0,3).map(([n,c])=><div key={n}>{n} <b style={{color:"var(--muted)"}}>×{c}</b></div>)}{!u.pages.length&&"—"}</td>
+              <td style={{fontSize:12.5}}>{u.nAct ? <><b>{u.nAct} ครั้ง</b>{u.actions.slice(0,4).map(([n,c])=><div key={n} style={{color:"var(--muted)"}}>{n} ×{c}</div>)}</> : <span style={{color:"var(--muted)"}}>ดูอย่างเดียว</span>}</td>
+              <td><button className="ia" title="ดูไทม์ไลน์ของคนนี้" onClick={()=>{setFUser(u.id);setView("timeline");}}><i className="fa-solid fa-arrow-right"></i></button></td>
+            </tr>))}</tbody>
+        </table></div>
+      ) : (
+        <div className="table-wrap"><table className="data">
+          <thead><tr><th style={{width:110}}>เวลา</th><th>ผู้ใช้</th><th style={{width:120}}>ประเภท</th><th>รายละเอียด</th><th className="hide-on-mobile">ที่หน้า</th></tr></thead>
+          <tbody>{shown.map(l=>(
+            <tr key={l.id}>
+              <td style={{whiteSpace:"nowrap",fontSize:12.5,color:"var(--muted)"}}>{fmtWhen(l.when)}</td>
+              <td style={{fontSize:13}}>{l.name||l.username}<div style={{fontSize:11,color:"var(--muted)"}}>{l.role}</div></td>
+              <td>{kindBadge(l)}</td>
+              <td style={{fontSize:13}}>
+                <span style={{fontWeight:l.type==="page"?400:500}}>{l.label}</span>
+                {l.target && <> <span className="mono" style={{fontSize:12,color:"var(--primary)"}}>{l.target}</span></>}
+                {l.detail && <div style={{fontSize:12,color:"var(--muted)"}}>{l.detail}</div>}
+              </td>
+              <td className="hide-on-mobile" style={{fontSize:12,color:"var(--muted)"}}>{l.type==="page" ? "" : ((window.__PAGE_TITLES||{})[l.page] || l.page || "")}</td>
+            </tr>))}</tbody>
+        </table>
+        {filtered.length>limit && <div style={{textAlign:"center",padding:12}}><button className="btn btn-ghost btn-sm" onClick={()=>setLimit(n=>n+200)}><i className="fa-solid fa-chevron-down"></i> ดูเพิ่ม (เหลืออีก {(filtered.length-limit).toLocaleString("th-TH")})</button></div>}
+        </div>
+      )}
+    </div>
+  </>);
+}
+
+function LoginHistoryList(){
   const [logs, setLogs] = React.useState([]);
   const [keep, setKeep] = React.useState(100);   // จำนวนที่ระบบเก็บไว้ ที่เกินถูกลบอัตโนมัติ
   const [loading, setLoading] = React.useState(true);
@@ -11888,7 +12150,7 @@ function App(){
     "withdrawals":{t:"รายการเบิกของ",c:"ERP Withdrawal · ใบขอเบิก/ขอสั่งซื้อ 24 แถวต่อหน้า"},
     "doc-pj2":{t:"ปจ2 - เอกสารรับรองการตรวจสอบและทดสอบ",c:"ลิงค์ไฟล์เอกสารตามรายการเครื่องจักร"},
     "transfer-history":{t:"ประวัติการย้ายเครื่องจักร",c:"บันทึกการย้ายโครงการของเครื่องจักรทั้งหมด"},
-    "login-logs":{t:"ประวัติการล็อกอิน",c:"บันทึกการเข้าสู่ระบบล่าสุด 100 รายการ · ที่เกินมาระบบลบทิ้งอัตโนมัติ · เฉพาะ Admin"},
+    "login-logs":{t:"ประวัติการล็อกอิน / กิจกรรมผู้ใช้งาน",c:"ใครเข้าระบบเมื่อไร เข้าหน้าไหน และทำรายการอะไรบ้าง · เฉพาะ Admin"},
     "projects":{t:"โครงการ",c:"Projects · จัดการข้อมูลโครงการทั้งหมด"},
     "permissions":{t:"สิทธิ์การใช้งาน",c:"กำหนดสิทธิ์เข้าถึงฟังก์ชันตามตำแหน่ง และยกเว้นเป็นรายบุคคล · เฉพาะ Admin"},
     "r-dashboard":{t:"สรุปงานของฉัน",c:"ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"},
@@ -11896,7 +12158,9 @@ function App(){
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},
     "notifications":{t:"การแจ้งเตือน",c:"คำขออนุมัติลบ / แก้ไขข้อมูล · ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ"},
   };
+  window.__PAGE_TITLES = Object.fromEntries(Object.entries(pageTitles).map(([k,v])=>[k,v.t]));
   const pt = pageTitles[safePage] || pageTitles.dashboard;
+  window.__ACT.visit(user, safePage, pt.t);   // บันทึกการเข้าหน้า (บันทึกเฉพาะตอนเปลี่ยนหน้า)
 
   const renderPage = () => {
     if(safePage==="dashboard") return <Dashboard user={activeUser} goTo={setPage}/>;
