@@ -2160,6 +2160,45 @@ const KW_LOOKUP = [];
 KW_DICT.forEach(e=>{ [e.k].concat(e.a||[]).forEach(alias=>KW_LOOKUP.push({ alias, k:e.k, g:e.g||"" })); });
 KW_LOOKUP.sort((x,y)=>y.alias.length-x.alias.length);
 
+// ===== กลุ่มอาการเสีย — จัดอาการที่แจ้งซ่อม (พิมพ์อิสระ) ให้อยู่ในกลุ่มที่อ่านง่าย =====
+// terms: [คำที่ค้นหา (ตัวพิมพ์เล็ก), คำที่แสดงผล] · ใบงานหนึ่งเข้าได้หลายกลุ่ม · ไม่เข้ากลุ่มไหน = "อื่นๆ"
+// เพิ่ม/แก้คำได้ที่นี่ที่เดียว — ลำดับในรายการ terms ไม่มีผล นับใบงานละครั้งต่อกลุ่ม
+window.SYMPTOM_GROUPS = [
+  { key:"hyd",   label:"ไฮดรอลิก / น้ำมันรั่วซึม", icon:"fa-oil-can",           color:"#0EA5E9",
+    terms:[["ไฮดรอลิก","ไฮดรอลิก"],["ไฮโดรลิก","ไฮดรอลิก"],["ไฮดรอลิค","ไฮดรอลิก"],["hydraulic","ไฮดรอลิก"],["สายไฮ","สายไฮดรอลิก"],["ปั๊มไฮ","ปั๊มไฮดรอลิก"],["กระบอก","กระบอกไฮดรอลิก"],["ซีล","ซีล"],["รั่ว","รั่ว"],["ซึม","ซึม"],["สายยาง","สายยาง/สายอ่อน"],["แรงดัน","แรงดันตก"],["ข้อต่อ","ข้อต่อ"],["วาล์ว","วาล์ว"]] },
+  { key:"eng",   label:"เครื่องยนต์",              icon:"fa-gears",              color:"#EF4444",
+    terms:[["เครื่องยนต์","เครื่องยนต์"],["engine","เครื่องยนต์"],["สตาร์ทไม่ติด","สตาร์ทไม่ติด"],["ติดยาก","สตาร์ทติดยาก"],["เครื่องดับ","เครื่องดับ"],["ดับเอง","เครื่องดับ"],["ควันดำ","ควันดำ"],["ควันขาว","ควันขาว"],["ควัน","ควัน"],["ความร้อนขึ้น","ความร้อนขึ้น"],["ร้อนจัด","ความร้อนขึ้น"],["โอเวอร์ฮีท","ความร้อนขึ้น"],["หม้อน้ำ","หม้อน้ำ"],["น้ำมันเครื่อง","น้ำมันเครื่อง"],["เทอร์โบ","เทอร์โบ"],["หัวฉีด","หัวฉีด"],["ไม่มีแรง","เครื่องไม่มีแรง"],["เร่งไม่ขึ้น","เครื่องไม่มีแรง"],["สายพาน","สายพาน"],["ปั๊มโซล่า","ระบบเชื้อเพลิง"],["โซล่า","ระบบเชื้อเพลิง"],["ดีเซล","ระบบเชื้อเพลิง"]] },
+  { key:"elec",  label:"ระบบไฟฟ้า / แบตเตอรี่",     icon:"fa-bolt",               color:"#F59E0B",
+    terms:[["แบต","แบตเตอรี่"],["battery","แบตเตอรี่"],["ไดชาร์จ","ไดชาร์จ"],["ไดสตาร์ท","ไดสตาร์ท"],["สายไฟ","สายไฟ"],["ไฟฟ้า","ระบบไฟฟ้า"],["ฟิวส์","ฟิวส์"],["รีเลย์","รีเลย์"],["หลอดไฟ","หลอดไฟ"],["ไฟหน้า","ไฟส่องสว่าง"],["ไฟท้าย","ไฟส่องสว่าง"],["ไฟเลี้ยว","ไฟส่องสว่าง"],["ไฟไม่ติด","ไฟไม่ติด"],["ไฟโชว์","ไฟเตือนโชว์"],["ไฟเตือน","ไฟเตือนโชว์"],["เซ็นเซอร์","เซ็นเซอร์"],["sensor","เซ็นเซอร์"],["หน้าจอ","หน้าจอ/มาตรวัด"],["มาตรวัด","หน้าจอ/มาตรวัด"],["เกจ","หน้าจอ/มาตรวัด"],["แตร","แตร"],["ช็อต","ไฟช็อต"],["ชอร์ต","ไฟช็อต"]] },
+  { key:"lift",  label:"สลิง / รอก / บูม (อุปกรณ์ยก)", icon:"fa-link",           color:"#8B5CF6",
+    terms:[["สลิง","สลิง"],["sling","สลิง"],["wire rope","สลิง"],["ลวด","สลิง/ลวด"],["รอก","รอก"],["วินซ์","วินซ์"],["winch","วินซ์"],["บูม","บูม"],["boom","บูม"],["ตะขอ","ตะขอ"],["ขอเกี่ยว","ตะขอ"],["ม้วน","ม้วนสลิง"],["เครน","เครน"]] },
+  { key:"drill", label:"ชุดเจาะ (Drilling)",        icon:"fa-screwdriver",        color:"#0F766E",
+    terms:[["หัวเจาะ","หัวเจาะ"],["ก้านเจาะ","ก้านเจาะ"],["ดอกเจาะ","ดอกเจาะ"],["เคลลี่","เคลลี่บาร์"],["kelly","เคลลี่บาร์"],["โรตารี่","โรตารี่"],["rotary","โรตารี่"],["ปลอกเจาะ","ปลอกเจาะ"],["casing","ปลอกเจาะ"],["ฟันเจาะ","ฟันเจาะ"],["เจาะ","ระบบเจาะ"]] },
+  { key:"drive", label:"เกียร์ / เบรก / ระบบส่งกำลัง", icon:"fa-gear",            color:"#DC2626",
+    terms:[["เบรก","เบรก"],["เบรค","เบรก"],["คลัตช์","คลัตช์"],["คลัช","คลัตช์"],["เกียร์","เกียร์"],["เพลา","เพลา"],["เฟือง","เฟือง"],["ลูกปืน","ลูกปืน"],["bearing","ลูกปืน"],["ไฟนอล","ไฟนอลไดรฟ์"],["สวิง","ระบบสวิง"],["ทอร์ค","ทอร์คคอนเวอร์เตอร์"],["กากบาท","ยอย/กากบาท"],["ยอย","ยอย/กากบาท"]] },
+  { key:"under", label:"ยาง / ล้อ / ช่วงล่าง",       icon:"fa-circle-dot",         color:"#475569",
+    terms:[["ยางแตก","ยางแตก"],["ยางรั่ว","ยางรั่ว"],["ยางแบน","ยางรั่ว"],["ปะยาง","ปะยาง"],["ยางรถ","ยาง"],["เปลี่ยนยาง","ยาง"],["ล้อ","ล้อ"],["กระทะล้อ","ล้อ"],["น็อตล้อ","ล้อ"],["ช่วงล่าง","ช่วงล่าง"],["โช้ค","โช้คอัพ"],["แหนบ","แหนบ"],["ตีนตะขาบ","ตีนตะขาบ"],["แทร็ก","ตีนตะขาบ"],["track","ตีนตะขาบ"],["ลูกกลิ้ง","ลูกกลิ้ง"],["บุ้ง","บุ้ง/บูช"],["บูช","บุ้ง/บูช"],["พวงมาลัย","พวงมาลัย"]] },
+  { key:"body",  label:"ห้องโดยสาร / แอร์ / ตัวถัง",   icon:"fa-car-side",           color:"#0284C7",
+    terms:[["แอร์","แอร์"],["คอมแอร์","แอร์"],["กระจก","กระจก"],["ประตู","ประตู"],["เบาะ","เบาะ"],["ที่ปัดน้ำฝน","ที่ปัดน้ำฝน"],["ตัวถัง","ตัวถัง"],["กันชน","กันชน"],["บุ้งกี๋","บุ้งกี๋"],["ใบมีด","ใบมีด"],["รอยแตก","รอยแตก/ร้าว"],["ร้าว","รอยแตก/ร้าว"],["เชื่อม","งานเชื่อม"]] },
+  { key:"pm",    label:"บำรุงรักษาตามระยะ / ตรวจเช็ค", icon:"fa-calendar-check",   color:"#10B981",
+    terms:[["เปลี่ยนถ่าย","เปลี่ยนถ่ายน้ำมัน"],["ถ่ายน้ำมัน","เปลี่ยนถ่ายน้ำมัน"],["ไส้กรอง","ไส้กรอง"],["กรองอากาศ","ไส้กรอง"],["กรองน้ำมัน","ไส้กรอง"],["จารบี","อัดจารบี"],["เช็คระยะ","เช็คระยะ"],["เช็กระยะ","เช็คระยะ"],["ตรวจเช็ค","ตรวจเช็ค"],["ตรวจเช็ก","ตรวจเช็ค"],["pm","PM"]] },
+];
+window.SYMPTOM_OTHER = { key:"other", label:"อื่นๆ (ยังไม่เข้ากลุ่ม)", icon:"fa-circle-question", color:"#94A3B8" };
+// คืน {groupKey: Set(คำที่แสดงผล)} จากข้อความอาการ
+window.classifySymptom = function(text){
+  const t = String(text||"").toLowerCase();
+  const out = {};
+  if(!t.trim()) return out;
+  window.SYMPTOM_GROUPS.forEach(g=>{
+    g.terms.forEach(([needle,disp])=>{
+      // คำภาษาอังกฤษสั้นๆ (เช่น pm) ต้องเป็นคำเดี่ยว ไม่ใช่ส่วนหนึ่งของคำอื่น
+      const hit = /^[a-z ]+$/.test(needle) ? new RegExp("(^|[^a-z])"+needle+"([^a-z]|$)").test(t) : t.includes(needle);
+      if(hit) (out[g.key] = out[g.key] || new Set()).add(disp);
+    });
+  });
+  return out;
+};
+
 window.extractKeywords = function(text){
   // \p{M} ต้องมีด้วย ไม่งั้นสระ/วรรณยุกต์ไทยจะถูกลบทิ้งจนตัดคำไม่ออก
   let raw = String(text||"").toLowerCase()
@@ -4511,7 +4550,7 @@ function Dashboard({user,goTo}){
   const [mapProject,setMapProject] = React.useState("");   // โครงการที่เลือกจากหมุดบนแผนที่
   const [jobStatus,setJobStatus] = React.useState("all");
   const [jobLimit,setJobLimit] = React.useState(36);       // ทยอยแสดง กันการ์ดหลายร้อยใบทำให้หน้าหน่วง
-  const [symptomMode,setSymptomMode] = React.useState("keyword");   // keyword | full
+  const [symptomMode,setSymptomMode] = React.useState("group");     // group | keyword | full
   const [symptomLimit,setSymptomLimit] = React.useState(10);
   const [openKw,setOpenKw] = React.useState("");           // คีย์เวิร์ดที่กางดูใบงานอยู่
   const doughnutRef = React.useRef(null);
@@ -4713,7 +4752,31 @@ function Dashboard({user,goTo}){
     return { list, total: repairs.length, max: list.length?list[0].count:0 };
   },[repairs]);
 
-  const symptomView = symptomMode==="keyword" ? keywordStats : symptomStats;
+  // มุมมอง "สรุปตามกลุ่ม" — นับใบงานต่อกลุ่มอาการ + อาการย่อยที่พบบ่อยในกลุ่ม
+  const groupStats = React.useMemo(()=>{
+    const defs = [...window.SYMPTOM_GROUPS, window.SYMPTOM_OTHER];
+    const map = {};
+    defs.forEach(g=>{ map[g.key] = { ...g, count:0, open:0, jobs:[], sub:{}, samples:[] }; });
+    repairs.forEach(r=>{
+      const text = window.getProblems(r).map(p=>p.text).filter(Boolean).join(" ") || r.title || "";
+      if(!String(text).trim()) return;
+      const hits = window.classifySymptom(text);
+      const keys = Object.keys(hits);
+      (keys.length ? keys : ["other"]).forEach(k=>{
+        const g = map[k];
+        g.count++; if(r.status!=="done") g.open++; g.jobs.push(r);
+        (hits[k]||[]).forEach(d=>{ g.sub[d] = (g.sub[d]||0)+1; });
+        if(k==="other" && g.samples.length<3){ const s1=String(text).split("\n")[0].trim(); if(s1) g.samples.push(s1.length>38?s1.slice(0,38)+"…":s1); }
+      });
+    });
+    const withText = repairs.filter(r=>String(window.getProblems(r).map(p=>p.text).join(" ")||r.title||"").trim()).length;
+    const list = Object.values(map).filter(g=>g.count>0)
+      .map(g=>({...g, top:Object.entries(g.sub).sort((a,b)=>b[1]-a[1]).slice(0,3)}))
+      .sort((a,b)=>(a.key==="other")-(b.key==="other") || b.count-a.count);
+    return { list, total: withText, max: list.reduce((m,g)=>Math.max(m,g.count),0) };
+  },[repairs]);
+
+  const symptomView = symptomMode==="keyword" ? keywordStats : symptomMode==="group" ? groupStats : symptomStats;
   const symptomTop = symptomView.list.slice(0, symptomLimit);
 
   const counts = {
@@ -4908,13 +4971,15 @@ function Dashboard({user,goTo}){
             <div>
               <h3><i className="fa-solid fa-magnifying-glass-chart" style={{color:"#EF4444",marginRight:8}}></i>สรุปอาการเสียที่พบบ่อย</h3>
               <div className="sub">
-                {symptomMode==="keyword"
+                {symptomMode==="group"
+                  ? <>จัดกลุ่มอาการจาก {symptomView.total} ใบงาน · กดการ์ดเพื่อดูใบงาน</>
+                  : symptomMode==="keyword"
                   ? <>แยกคีย์เวิร์ดจากอาการที่แจ้งทั้งหมด · พบ {symptomView.list.length} คีย์เวิร์ด จาก {symptomView.total} ใบงาน</>
                   : <>จัดอันดับอาการ/ปัญหาที่ถูกแจ้งซ่อมมากที่สุด · {symptomView.list.length} อาการ · {symptomView.total} ครั้ง</>}
               </div>
             </div>
             <div className="seg" style={{display:"inline-flex",background:"var(--bg)",border:"1px solid var(--line)",borderRadius:10,padding:3}}>
-              {[{k:"keyword",l:"คีย์เวิร์ด",i:"fa-key"},{k:"full",l:"ข้อความเต็ม",i:"fa-align-left"}].map(t=>(
+              {[{k:"group",l:"สรุปตามกลุ่ม",i:"fa-layer-group"},{k:"keyword",l:"คีย์เวิร์ด",i:"fa-key"},{k:"full",l:"ข้อความเต็ม",i:"fa-align-left"}].map(t=>(
                 <button key={t.k} onClick={()=>{setSymptomMode(t.k);setOpenKw("");setSymptomLimit(10);}}
                   style={{padding:"7px 14px",borderRadius:7,border:"none",fontSize:13,cursor:"pointer",fontFamily:"Kanit",
                           background:symptomMode===t.k?"var(--primary)":"transparent",color:symptomMode===t.k?"#fff":"var(--muted)"}}>
@@ -4924,7 +4989,63 @@ function Dashboard({user,goTo}){
             </div>
           </div>
           <div className="card-body">
-            {symptomView.list.length===0 ? (
+            {symptomMode==="group" && symptomView.list.length>0 ? (()=>{
+              const sel = symptomView.list.find(g=>g.key===openKw);
+              return (<>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:10}}>
+                  {symptomView.list.map(g=>{
+                    const share = symptomView.total ? g.count/symptomView.total*100 : 0;
+                    const active = openKw===g.key;
+                    return (
+                      <div key={g.key} onClick={()=>setOpenKw(active?"":g.key)} title="กดเพื่อดูใบงานในกลุ่มนี้"
+                        style={{cursor:"pointer",border:`1.5px solid ${active?g.color:"var(--line)"}`,background:active?g.color+"0d":"#fff",borderRadius:12,padding:"11px 13px",transition:"border-color .15s"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:9}}>
+                          <span style={{width:30,height:30,flexShrink:0,borderRadius:9,background:g.color+"1a",color:g.color,display:"grid",placeItems:"center",fontSize:14}}><i className={`fa-solid ${g.icon}`}></i></span>
+                          <div style={{flex:1,minWidth:0,fontWeight:600,fontSize:13.5,lineHeight:1.25}}>{g.label}</div>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:19,fontWeight:700,color:g.color,lineHeight:1}}>{g.count}</div>
+                            <div style={{fontSize:10.5,color:"var(--muted)"}}>ใบงาน</div>
+                          </div>
+                        </div>
+                        <div style={{height:6,borderRadius:999,background:"var(--bg)",overflow:"hidden",margin:"9px 0 7px"}}><div style={{height:"100%",width:(symptomView.max?g.count/symptomView.max*100:0)+"%",background:g.color,borderRadius:999}}></div></div>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6,fontSize:11.5,color:"var(--muted)"}}>
+                          <span>{share.toFixed(0)}% ของใบงานทั้งหมด</span>
+                          {g.open>0 ? <span className="badge" style={{background:"#FEF3C7",color:"#B45309",fontSize:10.5}}>ค้าง {g.open}</span> : <span style={{color:"#047857"}}>✓ ปิดครบ</span>}
+                        </div>
+                        <div style={{marginTop:6,fontSize:12,lineHeight:1.5,color:"var(--text)"}}>
+                          {g.key==="other"
+                            ? <span style={{color:"var(--muted)"}}>เช่น {g.samples.join(" · ")||"—"}</span>
+                            : g.top.map(([d,n],i)=><span key={d}>{i?" · ":""}{d} <b style={{color:g.color}}>{n}</b></span>)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {sel && (
+                  <div style={{marginTop:12,border:`1px solid ${sel.color}55`,borderRadius:10,overflow:"hidden"}}>
+                    <div style={{padding:"8px 12px",background:sel.color+"12",fontSize:13,fontWeight:600,color:sel.color,display:"flex",alignItems:"center",gap:8}}>
+                      <i className={`fa-solid ${sel.icon}`}></i>{sel.label} · {sel.count} ใบงาน
+                      <span style={{flex:1}}></span>
+                      <button className="ia" onClick={()=>setOpenKw("")} title="ปิด"><i className="fa-solid fa-xmark"></i></button>
+                    </div>
+                    {sel.jobs.slice(0,20).map(r=>{
+                      const st = window.getStatus(r.status);
+                      return (
+                        <div key={r.id} onClick={()=>setDashDetail(r)}
+                          style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderTop:"1px solid var(--line-soft)",cursor:"pointer",fontSize:13,flexWrap:"wrap"}}>
+                          <span className="mono" style={{color:"var(--primary)",fontSize:12,fontWeight:600}}>{r.running||r.id}</span>
+                          <span className={`badge ${st.className}`} style={{fontSize:11}}>{st.label}</span>
+                          <span style={{flex:1,minWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String((window.getProblems(r)[0]||{}).text||r.title||"").split("\n")[0]}</span>
+                          <span style={{color:"var(--muted)",fontSize:12}}>{r.machineCode||""}</span>
+                          <span style={{color:"var(--muted)",fontSize:12}}>{window.__DATA.fmtDate(r.createdAt)}</span>
+                        </div>
+                      );
+                    })}
+                    {sel.jobs.length>20 && <div style={{padding:"7px 12px",fontSize:12,color:"var(--muted)",background:"#FAFBFC",borderTop:"1px solid var(--line-soft)"}}>และอีก {sel.jobs.length-20} ใบงาน</div>}
+                  </div>
+                )}
+              </>);
+            })() : symptomView.list.length===0 ? (
               <div className="empty" style={{padding:30}}>
                 <i className="fa-solid fa-clipboard-question"></i>
                 <div className="t" style={{fontSize:14}}>ยังไม่มีข้อมูลอาการแจ้งซ่อม</div>
@@ -10903,7 +11024,8 @@ function WorkspacePicker({user,onContinue,onLogout}){
 // อะไหล่ที่ใช้ซ่อม — รวมอะไหล่จาก r.parts ของทุกใบแจ้งซ่อมมาสรุปในที่เดียว
 function SpareParts({user}){
   const [q,setQ] = React.useState("");
-  const [view,setView] = React.useState("list");   // list | grouped | machine
+  const [view,setView] = React.useState("list");   // list | grouped | machine | type
+  const [closedType,setClosedType] = React.useState({});   // กลุ่มรูปแบบการซ่อมที่ย่อไว้
   const [openMc,setOpenMc] = React.useState({});   // แถวเครื่องจักรที่กางดูอะไหล่
   const [detail,setDetail] = React.useState(null);
 
@@ -10967,6 +11089,44 @@ function SpareParts({user}){
     })).sort((a,b)=>(a.key==="__none__")-(b.key==="__none__") || b.total-a.total);
   },[filtered]);
 
+  // รวมตามรูปแบบการซ่อม — ใช้กลุ่มเดียวกับ "สรุปอาการเสียที่พบบ่อย"
+  // ดูจากชื่ออะไหล่ก่อน (เช่น "สายไฮดรอลิก") ไม่เข้ากลุ่มค่อยดูจากอาการในใบแจ้งซ่อม
+  // ใต้แต่ละอะไหล่: ร้าน/แหล่งซื้อทั้งหมด พร้อมราคาล่าสุดและราคาถูกสุด — ใช้หาร้านตอนสั่งซื้อครั้งต่อไป
+  const byType = React.useMemo(()=>{
+    const order = window.SYMPTOM_GROUPS.map(g=>g.key);
+    const pick = (hits)=>order.find(k=>hits[k]);
+    const groups = {};
+    [...window.SYMPTOM_GROUPS, window.SYMPTOM_OTHER].forEach(g=>{ groups[g.key] = { ...g, parts:{}, count:0, total:0 }; });
+    filtered.forEach(r=>{
+      const k = pick(window.classifySymptom(r.name))
+        || pick(window.classifySymptom(window.getProblems(r.repair).map(p=>p.text).filter(Boolean).join(" ") || r.repair.title || ""))
+        || "other";
+      const g = groups[k];
+      g.count++; g.total += r.total;
+      const pk = r.name.toLowerCase().replace(/\s+/g," ");
+      if(!g.parts[pk]) g.parts[pk] = { name:r.name, count:0, qty:0, total:0, suppliers:{}, last:null, machines:new Set() };
+      const pp = g.parts[pk];
+      pp.count++; pp.qty += r.qty; pp.total += r.total;
+      if(r.machineCode) pp.machines.add(r.machineCode);
+      const t = new Date(r.createdAt).getTime() || 0;
+      if(!pp.last || t > pp.last.t) pp.last = { t, price:r.unitPrice, supplier:r.supplier, running:r.running, repair:r.repair };
+      const sk = r.supplier || "— ไม่ระบุแหล่งซื้อ —";
+      const sp = pp.suppliers[sk] || (pp.suppliers[sk] = { name:sk, count:0, lastT:0, lastPrice:0, minPrice:Infinity });
+      sp.count++;
+      if(t >= sp.lastT){ sp.lastT = t; sp.lastPrice = r.unitPrice; }
+      if(r.unitPrice>0) sp.minPrice = Math.min(sp.minPrice, r.unitPrice);
+    });
+    return Object.values(groups).filter(g=>g.count>0).map(g=>{
+      const parts = Object.values(g.parts).map(pp=>{
+        const sups = Object.values(pp.suppliers).sort((a,b)=>b.lastT-a.lastT);
+        const priced = sups.filter(x=>x.minPrice!==Infinity);
+        const cheapest = priced.length>1 ? priced.reduce((m,x)=>x.minPrice<m.minPrice?x:m) : null;
+        return { ...pp, suppliers:sups, cheapest: cheapest && cheapest.name, machines:[...pp.machines] };
+      }).sort((a,b)=>b.count-a.count || b.total-a.total);
+      return { ...g, parts };
+    }).sort((a,b)=>(a.key==="other")-(b.key==="other") || b.total-a.total);
+  },[filtered]);
+
   const totalQty = filtered.reduce((s,r)=>s+r.qty,0);
   const totalCost = filtered.reduce((s,r)=>s+r.total,0);
   const fmt = (n)=>(Number(n)||0).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -10978,7 +11138,19 @@ function SpareParts({user}){
       Swal.fire({title:"กำลังสร้างไฟล์ Excel...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
       const XLSX = await ensureXLSX();
       let data, sheetName;
-      if(view==="machine"){
+      if(view==="type"){
+        sheetName = "อะไหล่ตามรูปแบบการซ่อม";
+        data = [];
+        const d10 = (t)=>{ if(!t) return ""; const x=new Date(t); return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
+        byType.forEach(g=>g.parts.forEach(pp=>pp.suppliers.forEach((sp,si)=>data.push({
+          "รูปแบบการซ่อม": g.label, "อะไหล่/รายการ": pp.name,
+          "ใช้ (ครั้ง)": si===0?pp.count:"", "จำนวนรวม": si===0?pp.qty:"",
+          "ร้าน/แหล่งซื้อ": sp.name, "ซื้อจากร้านนี้ (ครั้ง)": sp.count,
+          "ราคาล่าสุด/หน่วย": r2(sp.lastPrice), "ราคาต่ำสุด/หน่วย": sp.minPrice===Infinity?"":r2(sp.minPrice),
+          "ซื้อล่าสุด": d10(sp.lastT), "ร้านที่ถูกสุด": pp.cheapest===sp.name?"✓":"",
+          "เครื่องจักรที่ใช้": si===0?pp.machines.join(", "):"",
+        }))));
+      } else if(view==="machine"){
         sheetName = "อะไหล่รวมตามเครื่องจักร";
         data = [];
         byMachine.forEach(g=>g.parts.forEach(pp=>data.push({
@@ -11011,7 +11183,7 @@ function SpareParts({user}){
   };
 
   const stats = [
-    {label: view==="grouped"?"ชนิดอะไหล่":view==="machine"?"เครื่องจักรที่ใช้อะไหล่":"รายการอะไหล่", val: view==="grouped"?grouped.length:view==="machine"?byMachine.filter(g=>g.code).length:filtered.length, icon:"fa-box-open", color:"#3B82F6"},
+    {label: view==="grouped"?"ชนิดอะไหล่":view==="machine"?"เครื่องจักรที่ใช้อะไหล่":view==="type"?"รูปแบบการซ่อม":"รายการอะไหล่", val: view==="grouped"?grouped.length:view==="machine"?byMachine.filter(g=>g.code).length:view==="type"?byType.filter(g=>g.key!=="other").length:filtered.length, icon:"fa-box-open", color:"#3B82F6"},
     {label:"จำนวนชิ้นรวม", val:totalQty, icon:"fa-cubes-stacked", color:"#8B5CF6"},
     {label:"มูลค่าอะไหล่รวม", val:totalCost, icon:"fa-coins", color:"#10B981", money:true},
   ];
@@ -11028,6 +11200,7 @@ function SpareParts({user}){
           <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="list"?"var(--accent-soft)":"#fff",color:view==="list"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("list")}><i className="fa-solid fa-list"></i> รายการทั้งหมด</button>
           <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="grouped"?"var(--accent-soft)":"#fff",color:view==="grouped"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("grouped")}><i className="fa-solid fa-layer-group"></i> รวมตามชื่ออะไหล่</button>
           <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="machine"?"var(--accent-soft)":"#fff",color:view==="machine"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("machine")}><i className="fa-solid fa-industry"></i> รวมตามเครื่องจักร</button>
+          <button className="btn btn-ghost btn-sm" style={{borderRadius:0,background:view==="type"?"var(--accent-soft)":"#fff",color:view==="type"?"var(--primary)":"var(--muted)"}} onClick={()=>setView("type")}><i className="fa-solid fa-screwdriver-wrench"></i> รวมตามรูปแบบการซ่อม</button>
         </div>
         <div className="spacer"></div>
         <button className="btn btn-ghost" onClick={exportExcel} title="ส่งออกที่แสดงอยู่เป็น Excel"><i className="fa-solid fa-file-excel" style={{color:"#1D6F42"}}></i> ส่งออก Excel</button>
@@ -11053,6 +11226,51 @@ function SpareParts({user}){
               {filtered.length===0 && (<tr><td colSpan="9"><div className="empty"><i className="fa-solid fa-box-open"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div><div>อะไหล่จะปรากฏที่นี่เมื่อมีการประเมิน/บันทึกรายการอะไหล่ในใบแจ้งซ่อม</div></div></td></tr>)}
             </tbody>
           </table>
+        ) : view==="type" ? (
+          <div style={{padding:"4px 0"}}>
+            {byType.length===0 && <div className="empty"><i className="fa-solid fa-box-open"></i><div className="t">ยังไม่มีอะไหล่ที่บันทึกไว้</div></div>}
+            {byType.map(g=>{
+              const closed = !!closedType[g.key];
+              return (
+                <div key={g.key} style={{borderTop:"1px solid var(--line)"}}>
+                  <div onClick={()=>setClosedType(p=>({...p,[g.key]:!closed}))}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"11px 16px",cursor:"pointer",background:g.color+"0b"}}>
+                    <i className={`fa-solid fa-chevron-${closed?"right":"down"}`} style={{fontSize:11,color:"var(--muted)",width:12}}></i>
+                    <span style={{width:28,height:28,borderRadius:8,background:g.color+"1f",color:g.color,display:"grid",placeItems:"center",fontSize:13}}><i className={`fa-solid ${g.icon}`}></i></span>
+                    <b style={{fontSize:14}}>{g.label}</b>
+                    <span style={{fontSize:12.5,color:"var(--muted)"}}>{g.parts.length} ชนิด · ใช้ {g.count} ครั้ง</span>
+                    <span style={{flex:1}}></span>
+                    <b style={{color:g.color,whiteSpace:"nowrap"}}>฿{fmt(g.total)}</b>
+                  </div>
+                  {!closed && (
+                    <table className="data" style={{margin:0}}>
+                      <thead><tr><th>อะไหล่ / รายการ</th><th style={{whiteSpace:"nowrap"}}>ใช้ (ครั้ง)</th><th className="hide-on-mobile">จำนวนรวม</th><th>ร้าน / แหล่งซื้อ · ราคาล่าสุดต่อหน่วย</th><th className="hide-on-mobile">ซื้อล่าสุด</th></tr></thead>
+                      <tbody>{g.parts.map(pp=>(
+                        <tr key={pp.name}>
+                          <td style={{fontWeight:500}}>{pp.name}{pp.machines.length>0 && <div style={{fontSize:11.5,color:"var(--muted)",fontWeight:400}}>ใช้กับ {pp.machines.slice(0,3).join(", ")}{pp.machines.length>3?` +${pp.machines.length-3}`:""}</div>}</td>
+                          <td>{pp.count}</td>
+                          <td className="hide-on-mobile" style={{whiteSpace:"nowrap"}}>{pp.qty.toLocaleString("th-TH")}</td>
+                          <td style={{fontSize:12.5}}>
+                            {pp.suppliers.map(sp=>(
+                              <div key={sp.name} style={{display:"flex",gap:6,alignItems:"baseline",flexWrap:"wrap",padding:"1px 0"}}>
+                                <span style={{color:sp.name.startsWith("—")?"var(--muted)":"var(--text)"}}>{sp.name}</span>
+                                <span style={{fontFamily:"JetBrains Mono,monospace",color:"var(--primary)"}}>฿{fmt(sp.lastPrice)}</span>
+                                {sp.count>1 && <span style={{color:"var(--muted)",fontSize:11}}>×{sp.count}</span>}
+                                {pp.cheapest===sp.name && <span className="badge" style={{background:"#DCFCE7",color:"#047857",fontSize:10.5}}>ถูกสุด</span>}
+                              </div>
+                            ))}
+                          </td>
+                          <td className="hide-on-mobile" style={{fontSize:12.5,whiteSpace:"nowrap"}}>
+                            {pp.last && <>{window.__DATA.fmtDate(pp.last.t)}<div><span className="ticket-id" style={{cursor:"pointer",fontSize:11}} onClick={()=>setDetail(pp.last.repair)}>{pp.last.running}</span></div></>}
+                          </td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : view==="machine" ? (
           <table className="data">
             <thead><tr><th style={{width:28}}></th><th>เครื่องจักร</th><th className="hide-on-mobile">โครงการ</th><th>ใบแจ้งซ่อม</th><th className="hide-on-mobile">รายการอะไหล่</th><th>จำนวนชิ้น</th><th style={{textAlign:"right"}}>มูลค่าอะไหล่รวม</th></tr></thead>

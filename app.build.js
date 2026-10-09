@@ -2484,6 +2484,79 @@ KW_DICT.forEach(e => {
   }));
 });
 KW_LOOKUP.sort((x, y) => y.alias.length - x.alias.length);
+window.SYMPTOM_GROUPS = [{
+  key: "hyd",
+  label: "ไฮดรอลิก / น้ำมันรั่วซึม",
+  icon: "fa-oil-can",
+  color: "#0EA5E9",
+  terms: [["ไฮดรอลิก", "ไฮดรอลิก"], ["ไฮโดรลิก", "ไฮดรอลิก"], ["ไฮดรอลิค", "ไฮดรอลิก"], ["hydraulic", "ไฮดรอลิก"], ["สายไฮ", "สายไฮดรอลิก"], ["ปั๊มไฮ", "ปั๊มไฮดรอลิก"], ["กระบอก", "กระบอกไฮดรอลิก"], ["ซีล", "ซีล"], ["รั่ว", "รั่ว"], ["ซึม", "ซึม"], ["สายยาง", "สายยาง/สายอ่อน"], ["แรงดัน", "แรงดันตก"], ["ข้อต่อ", "ข้อต่อ"], ["วาล์ว", "วาล์ว"]]
+}, {
+  key: "eng",
+  label: "เครื่องยนต์",
+  icon: "fa-gears",
+  color: "#EF4444",
+  terms: [["เครื่องยนต์", "เครื่องยนต์"], ["engine", "เครื่องยนต์"], ["สตาร์ทไม่ติด", "สตาร์ทไม่ติด"], ["ติดยาก", "สตาร์ทติดยาก"], ["เครื่องดับ", "เครื่องดับ"], ["ดับเอง", "เครื่องดับ"], ["ควันดำ", "ควันดำ"], ["ควันขาว", "ควันขาว"], ["ควัน", "ควัน"], ["ความร้อนขึ้น", "ความร้อนขึ้น"], ["ร้อนจัด", "ความร้อนขึ้น"], ["โอเวอร์ฮีท", "ความร้อนขึ้น"], ["หม้อน้ำ", "หม้อน้ำ"], ["น้ำมันเครื่อง", "น้ำมันเครื่อง"], ["เทอร์โบ", "เทอร์โบ"], ["หัวฉีด", "หัวฉีด"], ["ไม่มีแรง", "เครื่องไม่มีแรง"], ["เร่งไม่ขึ้น", "เครื่องไม่มีแรง"], ["สายพาน", "สายพาน"], ["ปั๊มโซล่า", "ระบบเชื้อเพลิง"], ["โซล่า", "ระบบเชื้อเพลิง"], ["ดีเซล", "ระบบเชื้อเพลิง"]]
+}, {
+  key: "elec",
+  label: "ระบบไฟฟ้า / แบตเตอรี่",
+  icon: "fa-bolt",
+  color: "#F59E0B",
+  terms: [["แบต", "แบตเตอรี่"], ["battery", "แบตเตอรี่"], ["ไดชาร์จ", "ไดชาร์จ"], ["ไดสตาร์ท", "ไดสตาร์ท"], ["สายไฟ", "สายไฟ"], ["ไฟฟ้า", "ระบบไฟฟ้า"], ["ฟิวส์", "ฟิวส์"], ["รีเลย์", "รีเลย์"], ["หลอดไฟ", "หลอดไฟ"], ["ไฟหน้า", "ไฟส่องสว่าง"], ["ไฟท้าย", "ไฟส่องสว่าง"], ["ไฟเลี้ยว", "ไฟส่องสว่าง"], ["ไฟไม่ติด", "ไฟไม่ติด"], ["ไฟโชว์", "ไฟเตือนโชว์"], ["ไฟเตือน", "ไฟเตือนโชว์"], ["เซ็นเซอร์", "เซ็นเซอร์"], ["sensor", "เซ็นเซอร์"], ["หน้าจอ", "หน้าจอ/มาตรวัด"], ["มาตรวัด", "หน้าจอ/มาตรวัด"], ["เกจ", "หน้าจอ/มาตรวัด"], ["แตร", "แตร"], ["ช็อต", "ไฟช็อต"], ["ชอร์ต", "ไฟช็อต"]]
+}, {
+  key: "lift",
+  label: "สลิง / รอก / บูม (อุปกรณ์ยก)",
+  icon: "fa-link",
+  color: "#8B5CF6",
+  terms: [["สลิง", "สลิง"], ["sling", "สลิง"], ["wire rope", "สลิง"], ["ลวด", "สลิง/ลวด"], ["รอก", "รอก"], ["วินซ์", "วินซ์"], ["winch", "วินซ์"], ["บูม", "บูม"], ["boom", "บูม"], ["ตะขอ", "ตะขอ"], ["ขอเกี่ยว", "ตะขอ"], ["ม้วน", "ม้วนสลิง"], ["เครน", "เครน"]]
+}, {
+  key: "drill",
+  label: "ชุดเจาะ (Drilling)",
+  icon: "fa-screwdriver",
+  color: "#0F766E",
+  terms: [["หัวเจาะ", "หัวเจาะ"], ["ก้านเจาะ", "ก้านเจาะ"], ["ดอกเจาะ", "ดอกเจาะ"], ["เคลลี่", "เคลลี่บาร์"], ["kelly", "เคลลี่บาร์"], ["โรตารี่", "โรตารี่"], ["rotary", "โรตารี่"], ["ปลอกเจาะ", "ปลอกเจาะ"], ["casing", "ปลอกเจาะ"], ["ฟันเจาะ", "ฟันเจาะ"], ["เจาะ", "ระบบเจาะ"]]
+}, {
+  key: "drive",
+  label: "เกียร์ / เบรก / ระบบส่งกำลัง",
+  icon: "fa-gear",
+  color: "#DC2626",
+  terms: [["เบรก", "เบรก"], ["เบรค", "เบรก"], ["คลัตช์", "คลัตช์"], ["คลัช", "คลัตช์"], ["เกียร์", "เกียร์"], ["เพลา", "เพลา"], ["เฟือง", "เฟือง"], ["ลูกปืน", "ลูกปืน"], ["bearing", "ลูกปืน"], ["ไฟนอล", "ไฟนอลไดรฟ์"], ["สวิง", "ระบบสวิง"], ["ทอร์ค", "ทอร์คคอนเวอร์เตอร์"], ["กากบาท", "ยอย/กากบาท"], ["ยอย", "ยอย/กากบาท"]]
+}, {
+  key: "under",
+  label: "ยาง / ล้อ / ช่วงล่าง",
+  icon: "fa-circle-dot",
+  color: "#475569",
+  terms: [["ยางแตก", "ยางแตก"], ["ยางรั่ว", "ยางรั่ว"], ["ยางแบน", "ยางรั่ว"], ["ปะยาง", "ปะยาง"], ["ยางรถ", "ยาง"], ["เปลี่ยนยาง", "ยาง"], ["ล้อ", "ล้อ"], ["กระทะล้อ", "ล้อ"], ["น็อตล้อ", "ล้อ"], ["ช่วงล่าง", "ช่วงล่าง"], ["โช้ค", "โช้คอัพ"], ["แหนบ", "แหนบ"], ["ตีนตะขาบ", "ตีนตะขาบ"], ["แทร็ก", "ตีนตะขาบ"], ["track", "ตีนตะขาบ"], ["ลูกกลิ้ง", "ลูกกลิ้ง"], ["บุ้ง", "บุ้ง/บูช"], ["บูช", "บุ้ง/บูช"], ["พวงมาลัย", "พวงมาลัย"]]
+}, {
+  key: "body",
+  label: "ห้องโดยสาร / แอร์ / ตัวถัง",
+  icon: "fa-car-side",
+  color: "#0284C7",
+  terms: [["แอร์", "แอร์"], ["คอมแอร์", "แอร์"], ["กระจก", "กระจก"], ["ประตู", "ประตู"], ["เบาะ", "เบาะ"], ["ที่ปัดน้ำฝน", "ที่ปัดน้ำฝน"], ["ตัวถัง", "ตัวถัง"], ["กันชน", "กันชน"], ["บุ้งกี๋", "บุ้งกี๋"], ["ใบมีด", "ใบมีด"], ["รอยแตก", "รอยแตก/ร้าว"], ["ร้าว", "รอยแตก/ร้าว"], ["เชื่อม", "งานเชื่อม"]]
+}, {
+  key: "pm",
+  label: "บำรุงรักษาตามระยะ / ตรวจเช็ค",
+  icon: "fa-calendar-check",
+  color: "#10B981",
+  terms: [["เปลี่ยนถ่าย", "เปลี่ยนถ่ายน้ำมัน"], ["ถ่ายน้ำมัน", "เปลี่ยนถ่ายน้ำมัน"], ["ไส้กรอง", "ไส้กรอง"], ["กรองอากาศ", "ไส้กรอง"], ["กรองน้ำมัน", "ไส้กรอง"], ["จารบี", "อัดจารบี"], ["เช็คระยะ", "เช็คระยะ"], ["เช็กระยะ", "เช็คระยะ"], ["ตรวจเช็ค", "ตรวจเช็ค"], ["ตรวจเช็ก", "ตรวจเช็ค"], ["pm", "PM"]]
+}];
+window.SYMPTOM_OTHER = {
+  key: "other",
+  label: "อื่นๆ (ยังไม่เข้ากลุ่ม)",
+  icon: "fa-circle-question",
+  color: "#94A3B8"
+};
+window.classifySymptom = function (text) {
+  const t = String(text || "").toLowerCase();
+  const out = {};
+  if (!t.trim()) return out;
+  window.SYMPTOM_GROUPS.forEach(g => {
+    g.terms.forEach(([needle, disp]) => {
+      const hit = /^[a-z ]+$/.test(needle) ? new RegExp("(^|[^a-z])" + needle + "([^a-z]|$)").test(t) : t.includes(needle);
+      if (hit) (out[g.key] = out[g.key] || new Set()).add(disp);
+    });
+  });
+  return out;
+};
 window.extractKeywords = function (text) {
   let raw = String(text || "").toLowerCase().replace(/[0-9๐-๙]+/g, " ").replace(/[^\p{L}\p{M}\s]+/gu, " ");
   if (!raw.trim()) return [];
@@ -2537,7 +2610,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2215) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2254) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2692,7 +2765,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2345) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2384) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -2874,10 +2947,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2490) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2529) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2493) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2532) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3055,7 +3128,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2620) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2659) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3772,7 +3845,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3046) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3085) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4262,7 +4335,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3282) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3321) ---- */
 const {
   useState,
   useEffect,
@@ -4511,7 +4584,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3385) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3424) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -4739,7 +4812,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3568) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3607) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -5922,7 +5995,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4001) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4040) ---- */
 function Projects({
   user
 }) {
@@ -6559,7 +6632,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4254) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4293) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -6956,7 +7029,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4500) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4539) ---- */
 function Dashboard({
   user,
   goTo
@@ -6972,7 +7045,7 @@ function Dashboard({
   const [mapProject, setMapProject] = React.useState("");
   const [jobStatus, setJobStatus] = React.useState("all");
   const [jobLimit, setJobLimit] = React.useState(36);
-  const [symptomMode, setSymptomMode] = React.useState("keyword");
+  const [symptomMode, setSymptomMode] = React.useState("group");
   const [symptomLimit, setSymptomLimit] = React.useState(10);
   const [openKw, setOpenKw] = React.useState("");
   const doughnutRef = React.useRef(null);
@@ -7325,7 +7398,50 @@ function Dashboard({
       max: list.length ? list[0].count : 0
     };
   }, [repairs]);
-  const symptomView = symptomMode === "keyword" ? keywordStats : symptomStats;
+  const groupStats = React.useMemo(() => {
+    const defs = [...window.SYMPTOM_GROUPS, window.SYMPTOM_OTHER];
+    const map = {};
+    defs.forEach(g => {
+      map[g.key] = {
+        ...g,
+        count: 0,
+        open: 0,
+        jobs: [],
+        sub: {},
+        samples: []
+      };
+    });
+    repairs.forEach(r => {
+      const text = window.getProblems(r).map(p => p.text).filter(Boolean).join(" ") || r.title || "";
+      if (!String(text).trim()) return;
+      const hits = window.classifySymptom(text);
+      const keys = Object.keys(hits);
+      (keys.length ? keys : ["other"]).forEach(k => {
+        const g = map[k];
+        g.count++;
+        if (r.status !== "done") g.open++;
+        g.jobs.push(r);
+        (hits[k] || []).forEach(d => {
+          g.sub[d] = (g.sub[d] || 0) + 1;
+        });
+        if (k === "other" && g.samples.length < 3) {
+          const s1 = String(text).split("\n")[0].trim();
+          if (s1) g.samples.push(s1.length > 38 ? s1.slice(0, 38) + "…" : s1);
+        }
+      });
+    });
+    const withText = repairs.filter(r => String(window.getProblems(r).map(p => p.text).join(" ") || r.title || "").trim()).length;
+    const list = Object.values(map).filter(g => g.count > 0).map(g => ({
+      ...g,
+      top: Object.entries(g.sub).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    })).sort((a, b) => (a.key === "other") - (b.key === "other") || b.count - a.count);
+    return {
+      list,
+      total: withText,
+      max: list.reduce((m, g) => Math.max(m, g.count), 0)
+    };
+  }, [repairs]);
+  const symptomView = symptomMode === "keyword" ? keywordStats : symptomMode === "group" ? groupStats : symptomStats;
   const symptomTop = symptomView.list.slice(0, symptomLimit);
   const counts = {
     all: repairs.length,
@@ -7803,7 +7919,7 @@ function Dashboard({
     }
   }), "\u0E2A\u0E23\u0E38\u0E1B\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E40\u0E2A\u0E35\u0E22\u0E17\u0E35\u0E48\u0E1E\u0E1A\u0E1A\u0E48\u0E2D\u0E22"), React.createElement("div", {
     className: "sub"
-  }, symptomMode === "keyword" ? React.createElement(React.Fragment, null, "\u0E41\u0E22\u0E01\u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14\u0E08\u0E32\u0E01\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E41\u0E08\u0E49\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 \xB7 \u0E1E\u0E1A ", symptomView.list.length, " \u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14 \u0E08\u0E32\u0E01 ", symptomView.total, " \u0E43\u0E1A\u0E07\u0E32\u0E19") : React.createElement(React.Fragment, null, "\u0E08\u0E31\u0E14\u0E2D\u0E31\u0E19\u0E14\u0E31\u0E1A\u0E2D\u0E32\u0E01\u0E32\u0E23/\u0E1B\u0E31\u0E0D\u0E2B\u0E32\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \xB7 ", symptomView.list.length, " \u0E2D\u0E32\u0E01\u0E32\u0E23 \xB7 ", symptomView.total, " \u0E04\u0E23\u0E31\u0E49\u0E07"))), React.createElement("div", {
+  }, symptomMode === "group" ? React.createElement(React.Fragment, null, "\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E08\u0E32\u0E01 ", symptomView.total, " \u0E43\u0E1A\u0E07\u0E32\u0E19 \xB7 \u0E01\u0E14\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E14\u0E39\u0E43\u0E1A\u0E07\u0E32\u0E19") : symptomMode === "keyword" ? React.createElement(React.Fragment, null, "\u0E41\u0E22\u0E01\u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14\u0E08\u0E32\u0E01\u0E2D\u0E32\u0E01\u0E32\u0E23\u0E17\u0E35\u0E48\u0E41\u0E08\u0E49\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 \xB7 \u0E1E\u0E1A ", symptomView.list.length, " \u0E04\u0E35\u0E22\u0E4C\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E14 \u0E08\u0E32\u0E01 ", symptomView.total, " \u0E43\u0E1A\u0E07\u0E32\u0E19") : React.createElement(React.Fragment, null, "\u0E08\u0E31\u0E14\u0E2D\u0E31\u0E19\u0E14\u0E31\u0E1A\u0E2D\u0E32\u0E01\u0E32\u0E23/\u0E1B\u0E31\u0E0D\u0E2B\u0E32\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21\u0E21\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2A\u0E38\u0E14 \xB7 ", symptomView.list.length, " \u0E2D\u0E32\u0E01\u0E32\u0E23 \xB7 ", symptomView.total, " \u0E04\u0E23\u0E31\u0E49\u0E07"))), React.createElement("div", {
     className: "seg",
     style: {
       display: "inline-flex",
@@ -7813,6 +7929,10 @@ function Dashboard({
       padding: 3
     }
   }, [{
+    k: "group",
+    l: "สรุปตามกลุ่ม",
+    i: "fa-layer-group"
+  }, {
     k: "keyword",
     l: "คีย์เวิร์ด",
     i: "fa-key"
@@ -7841,7 +7961,213 @@ function Dashboard({
     className: `fa-solid ${t.i}`
   }), " ", t.l)))), React.createElement("div", {
     className: "card-body"
-  }, symptomView.list.length === 0 ? React.createElement("div", {
+  }, symptomMode === "group" && symptomView.list.length > 0 ? (() => {
+    const sel = symptomView.list.find(g => g.key === openKw);
+    return React.createElement(React.Fragment, null, React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill,minmax(250px,1fr))",
+        gap: 10
+      }
+    }, symptomView.list.map(g => {
+      const share = symptomView.total ? g.count / symptomView.total * 100 : 0;
+      const active = openKw === g.key;
+      return React.createElement("div", {
+        key: g.key,
+        onClick: () => setOpenKw(active ? "" : g.key),
+        title: "\u0E01\u0E14\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E14\u0E39\u0E43\u0E1A\u0E07\u0E32\u0E19\u0E43\u0E19\u0E01\u0E25\u0E38\u0E48\u0E21\u0E19\u0E35\u0E49",
+        style: {
+          cursor: "pointer",
+          border: `1.5px solid ${active ? g.color : "var(--line)"}`,
+          background: active ? g.color + "0d" : "#fff",
+          borderRadius: 12,
+          padding: "11px 13px",
+          transition: "border-color .15s"
+        }
+      }, React.createElement("div", {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 9
+        }
+      }, React.createElement("span", {
+        style: {
+          width: 30,
+          height: 30,
+          flexShrink: 0,
+          borderRadius: 9,
+          background: g.color + "1a",
+          color: g.color,
+          display: "grid",
+          placeItems: "center",
+          fontSize: 14
+        }
+      }, React.createElement("i", {
+        className: `fa-solid ${g.icon}`
+      })), React.createElement("div", {
+        style: {
+          flex: 1,
+          minWidth: 0,
+          fontWeight: 600,
+          fontSize: 13.5,
+          lineHeight: 1.25
+        }
+      }, g.label), React.createElement("div", {
+        style: {
+          textAlign: "right",
+          flexShrink: 0
+        }
+      }, React.createElement("div", {
+        style: {
+          fontSize: 19,
+          fontWeight: 700,
+          color: g.color,
+          lineHeight: 1
+        }
+      }, g.count), React.createElement("div", {
+        style: {
+          fontSize: 10.5,
+          color: "var(--muted)"
+        }
+      }, "\u0E43\u0E1A\u0E07\u0E32\u0E19"))), React.createElement("div", {
+        style: {
+          height: 6,
+          borderRadius: 999,
+          background: "var(--bg)",
+          overflow: "hidden",
+          margin: "9px 0 7px"
+        }
+      }, React.createElement("div", {
+        style: {
+          height: "100%",
+          width: (symptomView.max ? g.count / symptomView.max * 100 : 0) + "%",
+          background: g.color,
+          borderRadius: 999
+        }
+      })), React.createElement("div", {
+        style: {
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 11.5,
+          color: "var(--muted)"
+        }
+      }, React.createElement("span", null, share.toFixed(0), "% \u0E02\u0E2D\u0E07\u0E43\u0E1A\u0E07\u0E32\u0E19\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14"), g.open > 0 ? React.createElement("span", {
+        className: "badge",
+        style: {
+          background: "#FEF3C7",
+          color: "#B45309",
+          fontSize: 10.5
+        }
+      }, "\u0E04\u0E49\u0E32\u0E07 ", g.open) : React.createElement("span", {
+        style: {
+          color: "#047857"
+        }
+      }, "\u2713 \u0E1B\u0E34\u0E14\u0E04\u0E23\u0E1A")), React.createElement("div", {
+        style: {
+          marginTop: 6,
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "var(--text)"
+        }
+      }, g.key === "other" ? React.createElement("span", {
+        style: {
+          color: "var(--muted)"
+        }
+      }, "\u0E40\u0E0A\u0E48\u0E19 ", g.samples.join(" · ") || "—") : g.top.map(([d, n], i) => React.createElement("span", {
+        key: d
+      }, i ? " · " : "", d, " ", React.createElement("b", {
+        style: {
+          color: g.color
+        }
+      }, n)))));
+    })), sel && React.createElement("div", {
+      style: {
+        marginTop: 12,
+        border: `1px solid ${sel.color}55`,
+        borderRadius: 10,
+        overflow: "hidden"
+      }
+    }, React.createElement("div", {
+      style: {
+        padding: "8px 12px",
+        background: sel.color + "12",
+        fontSize: 13,
+        fontWeight: 600,
+        color: sel.color,
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${sel.icon}`
+    }), sel.label, " \xB7 ", sel.count, " \u0E43\u0E1A\u0E07\u0E32\u0E19", React.createElement("span", {
+      style: {
+        flex: 1
+      }
+    }), React.createElement("button", {
+      className: "ia",
+      onClick: () => setOpenKw(""),
+      title: "\u0E1B\u0E34\u0E14"
+    }, React.createElement("i", {
+      className: "fa-solid fa-xmark"
+    }))), sel.jobs.slice(0, 20).map(r => {
+      const st = window.getStatus(r.status);
+      return React.createElement("div", {
+        key: r.id,
+        onClick: () => setDashDetail(r),
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 12px",
+          borderTop: "1px solid var(--line-soft)",
+          cursor: "pointer",
+          fontSize: 13,
+          flexWrap: "wrap"
+        }
+      }, React.createElement("span", {
+        className: "mono",
+        style: {
+          color: "var(--primary)",
+          fontSize: 12,
+          fontWeight: 600
+        }
+      }, r.running || r.id), React.createElement("span", {
+        className: `badge ${st.className}`,
+        style: {
+          fontSize: 11
+        }
+      }, st.label), React.createElement("span", {
+        style: {
+          flex: 1,
+          minWidth: 120,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        }
+      }, String((window.getProblems(r)[0] || {}).text || r.title || "").split("\n")[0]), React.createElement("span", {
+        style: {
+          color: "var(--muted)",
+          fontSize: 12
+        }
+      }, r.machineCode || ""), React.createElement("span", {
+        style: {
+          color: "var(--muted)",
+          fontSize: 12
+        }
+      }, window.__DATA.fmtDate(r.createdAt)));
+    }), sel.jobs.length > 20 && React.createElement("div", {
+      style: {
+        padding: "7px 12px",
+        fontSize: 12,
+        color: "var(--muted)",
+        background: "#FAFBFC",
+        borderTop: "1px solid var(--line-soft)"
+      }
+    }, "\u0E41\u0E25\u0E30\u0E2D\u0E35\u0E01 ", sel.jobs.length - 20, " \u0E43\u0E1A\u0E07\u0E32\u0E19")));
+  })() : symptomView.list.length === 0 ? React.createElement("div", {
     className: "empty",
     style: {
       padding: 30
@@ -8340,7 +8666,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5077) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5198) ---- */
 function Repairs({
   user
 }) {
@@ -10887,7 +11213,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6027) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6148) ---- */
 function Users({
   user
 }) {
@@ -11459,7 +11785,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6211) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6332) ---- */
 function Categories({
   user
 }) {
@@ -11722,7 +12048,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6299) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6420) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -14876,7 +15202,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7297) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7418) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -18552,7 +18878,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8497) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8618) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -19651,7 +19977,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 8804) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 8925) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -22364,7 +22690,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10109) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10230) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -22837,7 +23163,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10444) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10565) ---- */
 function Permissions({
   user
 }) {
@@ -23457,7 +23783,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 10797) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 10918) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -23684,6 +24010,7 @@ function SpareParts({
 }) {
   const [q, setQ] = React.useState("");
   const [view, setView] = React.useState("list");
+  const [closedType, setClosedType] = React.useState({});
   const [openMc, setOpenMc] = React.useState({});
   const [detail, setDetail] = React.useState(null);
   const machineName = code => {
@@ -23794,6 +24121,79 @@ function SpareParts({
       })).sort((a, b) => b.total - a.total)
     })).sort((a, b) => (a.key === "__none__") - (b.key === "__none__") || b.total - a.total);
   }, [filtered]);
+  const byType = React.useMemo(() => {
+    const order = window.SYMPTOM_GROUPS.map(g => g.key);
+    const pick = hits => order.find(k => hits[k]);
+    const groups = {};
+    [...window.SYMPTOM_GROUPS, window.SYMPTOM_OTHER].forEach(g => {
+      groups[g.key] = {
+        ...g,
+        parts: {},
+        count: 0,
+        total: 0
+      };
+    });
+    filtered.forEach(r => {
+      const k = pick(window.classifySymptom(r.name)) || pick(window.classifySymptom(window.getProblems(r.repair).map(p => p.text).filter(Boolean).join(" ") || r.repair.title || "")) || "other";
+      const g = groups[k];
+      g.count++;
+      g.total += r.total;
+      const pk = r.name.toLowerCase().replace(/\s+/g, " ");
+      if (!g.parts[pk]) g.parts[pk] = {
+        name: r.name,
+        count: 0,
+        qty: 0,
+        total: 0,
+        suppliers: {},
+        last: null,
+        machines: new Set()
+      };
+      const pp = g.parts[pk];
+      pp.count++;
+      pp.qty += r.qty;
+      pp.total += r.total;
+      if (r.machineCode) pp.machines.add(r.machineCode);
+      const t = new Date(r.createdAt).getTime() || 0;
+      if (!pp.last || t > pp.last.t) pp.last = {
+        t,
+        price: r.unitPrice,
+        supplier: r.supplier,
+        running: r.running,
+        repair: r.repair
+      };
+      const sk = r.supplier || "— ไม่ระบุแหล่งซื้อ —";
+      const sp = pp.suppliers[sk] || (pp.suppliers[sk] = {
+        name: sk,
+        count: 0,
+        lastT: 0,
+        lastPrice: 0,
+        minPrice: Infinity
+      });
+      sp.count++;
+      if (t >= sp.lastT) {
+        sp.lastT = t;
+        sp.lastPrice = r.unitPrice;
+      }
+      if (r.unitPrice > 0) sp.minPrice = Math.min(sp.minPrice, r.unitPrice);
+    });
+    return Object.values(groups).filter(g => g.count > 0).map(g => {
+      const parts = Object.values(g.parts).map(pp => {
+        const sups = Object.values(pp.suppliers).sort((a, b) => b.lastT - a.lastT);
+        const priced = sups.filter(x => x.minPrice !== Infinity);
+        const cheapest = priced.length > 1 ? priced.reduce((m, x) => x.minPrice < m.minPrice ? x : m) : null;
+        return {
+          ...pp,
+          suppliers: sups,
+          cheapest: cheapest && cheapest.name,
+          machines: [...pp.machines]
+        };
+      }).sort((a, b) => b.count - a.count || b.total - a.total);
+      return {
+        ...g,
+        parts
+      };
+    }).sort((a, b) => (a.key === "other") - (b.key === "other") || b.total - a.total);
+  }, [filtered]);
   const totalQty = filtered.reduce((s, r) => s + r.qty, 0);
   const totalCost = filtered.reduce((s, r) => s + r.total, 0);
   const fmt = n => (Number(n) || 0).toLocaleString("th-TH", {
@@ -23817,7 +24217,28 @@ function SpareParts({
       });
       const XLSX = await ensureXLSX();
       let data, sheetName;
-      if (view === "machine") {
+      if (view === "type") {
+        sheetName = "อะไหล่ตามรูปแบบการซ่อม";
+        data = [];
+        const d10 = t => {
+          if (!t) return "";
+          const x = new Date(t);
+          return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+        };
+        byType.forEach(g => g.parts.forEach(pp => pp.suppliers.forEach((sp, si) => data.push({
+          "รูปแบบการซ่อม": g.label,
+          "อะไหล่/รายการ": pp.name,
+          "ใช้ (ครั้ง)": si === 0 ? pp.count : "",
+          "จำนวนรวม": si === 0 ? pp.qty : "",
+          "ร้าน/แหล่งซื้อ": sp.name,
+          "ซื้อจากร้านนี้ (ครั้ง)": sp.count,
+          "ราคาล่าสุด/หน่วย": r2(sp.lastPrice),
+          "ราคาต่ำสุด/หน่วย": sp.minPrice === Infinity ? "" : r2(sp.minPrice),
+          "ซื้อล่าสุด": d10(sp.lastT),
+          "ร้านที่ถูกสุด": pp.cheapest === sp.name ? "✓" : "",
+          "เครื่องจักรที่ใช้": si === 0 ? pp.machines.join(", ") : ""
+        }))));
+      } else if (view === "machine") {
         sheetName = "อะไหล่รวมตามเครื่องจักร";
         data = [];
         byMachine.forEach(g => g.parts.forEach(pp => data.push({
@@ -23900,8 +24321,8 @@ function SpareParts({
     }
   };
   const stats = [{
-    label: view === "grouped" ? "ชนิดอะไหล่" : view === "machine" ? "เครื่องจักรที่ใช้อะไหล่" : "รายการอะไหล่",
-    val: view === "grouped" ? grouped.length : view === "machine" ? byMachine.filter(g => g.code).length : filtered.length,
+    label: view === "grouped" ? "ชนิดอะไหล่" : view === "machine" ? "เครื่องจักรที่ใช้อะไหล่" : view === "type" ? "รูปแบบการซ่อม" : "รายการอะไหล่",
+    val: view === "grouped" ? grouped.length : view === "machine" ? byMachine.filter(g => g.code).length : view === "type" ? byType.filter(g => g.key !== "other").length : filtered.length,
     icon: "fa-box-open",
     color: "#3B82F6"
   }, {
@@ -23985,7 +24406,17 @@ function SpareParts({
     onClick: () => setView("machine")
   }, React.createElement("i", {
     className: "fa-solid fa-industry"
-  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("div", {
+  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23"), React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    style: {
+      borderRadius: 0,
+      background: view === "type" ? "var(--accent-soft)" : "#fff",
+      color: view === "type" ? "var(--primary)" : "var(--muted)"
+    },
+    onClick: () => setView("type")
+  }, React.createElement("i", {
+    className: "fa-solid fa-screwdriver-wrench"
+  }), " \u0E23\u0E27\u0E21\u0E15\u0E32\u0E21\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21")), React.createElement("div", {
     className: "spacer"
   }), React.createElement("button", {
     className: "btn btn-ghost",
@@ -24097,7 +24528,153 @@ function SpareParts({
     className: "fa-solid fa-box-open"
   }), React.createElement("div", {
     className: "t"
-  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49"), React.createElement("div", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E08\u0E30\u0E1B\u0E23\u0E32\u0E01\u0E0F\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E40\u0E21\u0E34\u0E19/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E43\u0E19\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21")))))) : view === "machine" ? React.createElement("table", {
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49"), React.createElement("div", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E08\u0E30\u0E1B\u0E23\u0E32\u0E01\u0E0F\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E01\u0E32\u0E23\u0E1B\u0E23\u0E30\u0E40\u0E21\u0E34\u0E19/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E43\u0E19\u0E43\u0E1A\u0E41\u0E08\u0E49\u0E07\u0E0B\u0E48\u0E2D\u0E21")))))) : view === "type" ? React.createElement("div", {
+    style: {
+      padding: "4px 0"
+    }
+  }, byType.length === 0 && React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-box-open"
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49")), byType.map(g => {
+    const closed = !!closedType[g.key];
+    return React.createElement("div", {
+      key: g.key,
+      style: {
+        borderTop: "1px solid var(--line)"
+      }
+    }, React.createElement("div", {
+      onClick: () => setClosedType(p => ({
+        ...p,
+        [g.key]: !closed
+      })),
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "11px 16px",
+        cursor: "pointer",
+        background: g.color + "0b"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid fa-chevron-${closed ? "right" : "down"}`,
+      style: {
+        fontSize: 11,
+        color: "var(--muted)",
+        width: 12
+      }
+    }), React.createElement("span", {
+      style: {
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        background: g.color + "1f",
+        color: g.color,
+        display: "grid",
+        placeItems: "center",
+        fontSize: 13
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${g.icon}`
+    })), React.createElement("b", {
+      style: {
+        fontSize: 14
+      }
+    }, g.label), React.createElement("span", {
+      style: {
+        fontSize: 12.5,
+        color: "var(--muted)"
+      }
+    }, g.parts.length, " \u0E0A\u0E19\u0E34\u0E14 \xB7 \u0E43\u0E0A\u0E49 ", g.count, " \u0E04\u0E23\u0E31\u0E49\u0E07"), React.createElement("span", {
+      style: {
+        flex: 1
+      }
+    }), React.createElement("b", {
+      style: {
+        color: g.color,
+        whiteSpace: "nowrap"
+      }
+    }, "\u0E3F", fmt(g.total))), !closed && React.createElement("table", {
+      className: "data",
+      style: {
+        margin: 0
+      }
+    }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48 / \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", {
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, "\u0E43\u0E0A\u0E49 (\u0E04\u0E23\u0E31\u0E49\u0E07)"), React.createElement("th", {
+      className: "hide-on-mobile"
+    }, "\u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E27\u0E21"), React.createElement("th", null, "\u0E23\u0E49\u0E32\u0E19 / \u0E41\u0E2B\u0E25\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D \xB7 \u0E23\u0E32\u0E04\u0E32\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E15\u0E48\u0E2D\u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("th", {
+      className: "hide-on-mobile"
+    }, "\u0E0B\u0E37\u0E49\u0E2D\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14"))), React.createElement("tbody", null, g.parts.map(pp => React.createElement("tr", {
+      key: pp.name
+    }, React.createElement("td", {
+      style: {
+        fontWeight: 500
+      }
+    }, pp.name, pp.machines.length > 0 && React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--muted)",
+        fontWeight: 400
+      }
+    }, "\u0E43\u0E0A\u0E49\u0E01\u0E31\u0E1A ", pp.machines.slice(0, 3).join(", "), pp.machines.length > 3 ? ` +${pp.machines.length - 3}` : "")), React.createElement("td", null, pp.count), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        whiteSpace: "nowrap"
+      }
+    }, pp.qty.toLocaleString("th-TH")), React.createElement("td", {
+      style: {
+        fontSize: 12.5
+      }
+    }, pp.suppliers.map(sp => React.createElement("div", {
+      key: sp.name,
+      style: {
+        display: "flex",
+        gap: 6,
+        alignItems: "baseline",
+        flexWrap: "wrap",
+        padding: "1px 0"
+      }
+    }, React.createElement("span", {
+      style: {
+        color: sp.name.startsWith("—") ? "var(--muted)" : "var(--text)"
+      }
+    }, sp.name), React.createElement("span", {
+      style: {
+        fontFamily: "JetBrains Mono,monospace",
+        color: "var(--primary)"
+      }
+    }, "\u0E3F", fmt(sp.lastPrice)), sp.count > 1 && React.createElement("span", {
+      style: {
+        color: "var(--muted)",
+        fontSize: 11
+      }
+    }, "\xD7", sp.count), pp.cheapest === sp.name && React.createElement("span", {
+      className: "badge",
+      style: {
+        background: "#DCFCE7",
+        color: "#047857",
+        fontSize: 10.5
+      }
+    }, "\u0E16\u0E39\u0E01\u0E2A\u0E38\u0E14")))), React.createElement("td", {
+      className: "hide-on-mobile",
+      style: {
+        fontSize: 12.5,
+        whiteSpace: "nowrap"
+      }
+    }, pp.last && React.createElement(React.Fragment, null, window.__DATA.fmtDate(pp.last.t), React.createElement("div", null, React.createElement("span", {
+      className: "ticket-id",
+      style: {
+        cursor: "pointer",
+        fontSize: 11
+      },
+      onClick: () => setDetail(pp.last.repair)
+    }, pp.last.running)))))))));
+  })) : view === "machine" ? React.createElement("table", {
     className: "data"
   }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", {
     style: {
