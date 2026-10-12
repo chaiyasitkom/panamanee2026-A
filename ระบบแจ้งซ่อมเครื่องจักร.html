@@ -5312,6 +5312,7 @@ function Dashboard({user,goTo}){
       {dashDetail && <window.RepairDetail r={dashDetail} onClose={()=>setDashDetail(null)} user={user}
         onQuick={quickAction}
         onProblems={()=>setTick(t=>t+1)}
+        onDeleted={()=>setTick(t=>t+1)}
         onEdit={canEditRepairs?(r)=>{setDashDetail(null);setEditFor(r);}:null}
         onEditParts={canEditRepairs?(r)=>{setDashDetail(null);setEditPartsFor(r);}:null}/>}
       {editFor && <window.EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveDashEdit}/>}
@@ -5524,7 +5525,7 @@ function Repairs({user}){
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onProblems={(id,next,st)=>{ const upd=rows.map(x=>x.id===id?{...x,problems:next,status:st}:x); setRows(upd); window.__DATA.repairs=window.__DATA.repairs.map(x=>x.id===id?{...x,problems:next,status:st}:x); }} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
+      {detail && <RepairDetail r={detail} onClose={()=>setDetail(null)} user={user} onQuick={quickAction} onDeleted={(d)=>setRows(prev=>prev.filter(x=>x.id!==d.id))} onProblems={(id,next,st)=>{ const upd=rows.map(x=>x.id===id?{...x,problems:next,status:st}:x); setRows(upd); window.__DATA.repairs=window.__DATA.repairs.map(x=>x.id===id?{...x,problems:next,status:st}:x); }} onEdit={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditFor(r);}:null} onEditParts={["Admin","Officer","Engineer"].includes(user.role)?(r)=>{setDetail(null);setEditPartsFor(r);}:null}/>}
       {editFor && <EditRepairModal r={editFor} onClose={()=>setEditFor(null)} onSave={saveEdit} />}
       {assessFor && <AssessModal r={assessFor} onClose={()=>setAssessFor(null)} onSave={saveAssess}/>}
       {editPartsFor && <AssessModal r={editPartsFor} mode="edit" onClose={()=>setEditPartsFor(null)} onSave={saveEditParts}/>}
@@ -5658,8 +5659,23 @@ function MachineQuickView({code,onClose}){
 }
 window.MachineQuickView = MachineQuickView;
 
-function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
+function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems,onDeleted}){
   const [machineView,setMachineView] = React.useState(false);
+  // ลบใบแจ้งซ่อม — Admin ลบได้ทันที (ยืนยันรหัสผ่าน) · ตำแหน่งอื่นส่งคำขอให้ Admin อนุมัติ (deleteWithApproval จัดการให้)
+  const canDelete = !!user && user.role !== "Safety Officer";
+  const removeRepair = async () => {
+    const done = await window.deleteWithApproval({
+      user, action:"deleteRepair", payload:{id:r.id},
+      entityLabel:"ใบแจ้งซ่อม", targetName:r.running||r.id, project:r.project||"",
+      targetInfo:[r.machineCode, (window.getProblems(r)[0]||{}).text].filter(Boolean).join(" · "),
+    });
+    if(!done) return;
+    if(user.role === "Admin"){
+      window.__DATA.repairs = (window.__DATA.repairs||[]).filter(x=>x.id!==r.id);
+      if(onDeleted) onDeleted(r);
+    }
+    onClose();
+  };
   const canAct = ["Admin","Officer","Technician"].includes(user.role) && !!onQuick;
   const [probs,setProbs] = React.useState(()=>window.getProblems(r));
   const setProbStatus = async (i, st) => {
@@ -5686,6 +5702,9 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems}){
         {onEditParts && <button className="btn btn-ghost" onClick={()=>onEditParts(r)} style={{color:"var(--primary)"}}><i className="fa-solid fa-list-check"></i> แก้ไขอะไหล่</button>}
         {onEdit && <button className="btn btn-ghost" onClick={()=>onEdit(r)} style={{color:"#1E40AF"}}><i className="fa-solid fa-user-pen"></i> {user.role==="Reporter"?"ขอแก้ไขข้อมูล":"แก้ไขข้อมูล"}</button>}
         <button className="btn btn-ghost" onClick={()=>window.shareRepairImage(r,user)}><i className="fa-solid fa-share-nodes"></i> แชร์รูปภาพ</button>
+        {canDelete && <button className="btn btn-ghost" onClick={removeRepair} style={{color:"#DC2626",borderColor:"#FECACA"}}
+          title={user.role==="Admin"?"ลบใบแจ้งซ่อมนี้":"ส่งคำขอลบให้ผู้ดูแลระบบ (Admin) อนุมัติ"}>
+          <i className="fa-solid fa-trash"></i> {user.role==="Admin"?"ลบรายการ":"ขอลบรายการ"}</button>}
       </>}>
       <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
         <Badge status={r.status}/><CategoryChip categoryId={r.categoryId}/>
@@ -9204,7 +9223,7 @@ function MyRepairs({user}){
           </table>
         </div>
       </div>
-      {detail && <RepairDetail r={detail} user={user} onClose={()=>setDetail(null)} onQuick={()=>{}} onEdit={openEdit}/>}
+      {detail && <RepairDetail r={detail} user={user} onClose={()=>setDetail(null)} onQuick={()=>{}} onEdit={openEdit} onDeleted={(d)=>setRows(prev=>prev.filter(x=>x.id!==d.id))}/>}
       {editFor && <EditRepairModal r={editFor} scope={needApproval?"reporter":undefined} onClose={()=>setEditFor(null)} onSave={saveEdit}/>}
     </>
   );

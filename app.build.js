@@ -8812,6 +8812,7 @@ function Dashboard({
     user: user,
     onQuick: quickAction,
     onProblems: () => setTick(t => t + 1),
+    onDeleted: () => setTick(t => t + 1),
     onEdit: canEditRepairs ? r => {
       setDashDetail(null);
       setEditFor(r);
@@ -8837,7 +8838,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5326) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5327) ---- */
 function Repairs({
   user
 }) {
@@ -9324,6 +9325,7 @@ function Repairs({
     onClose: () => setDetail(null),
     user: user,
     onQuick: quickAction,
+    onDeleted: d => setRows(prev => prev.filter(x => x.id !== d.id)),
     onProblems: (id, next, st) => {
       const upd = rows.map(x => x.id === id ? {
         ...x,
@@ -9653,9 +9655,30 @@ function RepairDetail({
   onQuick,
   onEdit,
   onEditParts,
-  onProblems
+  onProblems,
+  onDeleted
 }) {
   const [machineView, setMachineView] = React.useState(false);
+  const canDelete = !!user && user.role !== "Safety Officer";
+  const removeRepair = async () => {
+    const done = await window.deleteWithApproval({
+      user,
+      action: "deleteRepair",
+      payload: {
+        id: r.id
+      },
+      entityLabel: "ใบแจ้งซ่อม",
+      targetName: r.running || r.id,
+      project: r.project || "",
+      targetInfo: [r.machineCode, (window.getProblems(r)[0] || {}).text].filter(Boolean).join(" · ")
+    });
+    if (!done) return;
+    if (user.role === "Admin") {
+      window.__DATA.repairs = (window.__DATA.repairs || []).filter(x => x.id !== r.id);
+      if (onDeleted) onDeleted(r);
+    }
+    onClose();
+  };
   const canAct = ["Admin", "Officer", "Technician"].includes(user.role) && !!onQuick;
   const [probs, setProbs] = React.useState(() => window.getProblems(r));
   const setProbStatus = async (i, st) => {
@@ -9727,7 +9750,17 @@ function RepairDetail({
       onClick: () => window.shareRepairImage(r, user)
     }, React.createElement("i", {
       className: "fa-solid fa-share-nodes"
-    }), " \u0E41\u0E0A\u0E23\u0E4C\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E"))
+    }), " \u0E41\u0E0A\u0E23\u0E4C\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E"), canDelete && React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: removeRepair,
+      style: {
+        color: "#DC2626",
+        borderColor: "#FECACA"
+      },
+      title: user.role === "Admin" ? "ลบใบแจ้งซ่อมนี้" : "ส่งคำขอลบให้ผู้ดูแลระบบ (Admin) อนุมัติ"
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
+    }), " ", user.role === "Admin" ? "ลบรายการ" : "ขอลบรายการ"))
   }, React.createElement("div", {
     style: {
       display: "flex",
@@ -11384,7 +11417,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6276) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6295) ---- */
 function Users({
   user
 }) {
@@ -11956,7 +11989,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6460) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6479) ---- */
 function Categories({
   user
 }) {
@@ -12219,7 +12252,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6548) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6567) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -15373,7 +15406,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7546) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7565) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -19539,7 +19572,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 8908) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 8927) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -20624,7 +20657,8 @@ function MyRepairs({
     user: user,
     onClose: () => setDetail(null),
     onQuick: () => {},
-    onEdit: openEdit
+    onEdit: openEdit,
+    onDeleted: d => setRows(prev => prev.filter(x => x.id !== d.id))
   }), editFor && React.createElement(EditRepairModal, {
     r: editFor,
     scope: needApproval ? "reporter" : undefined,
@@ -20638,7 +20672,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9215) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9234) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -23351,7 +23385,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10520) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10539) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -23824,7 +23858,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10855) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10874) ---- */
 function Permissions({
   user
 }) {
@@ -24444,7 +24478,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11208) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11227) ---- */
 function WorkspacePicker({
   user,
   onContinue,
