@@ -10188,6 +10188,7 @@ function DeliveryOrders({user}){
   const [edit,setEdit] = React.useState(null);
   const [transferOpen,setTransferOpen] = React.useState(false);
   const [hideCancelled,setHideCancelled] = React.useState(false);
+  const [openItems,setOpenItems] = React.useState({});   // ใบที่กดดูรายการครบทุกบรรทัด
 
   const saveEdit = async (doc, patch) => {
     patch = { ...patch,
@@ -10302,7 +10303,8 @@ function DeliveryOrders({user}){
   const cancelledCount = scoped.filter(d=>d.cancelled).length;
   const filtered = scoped.filter(d=>{
     if(hideCancelled && d.cancelled) return false;
-    return !q || [d.docNo,d.toProject,d.fromProjectLabel,d.sender,d.receiver,d.note].join(" ").toLowerCase().includes(q.toLowerCase());
+    return !q || [d.docNo,d.toProject,d.fromProjectLabel,d.sender,d.receiver,d.note,d.driverName,d.vehiclePlate,
+      ...(d.items||[]).flatMap(x=>[x.name,x.assetCode,x.serial])].join(" ").toLowerCase().includes(q.toLowerCase());
   });
 
   return (
@@ -10310,7 +10312,7 @@ function DeliveryOrders({user}){
     <div className="card">
       <div className="filters">
         <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i>
-          <input placeholder="ค้นหาเลขที่ / โครงการ / ผู้ส่ง / ผู้รับ..." value={q} onChange={e=>setQ(e.target.value)} />
+          <input placeholder="ค้นหาเลขที่ / โครงการ / ชื่อรายการ / รหัส / ผู้ส่ง..." value={q} onChange={e=>setQ(e.target.value)} />
         </div>
         {cancelledCount>0 && (
           <label style={{display:"flex",alignItems:"center",gap:7,padding:"9px 12px",border:`1px solid ${hideCancelled?"var(--primary)":"var(--line)"}`,borderRadius:10,background:hideCancelled?"var(--accent-soft)":"#fff",fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -10330,8 +10332,8 @@ function DeliveryOrders({user}){
       <div className="table-wrap">
         <table className="data">
           <thead><tr>
-            <th>เลขที่</th><th>วันที่</th><th className="hide-on-mobile">จากโครงการ</th><th>ไปยังโครงการ</th>
-            <th>รายการ</th><th className="hide-on-mobile">ผู้ส่งมอบ</th><th>PDF</th>{canEdit && <th>จัดการ</th>}
+            <th>เลขที่</th><th>รายการ</th><th>วันที่</th><th className="hide-on-mobile">จากโครงการ</th><th>ไปยังโครงการ</th>
+            <th className="hide-on-mobile">ผู้ส่งมอบ</th><th>PDF</th>{canEdit && <th>จัดการ</th>}
           </tr></thead>
           <tbody>
             {filtered.map(d=>(
@@ -10343,10 +10345,30 @@ function DeliveryOrders({user}){
                     <i className="fa-solid fa-ban"></i> ยกเลิกแล้ว
                   </div>}
                 </td>
+                <td style={{minWidth:200,maxWidth:340}}>
+                  {(()=>{
+                    const items = d.items||[];
+                    const open = !!openItems[d.key];
+                    const shown = open ? items : items.slice(0,3);
+                    return (<>
+                      {shown.map((x,i)=>(
+                        <div key={i} style={{display:"flex",gap:6,alignItems:"baseline",fontSize:12.5,lineHeight:1.45,padding:"1px 0",textDecoration:d.cancelled?"line-through":"none"}}>
+                          <span style={{color:"var(--muted)",flexShrink:0,minWidth:14}}>{i+1}.</span>
+                          <span style={{flex:1,minWidth:0}}>{x.name||x.assetCode||"—"}{x.assetCode&&x.name?<span className="mono" style={{color:"var(--muted)",fontSize:11}}> {x.assetCode}</span>:null}</span>
+                          <b style={{whiteSpace:"nowrap",color:"var(--primary)"}}>{(Number(x.quantity)||0).toLocaleString("th-TH")} {x.unit||""}</b>
+                        </div>
+                      ))}
+                      {items.length>3 && <button className="btn btn-ghost btn-sm" style={{padding:"1px 8px",fontSize:11.5,marginTop:2}}
+                        onClick={()=>setOpenItems(p=>({...p,[d.key]:!open}))}>
+                        {open?"ย่อ":`+ อีก ${items.length-3} รายการ`}</button>}
+                      {items.length===0 && <span style={{color:"var(--muted)"}}>—</span>}
+                      {items.length>1 && <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>รวม {items.length} รายการ · {items.reduce((s,x)=>s+(Number(x.quantity)||0),0).toLocaleString("th-TH")} หน่วย</div>}
+                    </>);
+                  })()}
+                </td>
                 <td style={{whiteSpace:"nowrap",color:"var(--muted)"}}>{d.docDate || window.__DATA.fmtDate(d.when)}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.fromProjectLabel||"—"}</td>
                 <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/>{d.toSubSite && <div style={{marginTop:3}}><SubSiteTag value={d.toSubSite} project={d.toProject}/></div>}</td>
-                <td style={{whiteSpace:"nowrap"}}>{(d.items||[]).length} รายการ · {(d.items||[]).reduce((s,x)=>s+(Number(x.quantity)||0),0).toLocaleString("th-TH")} หน่วย</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
                 <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
                 {canEdit && <td><div className="row-actions">

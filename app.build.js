@@ -22564,6 +22564,7 @@ function DeliveryOrders({
   const [edit, setEdit] = React.useState(null);
   const [transferOpen, setTransferOpen] = React.useState(false);
   const [hideCancelled, setHideCancelled] = React.useState(false);
+  const [openItems, setOpenItems] = React.useState({});
   const saveEdit = async (doc, patch) => {
     patch = {
       ...patch,
@@ -22772,7 +22773,7 @@ function DeliveryOrders({
   const cancelledCount = scoped.filter(d => d.cancelled).length;
   const filtered = scoped.filter(d => {
     if (hideCancelled && d.cancelled) return false;
-    return !q || [d.docNo, d.toProject, d.fromProjectLabel, d.sender, d.receiver, d.note].join(" ").toLowerCase().includes(q.toLowerCase());
+    return !q || [d.docNo, d.toProject, d.fromProjectLabel, d.sender, d.receiver, d.note, d.driverName, d.vehiclePlate, ...(d.items || []).flatMap(x => [x.name, x.assetCode, x.serial])].join(" ").toLowerCase().includes(q.toLowerCase());
   });
   return React.createElement(React.Fragment, null, React.createElement("div", {
     className: "card"
@@ -22783,7 +22784,7 @@ function DeliveryOrders({
   }, React.createElement("i", {
     className: "fa-solid fa-magnifying-glass"
   }), React.createElement("input", {
-    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48 / \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 / \u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07 / \u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A...",
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48 / \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 / \u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 / \u0E23\u0E2B\u0E31\u0E2A / \u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07...",
     value: q,
     onChange: e => setQ(e.target.value)
   })), cancelledCount > 0 && React.createElement("label", {
@@ -22831,9 +22832,9 @@ function DeliveryOrders({
     className: "table-wrap"
   }, React.createElement("table", {
     className: "data"
-  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", {
+  }, React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "\u0E40\u0E25\u0E02\u0E17\u0E35\u0E48"), React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48"), React.createElement("th", {
     className: "hide-on-mobile"
-  }, "\u0E08\u0E32\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23"), React.createElement("th", {
+  }, "\u0E08\u0E32\u0E01\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", null, "\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"), React.createElement("th", {
     className: "hide-on-mobile"
   }, "\u0E1C\u0E39\u0E49\u0E2A\u0E48\u0E07\u0E21\u0E2D\u0E1A"), React.createElement("th", null, "PDF"), canEdit && React.createElement("th", null, "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23"))), React.createElement("tbody", null, filtered.map(d => React.createElement("tr", {
     key: d.key,
@@ -22867,6 +22868,70 @@ function DeliveryOrders({
     className: "fa-solid fa-ban"
   }), " \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27")), React.createElement("td", {
     style: {
+      minWidth: 200,
+      maxWidth: 340
+    }
+  }, (() => {
+    const items = d.items || [];
+    const open = !!openItems[d.key];
+    const shown = open ? items : items.slice(0, 3);
+    return React.createElement(React.Fragment, null, shown.map((x, i) => React.createElement("div", {
+      key: i,
+      style: {
+        display: "flex",
+        gap: 6,
+        alignItems: "baseline",
+        fontSize: 12.5,
+        lineHeight: 1.45,
+        padding: "1px 0",
+        textDecoration: d.cancelled ? "line-through" : "none"
+      }
+    }, React.createElement("span", {
+      style: {
+        color: "var(--muted)",
+        flexShrink: 0,
+        minWidth: 14
+      }
+    }, i + 1, "."), React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, x.name || x.assetCode || "—", x.assetCode && x.name ? React.createElement("span", {
+      className: "mono",
+      style: {
+        color: "var(--muted)",
+        fontSize: 11
+      }
+    }, " ", x.assetCode) : null), React.createElement("b", {
+      style: {
+        whiteSpace: "nowrap",
+        color: "var(--primary)"
+      }
+    }, (Number(x.quantity) || 0).toLocaleString("th-TH"), " ", x.unit || ""))), items.length > 3 && React.createElement("button", {
+      className: "btn btn-ghost btn-sm",
+      style: {
+        padding: "1px 8px",
+        fontSize: 11.5,
+        marginTop: 2
+      },
+      onClick: () => setOpenItems(p => ({
+        ...p,
+        [d.key]: !open
+      }))
+    }, open ? "ย่อ" : `+ อีก ${items.length - 3} รายการ`), items.length === 0 && React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "\u2014"), items.length > 1 && React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: "var(--muted)",
+        marginTop: 2
+      }
+    }, "\u0E23\u0E27\u0E21 ", items.length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 ", items.reduce((s, x) => s + (Number(x.quantity) || 0), 0).toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"));
+  })()), React.createElement("td", {
+    style: {
       whiteSpace: "nowrap",
       color: "var(--muted)"
     }
@@ -22889,10 +22954,6 @@ function DeliveryOrders({
     value: d.toSubSite,
     project: d.toProject
   }))), React.createElement("td", {
-    style: {
-      whiteSpace: "nowrap"
-    }
-  }, (d.items || []).length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \xB7 ", (d.items || []).reduce((s, x) => s + (Number(x.quantity) || 0), 0).toLocaleString("th-TH"), " \u0E2B\u0E19\u0E48\u0E27\u0E22"), React.createElement("td", {
     className: "hide-on-mobile",
     style: {
       fontSize: 13
@@ -23385,7 +23446,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10539) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10561) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -23858,7 +23919,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 10874) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 10896) ---- */
 function Permissions({
   user
 }) {
@@ -24478,7 +24539,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11227) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11249) ---- */
 function WorkspacePicker({
   user,
   onContinue,
