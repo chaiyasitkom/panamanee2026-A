@@ -6,12 +6,12 @@
 <meta name="theme-color" content="#1E3A8A" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<title>ระบบแจ้งซ่อมเครื่องจักร</title>
+<title>ERP PNM</title>
 
 <!-- ติดตั้งเป็นแอปบนมือถือได้ (PWA) — ไม่ต้องผ่าน Play Store / App Store -->
 <link rel="manifest" href="manifest.webmanifest" />
 <meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-title" content="แจ้งซ่อม" />
+<meta name="apple-mobile-web-app-title" content="ERP PNM" />
 <link rel="apple-touch-icon" href="icon-192.png" />
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
 
@@ -841,6 +841,8 @@ const _DELETE_OPS = {
   } },
   // ลบรายการในคลัง — ประวัติรับ/เบิกเก็บไว้ตามเดิมเพื่อตรวจย้อนหลัง
   deleteStockItem:     { label:'รายการสต๊อกหน้างาน',  key:'key', exec: async (p) => { await _db.ref('/stockItems/' + p.key).remove(); } },
+  // ที่จัดเก็บข้อมูลทั่วไป — ลบเฉพาะข้อมูลใน Firebase · ไฟล์/รูปใน Drive เก็บไว้ตามเดิม (กู้ย้อนหลังได้)
+  deleteGeneralRecord: { label:'ข้อมูลทั่วไป',        key:'key', exec: async (p) => { await _db.ref('/generalRecords/' + p.key).remove(); } },
   // ประวัติการย้ายเก็บเป็น array ในตัวเครื่องจักร — อ่านของจริงตอนลบเสมอ เผื่อมีการย้ายเพิ่มระหว่างรออนุมัติ
   deleteTransferEntry: {
     label:'ประวัติการย้ายเครื่องจักร', key:'machineId',
@@ -926,6 +928,7 @@ async function api(action, payload = {}) {
     case 'deleteAssetRegistry':
     case 'deleteDeliveryOrder':
     case 'deleteStockItem':
+    case 'deleteGeneralRecord':
     case 'deleteTransferEntry': {
       const by = payload.by || {};
       const role = String(payload.role || by.role || '');
@@ -1407,6 +1410,54 @@ async function api(action, payload = {}) {
       return { ...repair, timeline: Object.values(repair.timeline) };
     }
 
+    // ── ที่จัดเก็บข้อมูลทั่วไป (/generalRecords) ─────────────────────────────
+    case 'loadGeneralRecords': {
+      const snap = await _db.ref('/generalRecords').get();
+      return Object.entries(snap.val() || {}).map(([key, v]) => ({
+        ...v, key,
+        photos: Array.isArray(v.photos) ? v.photos.filter(Boolean) : Object.values(v.photos || {}).filter(Boolean),
+        files: Array.isArray(v.files) ? v.files.filter(Boolean) : Object.values(v.files || {}).filter(Boolean),
+      }));
+    }
+
+    case 'saveGeneralRecord': {
+      const { record = {}, isNew, by = {} } = payload;
+      if (!String(record.title || '').trim()) throw new Error('กรุณาใส่ชื่อหัวข้อ');
+      const now = new Date().toISOString();
+      const key = record.key || _db.ref('/generalRecords').push().key;
+      const rec = {
+        title: String(record.title || '').trim(),
+        info: String(record.info || ''),
+        detail: String(record.detail || ''),
+        photos: (Array.isArray(record.photos) ? record.photos : []).filter(Boolean).slice(0, 8),
+        files: (Array.isArray(record.files) ? record.files : []).filter(f => f && f.url).slice(0, 5)
+          .map(f => ({ name: String(f.name || 'ไฟล์'), url: String(f.url), mimeType: String(f.mimeType || ''), size: Number(f.size) || 0 })),
+        updatedAt: now,
+        updatedById: by.id || '', updatedByName: by.name || '',
+      };
+      if (isNew) {
+        rec.createdAt = now;
+        rec.createdById = by.id || '';
+        rec.createdByName = by.name || '';
+        await _db.ref('/generalRecords/' + key).set(rec);
+      } else {
+        await _db.ref('/generalRecords/' + key).update(rec);
+      }
+      const saved = (await _db.ref('/generalRecords/' + key).get()).val() || rec;
+      return { ...saved, key };
+    }
+
+    // อัปโหลดรูป/ไฟล์ของข้อมูลทั่วไปขึ้น Drive
+    // backend เวอร์ชันเก่ายังไม่มี action นี้ → ใช้การอัปโหลดรูปใบแจ้งซ่อม (รับได้ทุกชนิดไฟล์) แยกซับโฟลเดอร์ไว้ชั่วคราว
+    case 'uploadGeneralFile': {
+      try {
+        return await callAppsScript('uploadGeneralFile', payload);
+      } catch (err) {
+        if (!/Unknown action/i.test(String(err && err.message || err))) throw err;
+        return callAppsScript('uploadRepairPhoto', { running: 'ข้อมูลทั่วไป-' + (payload.tag || 'ทั่วไป'), upload: payload.upload });
+      }
+    }
+
     case 'loadAssetRegistry': {
       const snap = await _assetDb.ref('/assets').get();
       return Object.entries(snap.val() || {}).map(([key, v]) => ({ key, ...(v || {}) }));
@@ -1779,7 +1830,7 @@ async function api(action, payload = {}) {
 
     case 'updateRepairStatus': {
       const { id, status, by, note, cost, patch: extraPatch } = payload;
-      const ALLOW = ['title','desc','repairNote','siteId','subSite','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost','odometerKm','hourMeter','driverName'];
+      const ALLOW = ['title','desc','repairNote','siteId','subSite','machineCode','project','categoryId','reporterName','assignedId','parts','laborCost','odometerKm','hourMeter','driverName','repairWorks'];
       const clean = {};
       ALLOW.forEach(k => { if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k]; });
       clean.updatedAt = new Date().toISOString();
@@ -1845,6 +1896,7 @@ const ACT_LABELS = {
   saveAssetRegistry:"บันทึกทะเบียนทรัพย์สิน", transferAssets:"ย้ายทรัพย์สิน / ออกใบส่งของ", cancelDeliveryOrder:"ยกเลิกใบส่งของ", updateDeliveryOrder:"แก้ไขใบส่งของ",
   deleteProject:"ลบโครงการ", deleteUser:"ลบผู้ใช้งาน", deleteCategory:"ลบหมวดหมู่", deleteMachine:"ลบเครื่องจักร", deleteRepair:"ลบใบแจ้งซ่อม",
   deleteWithdrawal:"ลบใบขอเบิก", deleteAssetRegistry:"ลบทรัพย์สิน", deleteDeliveryOrder:"ลบใบส่งของ", deleteStockItem:"ลบรายการสต๊อก", deleteTransferEntry:"ลบประวัติการย้าย",
+  saveGeneralRecord:"บันทึกข้อมูลทั่วไป", uploadGeneralFile:"อัปโหลดรูป/ไฟล์ข้อมูลทั่วไป", deleteGeneralRecord:"ลบข้อมูลทั่วไป",
   requestDelete:"ส่งคำขออนุมัติลบ", requestChange:"ส่งคำขออนุมัติแก้ไข", approveDelete:"อนุมัติคำขอ", rejectDelete:"ไม่อนุมัติคำขอ",
 };
 const ACT_SKIP = /^(load|get|list|bootstrap|login|logUnlock|verifyPassword|logActivity)/;
@@ -1929,6 +1981,7 @@ const ERP_SYSTEMS = [
   { id:"consume", name:"Consume", desc:"เบิกจ่าย/เช็คสต๊อก · สต๊อกหน้างาน", icon:"fa-box-open", status:"ready", startPage:"site-stock" },
   // ระบบการจัดการ — ไม่ล็อก role ไว้ตรงนี้ เพราะคุมด้วยสิทธิ์รายฟังก์ชันแล้ว (เข้าได้ถ้ามีสิทธิ์อย่างน้อย 1 หน้า)
   { id:"manage", name:"ระบบการจัดการ", desc:"ผู้ใช้งาน สิทธิ์เข้าถึง หมวดหมู่ และโครงการ", icon:"fa-sliders", status:"ready", startPage:"users" },
+  { id:"general", name:"ที่จัดเก็บข้อมูลทั่วไป", desc:"เก็บหัวข้อ ข้อมูล รายละเอียด พร้อมรูป 8 รูป และไฟล์แนบ 5 ไฟล์", icon:"fa-folder-open", status:"ready", startPage:"general-data" },
   { id:"pc", name:"PC (Petty Cash)", desc:"รอพัฒนา", icon:"fa-money-bill-wave", status:"soon" },
   { id:"hr-time", name:"บุคลากร/เวลาทำงาน", desc:"รอพัฒนา", icon:"fa-users", status:"soon" },
 ];
@@ -2029,6 +2082,8 @@ window.APP_FEATURES = [
   // addedLater = หน้าที่เพิ่มหลังจากเคยมีการตั้งสิทธิ์แบบเก่า (ไม่มี known) — ให้ได้ค่าเริ่มต้นแทนที่จะถูกซ่อน
   { key:"withdrawal-pending", sys:"consume", group:"Consume",      label:"รายการรอจัดซื้อ/จัดหา",   icon:"fa-cart-shopping",     roles:["Admin"], addedLater:true },
   { key:"site-stock",       sys:"consume", group:"Consume",        label:"สต๊อก/เบิกจ่ายหน้างาน",   icon:"fa-warehouse",         roles:["Admin","Director","Officer","Engineer","Technician"], addedLater:true },
+  // ── ที่จัดเก็บข้อมูลทั่วไป ──
+  { key:"general-data",     sys:"general", group:"ที่จัดเก็บข้อมูลทั่วไป", label:"ที่จัดเก็บข้อมูลทั่วไป", icon:"fa-folder-open", roles:["Admin","Director","Officer","Engineer","Technician","Safety Officer","Reporter"], addedLater:true },
   // ── ระบบการจัดการ ──
   { key:"projects",         sys:"manage",  group:"ระบบการจัดการ",  label:"โครงการ",                icon:"fa-diagram-project",   roles:["Admin","Director","Officer"] },
   { key:"users",            sys:"manage",  group:"ระบบการจัดการ",  label:"จัดการผู้ใช้งาน",         icon:"fa-users-gear",        roles:["Admin","Director","Officer"] },
@@ -2043,6 +2098,7 @@ window.SYSTEM_PAGES = {
   assets:  ["machines","pm-plan","asset-registry","asset-do","doc-pj2","transfer-history"],
   consume: ["withdrawals","withdrawal-pending","site-stock"],
   manage:  ["projects","users","categories","login-logs","permissions"],
+  general: ["general-data"],
 };
 
 window.defaultPagesFor = (role) => window.APP_FEATURES.filter(f=>(f.roles||[]).includes(role)).map(f=>f.key);
@@ -2885,6 +2941,7 @@ window.applyDeleteLocally = function(action, payload = {}){
   else if(action === "deleteAssetRegistry") { if(Array.isArray(D.assetRegistry))  D.assetRegistry  = byKey(D.assetRegistry); }
   else if(action === "deleteDeliveryOrder") { if(Array.isArray(D.deliveryOrders)) D.deliveryOrders = byKey(D.deliveryOrders); }
   else if(action === "deleteStockItem")     { if(D.siteStock) D.siteStock = {...D.siteStock, items: byKey(D.siteStock.items)}; }
+  else if(action === "deleteGeneralRecord") { if(Array.isArray(D.generalRecords)) D.generalRecords = byKey(D.generalRecords); }
   else if(action === "deleteTransferEntry"){
     const m = (D.machines||[]).find(x => x.id === payload.machineId);
     if(m) m.transferHistory = (m.transferHistory||[]).filter(t => !(String(t.when||"") === String(payload.when||"") && String(t.to||"") === String(payload.to||"")));
@@ -3204,6 +3261,11 @@ window.buildDeleteSnapshot = function(action, payload = {}){
       const w = (D.withdrawals||[]).find(x=>String(x.key)===String(payload.key)); if(!w) return null;
       add("เลขที่ใบเบิก", w.docNo||w.key); add("วันที่", w.docDate); add("โครงการ / แผนก", w.department||w.project); add("ผู้ขอเบิก", w.requester);
       add("รายการ", (w.items||[]).filter(x=>x&&x.name).slice(0,10).map((x,i)=>`${i+1}. ${x.name} ${x.qty||""} ${x.unit||""}`).join("\n"));
+    } else if(action==="deleteGeneralRecord"){
+      const g = (D.generalRecords||[]).find(x=>String(x.key)===String(payload.key)); if(!g) return null;
+      add("ชื่อหัวข้อ", g.title); add("ข้อมูล", g.info); add("รายละเอียด", String(g.detail||"").slice(0,300));
+      add("ไฟล์แนบ", (g.files||[]).map(f=>f.name)); add("ผู้บันทึก", g.createdByName);
+      photos = g.photos || [];
     } else if(action==="deleteStockItem"){
       const it = ((D.siteStock&&D.siteStock.items)||[]).find(x=>String(x.key)===String(payload.key)); if(!it) return null;
       add("รหัส", it.code); add("ชื่อรายการ", it.name); add("คงเหลือ", `${num(it.qty)} ${it.unit||""}`); add("โครงการ", it.project);
@@ -4211,7 +4273,11 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
     { key:"withdrawal-pending", icon:"fa-cart-shopping", label:"รายการรอจัดซื้อ/จัดหา", badge: window.withdrawalPendingCount() },
     { key:"site-stock", icon:"fa-warehouse", label:"สต๊อก/เบิกจ่ายหน้างาน" },
   ];
-  const navBySystem = systemId==="assets"
+  const generalNav = [
+    { key:"general-data", icon:"fa-folder-open", label:"ที่จัดเก็บข้อมูลทั่วไป" },
+  ];
+  const navBySystem = systemId==="general" ? generalNav
+    : systemId==="assets"
     ? (isSafety ? safetyAssetNav : assetNav)
     : systemId==="manage" ? manageNav
     : systemId==="consume" ? consumeNav
@@ -4229,7 +4295,7 @@ function Sidebar({user,active,onNav,onLogout,open,onClose,pinOn,onOpenPin,onLock
       <aside className={`sidebar ${open?"open":""}`}>
         <div className="brand">
           <div className="mark"><i className={`fa-solid ${user.activeErp?.icon || "fa-screwdriver-wrench"}`}></i></div>
-          <div className="t">{user.activeErp?.name || "ระบบแจ้งซ่อม"}<small>{systemId==="assets" ? "Asset Management" : systemId==="consume" ? "Consume / Stock" : "Machine Repair"}</small></div>
+          <div className="t">{user.activeErp?.name || "ระบบแจ้งซ่อม"}<small>{systemId==="assets" ? "Asset Management" : systemId==="consume" ? "Consume / Stock" : systemId==="general" ? "General Storage" : "Machine Repair"}</small></div>
         </div>
         <nav className="nav">
           <div className="section">เมนูหลัก</div>
@@ -5772,7 +5838,251 @@ function MachineQuickView({code,onClose}){
 }
 window.MachineQuickView = MachineQuickView;
 
+// ===== รูปแบบการซ่อม (บันทึกงานซ่อมรายรายการ) =====
+// แต่ละรายการ: ซ่อมอะไร · ซ่อมแบบไหน · ใช้อะไหล่ตัวไหน (เลือกจากรายการอะไหล่ หรือเพิ่มใหม่) · หมายเหตุ
+// เก็บใน r.repairWorks · อะไหล่ที่เลือกแต่ยังไม่อยู่ใน "รายการอะไหล่" ของใบนี้ จะถูกเพิ่มเข้า r.parts ให้อัตโนมัติ
+window.REPAIR_METHODS = [
+  { key:"replace", label:"เปลี่ยนอะไหล่",          icon:"fa-arrows-rotate" },
+  { key:"fix",     label:"ซ่อมแซม / แก้ไข",        icon:"fa-screwdriver-wrench" },
+  { key:"adjust",  label:"ปรับตั้ง / ตั้งค่า",        icon:"fa-sliders" },
+  { key:"weld",    label:"เชื่อม / ต่อ / ประกอบ",    icon:"fa-fire-flame-curved" },
+  { key:"clean",   label:"ทำความสะอาด / หล่อลื่น",  icon:"fa-spray-can-sparkles" },
+  { key:"inspect", label:"ตรวจเช็ค / ทดสอบ",        icon:"fa-magnifying-glass" },
+  { key:"outsource", label:"ส่งซ่อมภายนอก",        icon:"fa-truck-arrow-right" },
+  { key:"other",   label:"อื่น ๆ (ระบุ)",           icon:"fa-ellipsis" },
+];
+window.getRepairMethod = (key) => window.REPAIR_METHODS.find(m=>m.key===key) || null;
+window.repairMethodLabel = (w) => {
+  const m = window.getRepairMethod(w && w.method);
+  if(!m) return "";
+  return m.key==="other" && w.methodNote ? w.methodNote : m.label;
+};
+
+// รายการอะไหล่ที่เคยใช้ในทุกใบแจ้งซ่อม — ชื่อไม่ซ้ำ พร้อมราคา/แหล่งซื้อครั้งล่าสุด (ใช้เป็นตัวเลือก)
+window.partsCatalog = () => {
+  const map = {};
+  (window.__DATA.repairs||[]).forEach(r=>{
+    const t = new Date(r.updatedAt || r.createdAt).getTime() || 0;
+    (Array.isArray(r.parts) ? r.parts : []).forEach(p=>{
+      const name = String((p && p.name) || "").trim();
+      if(!name) return;
+      const k = name.toLowerCase().replace(/\s+/g," ");
+      if(!map[k] || t >= map[k].t) map[k] = { name, unitPrice:Number(p.unitPrice)||0, supplier:p.supplier||"", t, count:(map[k]?map[k].count:0)+1 };
+      else map[k].count++;
+    });
+  });
+  return Object.values(map).sort((a,b)=>b.count-a.count || a.name.localeCompare(b.name,"th"));
+};
+
+const rwPartKey = (name) => String(name||"").trim().toLowerCase().replace(/\s+/g," ");
+
+function RepairWorkEditor({r,initial,onCancel,onSave,saving}){
+  const ticketParts = (Array.isArray(r.parts) ? r.parts : []).filter(p=>p && p.name);
+  const catalog = React.useMemo(()=>window.partsCatalog(),[]);
+  const [w,setW] = React.useState(()=>initial ? {...initial, parts:(initial.parts||[]).map(p=>({...p}))} : {what:"",method:"",methodNote:"",parts:[],note:""});
+  const [pick,setPick] = React.useState("");
+  const [pickQty,setPickQty] = React.useState(1);
+  const set = (k,v)=>setW(x=>({...x,[k]:v}));
+  const inTicket = (name)=>ticketParts.some(p=>rwPartKey(p.name)===rwPartKey(name));
+  const addPart = (name, qty)=>{
+    const nm = String(name||"").trim();
+    if(!nm) return;
+    const q = Math.max(1, Number(qty)||1);
+    setW(x=>{
+      const exist = x.parts.findIndex(p=>rwPartKey(p.name)===rwPartKey(nm));
+      if(exist>-1) return {...x, parts:x.parts.map((p,i)=>i===exist?{...p,qty:(Number(p.qty)||0)+q}:p)};
+      // ชื่อที่ตรงกับรายการเดิม ใช้ตัวสะกดเดิม รายงานอะไหล่จะได้รวมกลุ่มเดียวกัน
+      const known = ticketParts.find(p=>rwPartKey(p.name)===rwPartKey(nm)) || catalog.find(c=>rwPartKey(c.name)===rwPartKey(nm));
+      return {...x, parts:[...x.parts, {name: known ? known.name : nm, qty:q}]};
+    });
+    setPick(""); setPickQty(1);
+  };
+  const submit = ()=>{
+    if(!String(w.what||"").trim()){ Swal.fire({icon:"warning",title:"กรุณาระบุว่าซ่อมอะไร"}); return; }
+    if(!w.method){ Swal.fire({icon:"warning",title:"กรุณาเลือกรูปแบบการซ่อม"}); return; }
+    if(w.method==="other" && !String(w.methodNote||"").trim()){ Swal.fire({icon:"warning",title:"กรุณาระบุรูปแบบการซ่อม"}); return; }
+    onSave({
+      what:String(w.what).trim(), method:w.method,
+      methodNote: w.method==="other" ? String(w.methodNote||"").trim() : "",
+      parts:(w.parts||[]).filter(p=>p.name).map(p=>({name:p.name, qty:Math.max(1,Number(p.qty)||1)})),
+      note:String(w.note||"").trim(),
+    });
+  };
+  const listId = `rw-parts-${r.id}`;
+  const lbl = {display:"block",fontSize:12.5,color:"var(--muted)",marginBottom:5,fontWeight:500};
+  const inp = {width:"100%",padding:"9px 11px",border:"1px solid var(--line)",borderRadius:9,background:"#fff",outline:"none",fontFamily:"Kanit",fontSize:14};
+  return (
+    <div style={{border:"1.5px solid var(--accent)",borderRadius:10,padding:14,background:"#F8FAFF",display:"grid",gap:12}}>
+      <div>
+        <label style={lbl} htmlFor={`rw-what-${r.id}`}>ซ่อมอะไร *</label>
+        <input id={`rw-what-${r.id}`} style={inp} value={w.what} onChange={e=>set("what",e.target.value)}
+          placeholder="เช่น ระบบไฮดรอลิกแขนบูม, สายพานพัดลม, ไฟหน้า" list={`rw-what-list-${r.id}`} />
+        <datalist id={`rw-what-list-${r.id}`}>{window.getProblems(r).map((p,i)=><option key={i} value={p.text}/>)}</datalist>
+      </div>
+      <div>
+        <div style={lbl}>ซ่อมแบบไหน *</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}} role="radiogroup" aria-label="รูปแบบการซ่อม">
+          {window.REPAIR_METHODS.map(m=>{
+            const on = w.method===m.key;
+            return (
+              <button key={m.key} type="button" role="radio" aria-checked={on} onClick={()=>set("method",m.key)}
+                style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 11px",borderRadius:999,fontSize:13,cursor:"pointer",fontFamily:"Kanit",
+                  border:`1.5px solid ${on?"var(--primary)":"var(--line)"}`,background:on?"var(--accent-soft)":"#fff",color:on?"var(--primary)":"var(--text)",fontWeight:on?600:400}}>
+                <i className={`fa-solid ${m.icon}`} aria-hidden="true"></i>{m.label}
+              </button>
+            );
+          })}
+        </div>
+        {w.method==="other" && <input style={{...inp,marginTop:8}} value={w.methodNote} onChange={e=>set("methodNote",e.target.value)} placeholder="ระบุรูปแบบการซ่อม" aria-label="ระบุรูปแบบการซ่อม" />}
+      </div>
+      <div>
+        <div style={lbl}>ใช้อะไหล่ตัวไหน</div>
+        {w.parts.length>0 && <div style={{display:"grid",gap:6,marginBottom:8}}>
+          {w.parts.map((p,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",border:"1px solid var(--line)",borderRadius:9,background:"#fff"}}>
+              <i className="fa-solid fa-gear" style={{color:"var(--muted)"}} aria-hidden="true"></i>
+              <span style={{flex:1,minWidth:0,fontWeight:500}}>{p.name}
+                {!inTicket(p.name) && <span className="badge" style={{marginLeft:6,fontSize:10.5,background:"#ECFDF5",color:"#047857"}}>เพิ่มเข้ารายการอะไหล่</span>}
+              </span>
+              <input type="number" min="1" value={p.qty} aria-label={`จำนวน ${p.name}`}
+                onChange={e=>setW(x=>({...x,parts:x.parts.map((q,idx)=>idx===i?{...q,qty:e.target.value}:q)}))}
+                style={{...inp,width:70,padding:"5px 8px",textAlign:"center"}} />
+              <button type="button" className="ia danger" title="เอาออก" aria-label={`เอา ${p.name} ออก`} onClick={()=>setW(x=>({...x,parts:x.parts.filter((_,idx)=>idx!==i)}))}><i className="fa-solid fa-xmark"></i></button>
+            </div>
+          ))}
+        </div>}
+        {ticketParts.length>0 && <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+          <span style={{fontSize:12,color:"var(--muted)",alignSelf:"center"}}>จากรายการอะไหล่ของใบนี้:</span>
+          {ticketParts.map((p,i)=>{
+            const used = w.parts.some(x=>rwPartKey(x.name)===rwPartKey(p.name));
+            return <button key={i} type="button" disabled={used} onClick={()=>addPart(p.name, p.qty)}
+              style={{padding:"4px 10px",borderRadius:999,border:"1px dashed var(--primary)",background:used?"var(--line-soft)":"#fff",color:used?"var(--muted)":"var(--primary)",fontSize:12.5,cursor:used?"default":"pointer",fontFamily:"Kanit"}}>
+              <i className={`fa-solid ${used?"fa-check":"fa-plus"}`} aria-hidden="true"></i> {p.name}
+            </button>;
+          })}
+        </div>}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <input style={{...inp,flex:"1 1 200px"}} value={pick} onChange={e=>setPick(e.target.value)} list={listId}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); addPart(pick,pickQty); } }}
+            placeholder="ค้นหา/เลือกจากรายการอะไหล่ หรือพิมพ์ชื่อใหม่" aria-label="ชื่ออะไหล่" />
+          <datalist id={listId}>
+            {catalog.map((c,i)=><option key={i} value={c.name}>{c.supplier ? `${c.supplier} · ` : ""}฿{(c.unitPrice||0).toLocaleString("th-TH")}</option>)}
+          </datalist>
+          <input type="number" min="1" value={pickQty} onChange={e=>setPickQty(e.target.value)} style={{...inp,width:76,textAlign:"center"}} aria-label="จำนวน" />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={()=>addPart(pick,pickQty)} disabled={!pick.trim()}><i className="fa-solid fa-plus"></i> เพิ่มอะไหล่</button>
+        </div>
+        <div style={{fontSize:11.5,color:"var(--muted)",marginTop:5}}>อะไหล่ที่ยังไม่อยู่ในรายการอะไหล่ของใบนี้ จะถูกเพิ่มเข้าไปให้ (ใช้ราคา/แหล่งซื้อครั้งล่าสุด ถ้าเป็นชื่อใหม่ราคาเป็น 0 — แก้ราคาได้ที่ "แก้ไขอะไหล่")</div>
+      </div>
+      <div>
+        <label style={lbl} htmlFor={`rw-note-${r.id}`}>หมายเหตุ</label>
+        <input id={`rw-note-${r.id}`} style={inp} value={w.note} onChange={e=>set("note",e.target.value)} placeholder="รายละเอียดเพิ่มเติม (ไม่บังคับ)" />
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} disabled={saving}>ยกเลิก</button>
+        <button type="button" className="btn btn-primary btn-sm" onClick={submit} disabled={saving}>
+          {saving ? <><div className="spinner" style={{width:12,height:12,borderWidth:2}}></div> กำลังบันทึก...</> : <><i className="fa-solid fa-floppy-disk"></i> บันทึก</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RepairWorksSection({r,user,onChanged}){
+  const canEdit = ["Admin","Officer","Engineer","Technician"].includes(user && user.role);
+  const works = Array.isArray(r.repairWorks) ? r.repairWorks.filter(Boolean) : Object.values(r.repairWorks||{}).filter(Boolean);
+  const [editIdx,setEditIdx] = React.useState(null);   // null = ไม่ได้แก้ · -1 = เพิ่มใหม่ · n = แก้รายการที่ n
+  const [saving,setSaving] = React.useState(false);
+
+  const persist = async (nextWorks, note) => {
+    // อะไหล่ที่ใช้ในงานซ่อมแต่ยังไม่อยู่ใน r.parts → เพิ่มเข้าไป (ราคาตามครั้งล่าสุดในระบบ)
+    const parts = (Array.isArray(r.parts) ? r.parts : []).map(p=>({...p}));
+    const catalog = window.partsCatalog();
+    const r2 = (n)=>Math.round((Number(n)||0)*100)/100;
+    const added = [];
+    nextWorks.forEach(w=>(w.parts||[]).forEach(wp=>{
+      if(parts.some(p=>rwPartKey(p.name)===rwPartKey(wp.name))) return;
+      const c = catalog.find(x=>rwPartKey(x.name)===rwPartKey(wp.name));
+      const qty = Math.max(1, Number(wp.qty)||1);
+      const unitPrice = r2(c ? c.unitPrice : 0);
+      parts.push({ name:wp.name, qty, unitPrice, total:r2(qty*unitPrice), supplier:(c && c.supplier)||"", photos:[] });
+      added.push(wp.name);
+    }));
+    const patch = { repairWorks: nextWorks };
+    let cost;
+    if(added.length){
+      patch.parts = parts;
+      cost = r2(parts.reduce((s,p)=>s+(Number(p.total)||0),0) + (Number(r.laborCost)||0));
+    }
+    setSaving(true);
+    try{
+      const fullNote = note + (added.length ? ` · เพิ่มอะไหล่ ${added.join(", ")}` : "");
+      await window.api("updateRepairStatus",{ id:r.id, status:r.status, by:user.name, note:fullNote, cost, patch });
+      const tl = { status:r.status, when:new Date(), by:user.name, note:fullNote };
+      const apply = (x)=>{ x.repairWorks = nextWorks; if(patch.parts){ x.parts = parts; x.cost = cost; } x.timeline = [...(x.timeline||[]), tl]; };
+      const cached = (window.__DATA.repairs||[]).find(x=>x.id===r.id);
+      if(cached && cached!==r) apply(cached);
+      apply(r);
+      setEditIdx(null);
+      if(onChanged) onChanged();
+      Swal.fire({icon:"success",title:"บันทึกรูปแบบการซ่อมแล้ว",timer:1300,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
+    }finally{ setSaving(false); }
+  };
+
+  const saveOne = (w)=>{
+    const next = editIdx===-1 ? [...works, w] : works.map((x,i)=>i===editIdx?w:x);
+    persist(next, editIdx===-1 ? `บันทึกการซ่อม: ${w.what}` : `แก้ไขการซ่อม: ${w.what}`);
+  };
+  const removeOne = async (i)=>{
+    const w = works[i];
+    const ok = await Swal.fire({icon:"warning",title:"ลบรายการซ่อมนี้?",text:`${w.what} · ${window.repairMethodLabel(w)}`,
+      showCancelButton:true,confirmButtonText:"ลบ",cancelButtonText:"ยกเลิก",confirmButtonColor:"#EF4444"});
+    if(!ok.isConfirmed) return;
+    persist(works.filter((_,idx)=>idx!==i), `ลบรายการซ่อม: ${w.what}`);
+  };
+
+  if(!canEdit && works.length===0) return null;
+  return (
+    <div style={{marginTop:18,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden"}}>
+      <div style={{padding:"12px 16px",background:"#FAFBFC",borderBottom:"1px solid var(--line)",fontWeight:500,fontSize:13,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+        <span><i className="fa-solid fa-screwdriver-wrench" style={{color:"var(--primary)",marginRight:6}}></i>รูปแบบการซ่อม ({works.length} รายการ)</span>
+        {canEdit && editIdx===null && <button className="btn btn-ghost btn-sm" onClick={()=>setEditIdx(-1)}><i className="fa-solid fa-plus"></i> เพิ่มรายการซ่อม</button>}
+      </div>
+      <div style={{padding:12,display:"grid",gap:10}}>
+        {works.length===0 && editIdx===null && <div style={{color:"var(--muted)",fontSize:13,textAlign:"center",padding:"6px 0"}}>ยังไม่ได้บันทึกว่าซ่อมอะไร ซ่อมแบบไหน และใช้อะไหล่อะไร</div>}
+        {works.map((w,i)=> editIdx===i
+          ? <RepairWorkEditor key={i} r={r} initial={w} saving={saving} onCancel={()=>setEditIdx(null)} onSave={saveOne} />
+          : (
+            <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",border:"1px solid var(--line-soft)",borderRadius:10,background:"#fff"}}>
+              <span style={{width:22,height:22,borderRadius:999,background:"var(--accent-soft)",color:"var(--primary)",display:"grid",placeItems:"center",fontSize:12,fontWeight:600,flexShrink:0}}>{i+1}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600}}>{w.what}</div>
+                <div style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:4,fontSize:12.5,color:"var(--primary)",background:"var(--accent-soft)",padding:"2px 9px",borderRadius:999}}>
+                  <i className={`fa-solid ${(window.getRepairMethod(w.method)||{}).icon||"fa-wrench"}`} aria-hidden="true"></i>{window.repairMethodLabel(w)||"—"}
+                </div>
+                {(w.parts||[]).length>0 && <div style={{fontSize:13,marginTop:6,color:"var(--text)"}}>
+                  <i className="fa-solid fa-gear" style={{color:"var(--muted)",marginRight:6}} aria-hidden="true"></i>
+                  {w.parts.map(p=>`${p.name} × ${p.qty}`).join(" · ")}
+                </div>}
+                {w.note && <div style={{fontSize:12.5,color:"var(--muted)",marginTop:4}}>{w.note}</div>}
+              </div>
+              {canEdit && editIdx===null && <div style={{display:"flex",gap:2,flexShrink:0}}>
+                <button className="ia" title="แก้ไข" aria-label={`แก้ไข ${w.what}`} onClick={()=>setEditIdx(i)}><i className="fa-solid fa-pen"></i></button>
+                <button className="ia danger" title="ลบ" aria-label={`ลบ ${w.what}`} onClick={()=>removeOne(i)}><i className="fa-solid fa-trash"></i></button>
+              </div>}
+            </div>
+          ))}
+        {editIdx===-1 && <RepairWorkEditor r={r} saving={saving} onCancel={()=>setEditIdx(null)} onSave={saveOne} />}
+      </div>
+    </div>
+  );
+}
+window.RepairWorksSection = RepairWorksSection;
+
+
 function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems,onDeleted}){
+  const [,bumpDetail] = React.useReducer(x=>x+1,0);   // รีเฟรชหลังบันทึกรูปแบบการซ่อม (อาจเพิ่มรายการอะไหล่)
   const [machineView,setMachineView] = React.useState(false);
   // ลบใบแจ้งซ่อม — Admin ลบได้ทันที (ยืนยันรหัสผ่าน) · ตำแหน่งอื่นส่งคำขอให้ Admin อนุมัติ (deleteWithApproval จัดการให้)
   const canDelete = !!user && user.role !== "Safety Officer";
@@ -5901,6 +6211,8 @@ function RepairDetail({r,onClose,user,onQuick,onEdit,onEditParts,onProblems,onDe
           <span style={{fontWeight:500,fontFamily:"JetBrains Mono,monospace",fontSize:12}}>฿{Number(r.laborCost).toLocaleString("th-TH",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
         </div>}
       </div>}
+
+      <RepairWorksSection r={r} user={user} onChanged={bumpDetail} />
 
       {Array.isArray(r.photos) && r.photos.filter(Boolean).length>0 && <div className="detail-grid" style={{marginTop:18}}><PhotoGallery photos={r.photos} /></div>}
 
@@ -10927,7 +11239,8 @@ function PinSetupModal({user,onClose}){
       setMsg("");
       if(after === "off"){
         window.__PIN.disable();
-        done("ปิดการใช้ PIN แล้ว","กลับไปใช้การหมดเวลาใช้งาน 15 นาทีตามเดิม");
+        if(window.markLogin) window.markLogin();   // เริ่มนับ 4 ชม. ใหม่จากตอนปิด PIN ไม่เด้งออกทันที
+        done("ปิดการใช้ PIN แล้ว","กลับไปใช้การล็อกอินครั้งละ 4 ชั่วโมงตามเดิม");
         return true;
       }
       setMode("new");
@@ -10976,7 +11289,7 @@ function PinSetupModal({user,onClose}){
           </button>
           <button type="button" className="pin-opt is-danger" onClick={()=>{setAfter("off");setMsg("");setMode("current");}}>
             <i className="fa-solid fa-lock-open" style={{background:"#FEE2E2",color:"var(--danger)"}}></i>
-            <span>ปิดการใช้ PIN<small>กลับไปเด้งออกเมื่อไม่ได้ใช้งาน 15 นาที</small></span>
+            <span>ปิดการใช้ PIN<small>กลับไปใช้การล็อกอินครั้งละ 4 ชั่วโมง</small></span>
           </button>
         </div>
       ) : (
@@ -11379,6 +11692,7 @@ function WorkspacePicker({user,onContinue,onLogout}){
     if(sys.id==="production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
     if(sys.id==="consume") return `เตรียมเชื่อมสต๊อก/เบิกจ่าย ${stats.withdrawals} รายการ`;
     if(sys.id==="manage") return `${stats.users} ผู้ใช้งาน · ${(window.__DATA.projects||[]).length} โครงการ`;
+    if(sys.id==="general") return Array.isArray(window.__DATA.generalRecords) ? `${window.__DATA.generalRecords.length} รายการ` : "รูป 8 รูป · ไฟล์แนบ 5 ไฟล์ ต่อรายการ";
     if(sys.id==="pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
     if(sys.id==="hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
     return "พร้อมเชื่อมข้อมูล";
@@ -12075,23 +12389,336 @@ function PmPlan({user}){
 window.PmPlan = PmPlan;
 
 
+// ===== ที่จัดเก็บข้อมูลทั่วไป =====
+// แต่ละรายการ: ชื่อหัวข้อ · ข้อมูล · รายละเอียด · รูปสูงสุด 8 รูป · ไฟล์แนบสูงสุด 5 ไฟล์
+// ข้อมูลเก็บที่ Firebase /generalRecords · รูปและไฟล์อัปขึ้น Google Drive ผ่าน Apps Script
+const GENERAL_MAX_PHOTOS = 8;
+const GENERAL_MAX_FILES = 5;
+const GENERAL_MAX_FILE_MB = 20;
+
+function generalNewKey(){
+  return "G" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+function generalFileIcon(f){
+  const n = String((f && (f.mimeType || f.name)) || "").toLowerCase();
+  if(/pdf/.test(n)) return {icon:"fa-file-pdf", color:"#DC2626"};
+  if(/sheet|excel|xls|csv/.test(n)) return {icon:"fa-file-excel", color:"#15803D"};
+  if(/word|doc/.test(n)) return {icon:"fa-file-word", color:"#1D4ED8"};
+  if(/presentation|powerpoint|ppt/.test(n)) return {icon:"fa-file-powerpoint", color:"#C2410C"};
+  if(/image|jpe?g|png|gif|webp|heic/.test(n)) return {icon:"fa-file-image", color:"#7C3AED"};
+  if(/zip|rar|7z/.test(n)) return {icon:"fa-file-zipper", color:"#92400E"};
+  return {icon:"fa-file", color:"#64748B"};
+}
+function generalFileSize(b){
+  const n = Number(b)||0;
+  if(!n) return "";
+  if(n < 1024*1024) return `${Math.max(1,Math.round(n/1024))} KB`;
+  return `${(n/1024/1024).toFixed(1)} MB`;
+}
+
+// ช่องแนบไฟล์ (เอกสารทุกชนิด) — ไม่ย่อ/แปลงไฟล์ อัปขึ้น Drive ตามต้นฉบับ
+function GeneralFilesField({value,onChange,max=GENERAL_MAX_FILES,tag}){
+  const list = Array.isArray(value) ? value : [];
+  const [busy,setBusy] = React.useState(false);
+  const inputRef = React.useRef(null);
+  const full = list.length>=max;
+  const readRaw = (file)=>new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>{ const d=String(r.result||""); res(d.includes(",")?d.split(",").pop():d); };
+    r.onerror = ()=>rej(r.error||new Error("อ่านไฟล์ไม่สำเร็จ"));
+    r.readAsDataURL(file);
+  });
+  const onFiles = async (files)=>{
+    const arr = Array.from(files||[]);
+    if(!arr.length) return;
+    const room = max-list.length;
+    if(room<=0){ Swal.fire({icon:"info",title:`แนบไฟล์ได้สูงสุด ${max} ไฟล์`}); return; }
+    const tooBig = arr.filter(f=>f.size > GENERAL_MAX_FILE_MB*1024*1024);
+    if(tooBig.length){
+      Swal.fire({icon:"warning",title:"ไฟล์ใหญ่เกินไป",text:`แต่ละไฟล์ต้องไม่เกิน ${GENERAL_MAX_FILE_MB} MB: ${tooBig.map(f=>f.name).join(", ")}`});
+      return;
+    }
+    const take = arr.slice(0,room);
+    setBusy(true);
+    const added = [];
+    let failed = false;
+    try{
+      for(let i=0;i<take.length;i++){
+        const f = take[i];
+        Swal.fire({title:`กำลังอัปโหลดไฟล์ ${i+1}/${take.length}...`,text:f.name,allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
+        try{
+          const upload = { name:f.name, mimeType:f.type||"application/octet-stream", data: await readRaw(f) };
+          const saved = await window.api("uploadGeneralFile", { tag, upload });
+          if(saved && saved.url) added.push({ name:f.name, url:saved.url, mimeType:f.type||"", size:f.size||0 });
+        }catch(err){
+          failed = true;
+          Swal.close();
+          Swal.fire({icon:"error",title:"อัปโหลดไม่สำเร็จ",text:(err&&err.message)||String(err)});
+          break;
+        }
+      }
+      if(added.length) onChange([...list,...added]);
+      if(failed) return;
+      Swal.close();
+      if(arr.length>room) Swal.fire({icon:"info",title:`เพิ่มได้อีก ${room} ไฟล์เท่านั้น`,timer:1900,showConfirmButton:false,toast:true,position:"top-end"});
+      else if(added.length) Swal.fire({icon:"success",title:`แนบไฟล์แล้ว ${added.length} ไฟล์`,timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{display:"grid",gap:10}}>
+      {list.length>0 && <div style={{display:"grid",gap:6}}>
+        {list.map((f,i)=>{
+          const ic = generalFileIcon(f);
+          return (
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",border:"1px solid var(--line)",borderRadius:10,background:"#fff"}}>
+              <i className={`fa-solid ${ic.icon}`} style={{color:ic.color,fontSize:18,width:20,textAlign:"center"}} aria-hidden="true"></i>
+              <a href={f.url} target="_blank" rel="noreferrer" style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"var(--text)"}}>{f.name}</a>
+              <span style={{fontSize:11.5,color:"var(--muted)",whiteSpace:"nowrap"}}>{generalFileSize(f.size)}</span>
+              <button type="button" className="ia danger" title="เอาไฟล์นี้ออก" aria-label={`เอาไฟล์ ${f.name} ออก`} onClick={()=>onChange(list.filter((_,idx)=>idx!==i))}><i className="fa-solid fa-xmark"></i></button>
+            </div>
+          );
+        })}
+      </div>}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <input ref={inputRef} type="file" multiple style={{display:"none"}} onChange={e=>{ const fs=Array.from(e.target.files||[]); e.target.value=""; onFiles(fs); }} />
+        <button type="button" className="btn btn-primary btn-sm" onClick={()=>inputRef.current&&inputRef.current.click()} disabled={full||busy}>
+          {busy ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังอัปโหลด...</> : <><i className="fa-solid fa-paperclip"></i> {full?`ครบ ${max} ไฟล์แล้ว`:"แนบไฟล์"}</>}
+        </button>
+        <span style={{fontSize:11.5,color:"var(--muted)"}}>PDF, Word, Excel ฯลฯ ไฟล์ละไม่เกิน {GENERAL_MAX_FILE_MB} MB · ({list.length}/{max})</span>
+      </div>
+    </div>
+  );
+}
+
+function GeneralRecordForm({user,initial,onClose,onSaved}){
+  const isNew = !initial;
+  const [rec,setRec] = React.useState(()=>initial ? {...initial} : {key:generalNewKey(),title:"",info:"",detail:"",photos:[],files:[]});
+  const [saving,setSaving] = React.useState(false);
+  const set = (k,v)=>setRec(r=>({...r,[k]:v}));
+  const save = async ()=>{
+    if(!String(rec.title||"").trim()){ Swal.fire({icon:"warning",title:"กรุณาใส่ชื่อหัวข้อ"}); return; }
+    setSaving(true);
+    try{
+      const saved = await window.api("saveGeneralRecord", { record:rec, isNew, by:{id:user.id,name:user.name} });
+      onSaved(saved);
+      Swal.fire({icon:"success",title:"บันทึกแล้ว",timer:1200,showConfirmButton:false,toast:true,position:"top-end"});
+    }catch(err){
+      Swal.fire({icon:"error",title:"บันทึกไม่สำเร็จ",text:err.message});
+    }finally{ setSaving(false); }
+  };
+  return (
+    <Modal open={true} onClose={saving?()=>{}:onClose} size="lg" title={isNew ? "เพิ่มข้อมูลทั่วไป" : "แก้ไขข้อมูลทั่วไป"}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? <><div className="spinner" style={{width:13,height:13,borderWidth:2}}></div> กำลังบันทึก...</> : <><i className="fa-solid fa-floppy-disk"></i> บันทึก</>}
+        </button>
+      </>}>
+      <div className="form-grid">
+        <div className="form-field full">
+          <label htmlFor="gd-title">ชื่อหัวข้อ *</label>
+          <input id="gd-title" value={rec.title||""} onChange={e=>set("title",e.target.value)} placeholder="เช่น ใบอนุญาตก่อสร้าง โครงการ A" />
+        </div>
+        <div className="form-field full">
+          <label htmlFor="gd-info">ข้อมูล</label>
+          <input id="gd-info" value={rec.info||""} onChange={e=>set("info",e.target.value)} placeholder="ข้อมูลสั้น ๆ เช่น เลขที่เอกสาร / วันที่ / ผู้เกี่ยวข้อง" />
+        </div>
+        <div className="form-field full">
+          <label htmlFor="gd-detail">รายละเอียด</label>
+          <textarea id="gd-detail" rows={5} value={rec.detail||""} onChange={e=>set("detail",e.target.value)} placeholder="รายละเอียดเพิ่มเติม"></textarea>
+        </div>
+        <div className="form-field full">
+          <label>รูปภาพ (สูงสุด {GENERAL_MAX_PHOTOS} รูป)</label>
+          <PhotosField value={rec.photos||[]} onChange={v=>set("photos",v)} max={GENERAL_MAX_PHOTOS}
+            uploadAction="uploadGeneralFile" uploadContext={{tag:rec.key}} />
+        </div>
+        <div className="form-field full">
+          <label>ไฟล์แนบ (สูงสุด {GENERAL_MAX_FILES} ไฟล์)</label>
+          <GeneralFilesField value={rec.files||[]} onChange={v=>set("files",v)} tag={rec.key} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function GeneralRecordView({rec,canEdit,onEdit,onDelete,onClose}){
+  return (
+    <Modal open={true} onClose={onClose} size="lg" title={rec.title}
+      footer={<>
+        {canEdit && <button className="btn btn-ghost" style={{color:"var(--danger)"}} onClick={onDelete}><i className="fa-solid fa-trash"></i> ลบ</button>}
+        {canEdit && <button className="btn btn-primary" onClick={onEdit}><i className="fa-solid fa-pen"></i> แก้ไข</button>}
+        {!canEdit && <button className="btn btn-ghost" onClick={onClose}>ปิด</button>}
+      </>}>
+      <div style={{display:"grid",gap:16}}>
+        {rec.info && <div>
+          <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:3}}>ข้อมูล</div>
+          <div style={{fontWeight:500}}>{rec.info}</div>
+        </div>}
+        {rec.detail && <div>
+          <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:3}}>รายละเอียด</div>
+          <div style={{whiteSpace:"pre-wrap",lineHeight:1.6}}>{rec.detail}</div>
+        </div>}
+        <div>
+          <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:6}}>รูปภาพ ({(rec.photos||[]).length}/{GENERAL_MAX_PHOTOS})</div>
+          {(rec.photos||[]).length
+            ? <div style={{display:"flex",flexWrap:"wrap",gap:10}}>{rec.photos.map((u,i)=><PhotoThumb key={i} url={u} index={i} size={110}/>)}</div>
+            : <div style={{color:"var(--muted)",fontSize:13}}>ไม่มีรูป</div>}
+        </div>
+        <div>
+          <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:6}}>ไฟล์แนบ ({(rec.files||[]).length}/{GENERAL_MAX_FILES})</div>
+          {(rec.files||[]).length
+            ? <div style={{display:"grid",gap:6}}>{rec.files.map((f,i)=>{
+                const ic = generalFileIcon(f);
+                return (
+                  <a key={i} href={f.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:10,color:"var(--text)",background:"#fff"}}>
+                    <i className={`fa-solid ${ic.icon}`} style={{color:ic.color,fontSize:18,width:20,textAlign:"center"}} aria-hidden="true"></i>
+                    <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
+                    <span style={{fontSize:11.5,color:"var(--muted)"}}>{generalFileSize(f.size)}</span>
+                    <i className="fa-solid fa-arrow-up-right-from-square" style={{color:"var(--muted)",fontSize:12}} aria-hidden="true"></i>
+                  </a>
+                );
+              })}</div>
+            : <div style={{color:"var(--muted)",fontSize:13}}>ไม่มีไฟล์แนบ</div>}
+        </div>
+        <div style={{fontSize:12,color:"var(--muted)",borderTop:"1px solid var(--line)",paddingTop:10}}>
+          บันทึกโดย {rec.createdByName||"-"} · {rec.createdAt ? window.__DATA.fmtDateTime(rec.createdAt) : "-"}
+          {rec.updatedAt && rec.updatedAt!==rec.createdAt && <> · แก้ไขล่าสุดโดย {rec.updatedByName||"-"} {window.__DATA.fmtDateTime(rec.updatedAt)}</>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// รูปย่อบนการ์ด — เป็นรูปเฉย ๆ (การ์ดทั้งใบเป็นปุ่มอยู่แล้ว ห้ามมีลิงก์ซ้อนในปุ่ม)
+function GeneralCardThumb({url}){
+  const id = gdriveId(url);
+  const src = id ? `https://drive.google.com/thumbnail?id=${id}&sz=w200` : url;
+  return (
+    <span style={{position:"relative",width:64,height:64,borderRadius:10,overflow:"hidden",border:"1px solid var(--line)",background:"var(--bg)",flexShrink:0,display:"block"}}>
+      <i className="fa-solid fa-image" aria-hidden="true" style={{position:"absolute",inset:0,display:"grid",placeItems:"center",color:"#94A3B8",fontSize:20}}></i>
+      <img src={src} alt="" loading="lazy" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{ e.target.style.display="none"; }} />
+    </span>
+  );
+}
+
+function GeneralData({user}){
+  const [list,setList] = React.useState(()=>Array.isArray(window.__DATA.generalRecords) ? window.__DATA.generalRecords : null);
+  const [err,setErr] = React.useState("");
+  const [q,setQ] = React.useState("");
+  const [form,setForm] = React.useState(null);     // {initial} | {initial:null} = เพิ่มใหม่
+  const [view,setView] = React.useState(null);
+
+  const sortList = (arr)=>[...arr].sort((a,b)=>String(b.updatedAt||b.createdAt||"").localeCompare(String(a.updatedAt||a.createdAt||"")));
+  const commit = (arr)=>{ const s=sortList(arr); window.__DATA.generalRecords = s; setList(s); };
+  const load = async ()=>{
+    setErr("");
+    try{ commit(await window.api("loadGeneralRecords")); }
+    catch(e){ setErr(e.message||String(e)); if(!list) setList([]); }
+  };
+  React.useEffect(()=>{ load(); },[]);
+
+  // แก้/ลบได้: ผู้บันทึกเอง หรือ Admin / Director / Officer (ลบโดย role อื่นต้องขออนุมัติ Admin เหมือนข้อมูลอื่นในระบบ)
+  const canEdit = (r)=> ["Admin","Director","Officer"].includes(user.role) || (r && r.createdById===user.id);
+
+  const onSaved = (saved)=>{
+    const rest = (list||[]).filter(x=>x.key!==saved.key);
+    commit([saved,...rest]);
+    setForm(null);
+    setView(saved);
+  };
+  const remove = async (r)=>{
+    const res = await window.deleteWithApproval({
+      user, action:"deleteGeneralRecord", payload:{key:r.key},
+      entityLabel:"ข้อมูลทั่วไป", targetName:r.title,
+      targetInfo:[r.info, `รูป ${(r.photos||[]).length} · ไฟล์ ${(r.files||[]).length}`].filter(Boolean).join(" · "),
+      warnHtml:"ลบรายการนี้ออกจากระบบ · รูปและไฟล์ใน Google Drive ยังเก็บไว้",
+    });
+    if(!res) return;
+    commit((window.__DATA.generalRecords||[]).filter(x=>x.key!==r.key));
+    setView(null);
+  };
+
+  const kw = q.trim().toLowerCase();
+  const shown = (list||[]).filter(r=>!kw || [r.title,r.info,r.detail,r.createdByName,...(r.files||[]).map(f=>f.name)]
+    .some(v=>String(v||"").toLowerCase().includes(kw)));
+
+  return (
+    <>
+    <div className="card">
+      <div className="filters" style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",justifyContent:"space-between"}}>
+        <div className="search-input"><i className="fa-solid fa-magnifying-glass"></i><input placeholder="ค้นหา หัวข้อ / ข้อมูล / รายละเอียด / ชื่อไฟล์..." value={q} onChange={e=>setQ(e.target.value)} aria-label="ค้นหาข้อมูลทั่วไป" /></div>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn btn-ghost btn-sm" onClick={load} title="โหลดข้อมูลใหม่"><i className="fa-solid fa-rotate"></i> รีเฟรช</button>
+          <button className="btn btn-primary" onClick={()=>setForm({initial:null})}><i className="fa-solid fa-plus"></i> เพิ่มข้อมูล</button>
+        </div>
+      </div>
+      {err && <div style={{margin:"0 16px 12px",padding:"10px 12px",borderRadius:10,background:"#FEF2F2",color:"#B91C1C",fontSize:13}}><i className="fa-solid fa-triangle-exclamation"></i> โหลดข้อมูลไม่สำเร็จ: {err}</div>}
+      {list===null
+        ? <div className="empty"><div className="spinner" style={{margin:"0 auto 10px"}}></div><div className="t">กำลังโหลด...</div></div>
+        : shown.length===0
+          ? <div className="empty"><i className="fa-solid fa-folder-open"></i><div className="t">{kw ? "ไม่พบข้อมูลที่ค้นหา" : "ยังไม่มีข้อมูล"}</div>{!kw && <div style={{fontSize:13,marginTop:4}}>กด "เพิ่มข้อมูล" เพื่อบันทึกรายการแรก</div>}</div>
+          : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12,padding:16}}>
+              {shown.map(r=>(
+                <button key={r.key} type="button" onClick={()=>setView(r)}
+                  style={{display:"flex",gap:12,alignItems:"flex-start",textAlign:"left",padding:12,border:"1px solid var(--line)",borderRadius:12,background:"#fff",cursor:"pointer",font:"inherit",color:"inherit"}}>
+                  {(r.photos||[]).length
+                    ? <GeneralCardThumb url={r.photos[0]}/>
+                    : <span style={{width:64,height:64,borderRadius:10,display:"grid",placeItems:"center",background:"var(--accent-soft)",color:"var(--primary)",fontSize:22,flexShrink:0}}><i className="fa-solid fa-folder-open" aria-hidden="true"></i></span>}
+                  <span style={{flex:1,minWidth:0}}>
+                    <span style={{display:"block",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
+                    {r.info && <span style={{display:"block",fontSize:12.5,color:"var(--muted)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>{r.info}</span>}
+                    <span style={{display:"flex",gap:10,fontSize:12,color:"var(--muted)",marginTop:6}}>
+                      <span><i className="fa-solid fa-image" aria-hidden="true"></i> {(r.photos||[]).length}</span>
+                      <span><i className="fa-solid fa-paperclip" aria-hidden="true"></i> {(r.files||[]).length}</span>
+                      <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.updatedAt ? window.__DATA.fmtDate(r.updatedAt) : ""}</span>
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>}
+    </div>
+    {view && !form && <GeneralRecordView rec={view} canEdit={canEdit(view)} onClose={()=>setView(null)}
+      onEdit={()=>setForm({initial:view})} onDelete={()=>remove(view)} />}
+    {form && <GeneralRecordForm user={user} initial={form.initial} onClose={()=>setForm(null)} onSaved={onSaved} />}
+    </>
+  );
+}
+window.GeneralData = GeneralData;
+
+
 // ===== หมดเวลาใช้งาน =====
-// ล็อกอินทิ้งไว้แล้วไม่ได้แตะเลยเกิน 15 นาที ให้เด้งออกไปล็อกอินใหม่
-const IDLE_LIMIT_MS = 15 * 60 * 1000;
+// ล็อกอินครั้งเดียวใช้งานได้ 4 ชั่วโมง (นับจากเวลาที่ล็อกอิน) ครบแล้วต้องล็อกอินใหม่
+// ตั้ง PIN ไว้ = ไม่ต้องล็อกอินใหม่ แต่ไม่ได้แตะเครื่องเกิน 15 นาทีจะล็อกหน้าจอรอปลดด้วย PIN
+const SESSION_HOURS = 4;
+const SESSION_LIMIT_MS = SESSION_HOURS * 60 * 60 * 1000;
+const LOGIN_AT_KEY = "rms_login_at";
+const IDLE_LIMIT_MS = 15 * 60 * 1000;       // ใช้กับการล็อกหน้าจอด้วย PIN เท่านั้น
 const IDLE_KEY = "rms_last_active";
 function touchActivity(){
   try{ localStorage.setItem(IDLE_KEY, String(Date.now())); }catch(e){}
 }
-function isSessionExpired(){
+function markLogin(){
+  try{ localStorage.setItem(LOGIN_AT_KEY, String(Date.now())); }catch(e){}
+}
+function isIdleTooLong(){
   const t = Number(localStorage.getItem(IDLE_KEY) || 0);
   return !t || (Date.now() - t) > IDLE_LIMIT_MS;
+}
+function isSessionExpired(){
+  let t = 0;
+  try{ t = Number(localStorage.getItem(LOGIN_AT_KEY) || 0); }catch(e){}
+  // เครื่องที่ล็อกอินค้างไว้ก่อนอัปเดตนี้ยังไม่มีเวลาล็อกอิน — เริ่มนับ 4 ชม. จากตอนนี้ ไม่เด้งออกทันที
+  if(!t){ markLogin(); return false; }
+  return (Date.now() - t) > SESSION_LIMIT_MS;
 }
 function clearSession(){
   localStorage.removeItem("rms_user");
   localStorage.removeItem("rms_workspace");
   localStorage.removeItem(IDLE_KEY);
+  localStorage.removeItem(LOGIN_AT_KEY);
 }
 window.touchActivity = touchActivity;
+window.markLogin = markLogin;
 window.isSessionExpired = isSessionExpired;
 window.clearSession = clearSession;
 
@@ -12120,7 +12747,7 @@ function App(){
 
   React.useEffect(()=>{
     if(booting) return;
-    // ปิดแท็บทิ้งไว้นานเกิน 15 นาที ก็ถือว่าหมดเวลา ไม่ต้องกู้เซสชันคืน
+    // ล็อกอินมาครบ 4 ชั่วโมงแล้ว ไม่ต้องกู้เซสชันคืน ให้ล็อกอินใหม่
     // ยกเว้นตั้ง PIN ไว้ — เซสชันไม่มีวันหมดอายุ แค่ล็อกหน้าจอรอปลดด้วย PIN
     const pinKept = window.__PIN.enabled();
     if(localStorage.getItem("rms_user") && !pinKept && isSessionExpired()){
@@ -12190,25 +12817,26 @@ function App(){
     return ()=>clearTimeout(t);
   },[user && user.id, !!workspace, locked]);
 
-  // ไม่มีการใช้งานเกิน 15 นาที → ออกจากระบบอัตโนมัติ
+  // ล็อกอินครบ 4 ชั่วโมง → ออกจากระบบอัตโนมัติ (ตั้ง PIN ไว้: ไม่ได้แตะเกิน 15 นาที → ล็อกหน้าจอ)
   React.useEffect(()=>{
     if(!user) return;
     touchActivity();
     const checkIdle = () => {
-      if(!isSessionExpired()) return;
       // ตั้ง PIN ไว้ = ไม่ต้องล็อกอินใหม่ แค่ล็อกหน้าจอรอปลดด้วย PIN
       if(window.__PIN.enabled()){
+        if(!isIdleTooLong()) return;
         window.__PIN.lockNow();
         setLocked(true);
         touchActivity();
         return;
       }
+      if(!isSessionExpired()) return;
       clearSession();
       setUser(null);
       setWorkspace(null);
       window.__DATA.activeErp = null;
       window.__DATA.activeProject = "";
-      Swal.fire({icon:"info",title:"หมดเวลาใช้งาน",text:"ไม่ได้ใช้งานเกิน 15 นาที กรุณาเข้าสู่ระบบใหม่",confirmButtonText:"ตกลง"});
+      Swal.fire({icon:"info",title:"หมดเวลาใช้งาน",text:`เข้าสู่ระบบครบ ${SESSION_HOURS} ชั่วโมงแล้ว กรุณาเข้าสู่ระบบใหม่`,confirmButtonText:"ตกลง"});
     };
     let lastWrite = 0;
     const onActivity = () => {
@@ -12246,6 +12874,7 @@ function App(){
     setUser(u); localStorage.setItem("rms_user",JSON.stringify(u));
     setWorkspace(null); localStorage.removeItem("rms_workspace");
     touchActivity();
+    markLogin();
     setPage(window.defaultPageFor(u));
   };
   const enterWorkspace = (ws) => {
@@ -12338,6 +12967,7 @@ function App(){
     "r-dashboard":{t:"สรุปงานของฉัน",c:"ภาพรวมงานแจ้งซ่อมที่ฉันเป็นผู้แจ้ง"},
     "r-new":{t:"แจ้งซ่อมใหม่",c:"กรอกแบบฟอร์มแจ้งซ่อม"},
     "r-mine":{t:"ติดตามสถานะ",c:"รายการแจ้งซ่อมของฉัน"},
+    "general-data":{t:"ที่จัดเก็บข้อมูลทั่วไป",c:"หัวข้อ · ข้อมูล · รายละเอียด · รูป 8 รูป · ไฟล์แนบ 5 ไฟล์"},
     "notifications":{t:"การแจ้งเตือน",c:"คำขออนุมัติลบ / แก้ไขข้อมูล · ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ"},
   };
   window.__PAGE_TITLES = Object.fromEntries(Object.entries(pageTitles).map(([k,v])=>[k,v.t]));
@@ -12365,6 +12995,7 @@ function App(){
     if(safePage==="r-dashboard") return <ReporterDashboard user={activeUser} goTo={setPage}/>;
     if(safePage==="r-new") return <NewRequest user={activeUser} goTo={setPage}/>;
     if(safePage==="r-mine") return <MyRepairs user={activeUser}/>;
+    if(safePage==="general-data") return <GeneralData user={activeUser}/>;
     if(safePage==="notifications") return <DeleteApprovals user={activeUser}/>;
     return null;
   };

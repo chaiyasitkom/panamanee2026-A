@@ -463,6 +463,10 @@ const ACTIONS = {
   uploadPartPhoto: ({ running, upload }) =>
     uploadPhotoToFolder_(PART_PHOTO_FOLDER_ID, 'part', running, upload),
 
+  // ที่จัดเก็บข้อมูลทั่วไป — รูป/ไฟล์แนบ เก็บในโฟลเดอร์ "ข้อมูลทั่วไป" แยกซับโฟลเดอร์ตามรายการ (tag)
+  uploadGeneralFile: ({ tag, upload }) =>
+    uploadPhotoToFolder_(getGeneralRootFolder_().getId(), 'general', tag || 'ทั่วไป', upload),
+
   uploadPJ2Document: ({ machineId, machineCode, slot, upload }) => {
     if (!upload || !upload.data) throw new Error('Missing upload data');
     const isPL = String(slot || '').toUpperCase() === 'PL';
@@ -560,6 +564,22 @@ function getPLRootFolder_() {
   const it = DriveApp.getRootFolder().getFoldersByName(name);
   return it.hasNext() ? it.next() : DriveApp.createFolder(name);
 }
+/**
+ * โฟลเดอร์แม่ของ "ที่จัดเก็บข้อมูลทั่วไป" — สร้างเป็นซับโฟลเดอร์ใน FOLDER_ID
+ * (ถ้าเข้าไม่ได้ สร้างไว้ใน Drive ของบัญชีที่รัน Apps Script แทน)
+ */
+function getGeneralRootFolder_() {
+  const name = 'ข้อมูลทั่วไป (General Storage)';
+  try {
+    const base = DriveApp.getFolderById(FOLDER_ID);
+    const it = base.getFoldersByName(name);
+    return it.hasNext() ? it.next() : base.createFolder(name);
+  } catch (err) {
+    const it = DriveApp.getRootFolder().getFoldersByName(name);
+    return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+  }
+}
+
 /**
  * อัปโหลดรูปไปโฟลเดอร์ Drive ที่กำหนด แล้วคืน { url, id, name, sharing }
  * - ถ้าเข้าโฟลเดอร์เป้าหมายไม่ได้ (สิทธิ์) จะ fallback ไป FOLDER_ID

@@ -290,6 +290,13 @@ const _DELETE_OPS = {
       await _db.ref('/stockItems/' + p.key).remove();
     }
   },
+  deleteGeneralRecord: {
+    label: 'ข้อมูลทั่วไป',
+    key: 'key',
+    exec: async p => {
+      await _db.ref('/generalRecords/' + p.key).remove();
+    }
+  },
   deleteTransferEntry: {
     label: 'ประวัติการย้ายเครื่องจักร',
     key: 'machineId',
@@ -384,6 +391,7 @@ async function api(action, payload = {}) {
     case 'deleteAssetRegistry':
     case 'deleteDeliveryOrder':
     case 'deleteStockItem':
+    case 'deleteGeneralRecord':
     case 'deleteTransferEntry':
       {
         const by = payload.by || {};
@@ -1100,6 +1108,67 @@ async function api(action, payload = {}) {
           timeline: Object.values(repair.timeline)
         };
       }
+    case 'loadGeneralRecords':
+      {
+        const snap = await _db.ref('/generalRecords').get();
+        return Object.entries(snap.val() || {}).map(([key, v]) => ({
+          ...v,
+          key,
+          photos: Array.isArray(v.photos) ? v.photos.filter(Boolean) : Object.values(v.photos || {}).filter(Boolean),
+          files: Array.isArray(v.files) ? v.files.filter(Boolean) : Object.values(v.files || {}).filter(Boolean)
+        }));
+      }
+    case 'saveGeneralRecord':
+      {
+        const {
+          record = {},
+          isNew,
+          by = {}
+        } = payload;
+        if (!String(record.title || '').trim()) throw new Error('กรุณาใส่ชื่อหัวข้อ');
+        const now = new Date().toISOString();
+        const key = record.key || _db.ref('/generalRecords').push().key;
+        const rec = {
+          title: String(record.title || '').trim(),
+          info: String(record.info || ''),
+          detail: String(record.detail || ''),
+          photos: (Array.isArray(record.photos) ? record.photos : []).filter(Boolean).slice(0, 8),
+          files: (Array.isArray(record.files) ? record.files : []).filter(f => f && f.url).slice(0, 5).map(f => ({
+            name: String(f.name || 'ไฟล์'),
+            url: String(f.url),
+            mimeType: String(f.mimeType || ''),
+            size: Number(f.size) || 0
+          })),
+          updatedAt: now,
+          updatedById: by.id || '',
+          updatedByName: by.name || ''
+        };
+        if (isNew) {
+          rec.createdAt = now;
+          rec.createdById = by.id || '';
+          rec.createdByName = by.name || '';
+          await _db.ref('/generalRecords/' + key).set(rec);
+        } else {
+          await _db.ref('/generalRecords/' + key).update(rec);
+        }
+        const saved = (await _db.ref('/generalRecords/' + key).get()).val() || rec;
+        return {
+          ...saved,
+          key
+        };
+      }
+    case 'uploadGeneralFile':
+      {
+        try {
+          return await callAppsScript('uploadGeneralFile', payload);
+        } catch (err) {
+          if (!/Unknown action/i.test(String(err && err.message || err))) throw err;
+          return callAppsScript('uploadRepairPhoto', {
+            running: 'ข้อมูลทั่วไป-' + (payload.tag || 'ทั่วไป'),
+            upload: payload.upload
+          });
+        }
+      }
     case 'loadAssetRegistry':
       {
         const snap = await _assetDb.ref('/assets').get();
@@ -1717,7 +1786,7 @@ async function api(action, payload = {}) {
           cost,
           patch: extraPatch
         } = payload;
-        const ALLOW = ['title', 'desc', 'repairNote', 'siteId', 'subSite', 'machineCode', 'project', 'categoryId', 'reporterName', 'assignedId', 'parts', 'laborCost', 'odometerKm', 'hourMeter', 'driverName'];
+        const ALLOW = ['title', 'desc', 'repairNote', 'siteId', 'subSite', 'machineCode', 'project', 'categoryId', 'reporterName', 'assignedId', 'parts', 'laborCost', 'odometerKm', 'hourMeter', 'driverName', 'repairWorks'];
         const clean = {};
         ALLOW.forEach(k => {
           if (extraPatch && extraPatch[k] !== undefined) clean[k] = extraPatch[k];
@@ -1828,6 +1897,9 @@ const ACT_LABELS = {
   deleteDeliveryOrder: "ลบใบส่งของ",
   deleteStockItem: "ลบรายการสต๊อก",
   deleteTransferEntry: "ลบประวัติการย้าย",
+  saveGeneralRecord: "บันทึกข้อมูลทั่วไป",
+  uploadGeneralFile: "อัปโหลดรูป/ไฟล์ข้อมูลทั่วไป",
+  deleteGeneralRecord: "ลบข้อมูลทั่วไป",
   requestDelete: "ส่งคำขออนุมัติลบ",
   requestChange: "ส่งคำขออนุมัติแก้ไข",
   approveDelete: "อนุมัติคำขอ",
@@ -1926,7 +1998,7 @@ window.api = async function (action, payload = {}) {
   return res;
 };
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1912) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 1964) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -1992,6 +2064,13 @@ const ERP_SYSTEMS = [{
   icon: "fa-sliders",
   status: "ready",
   startPage: "users"
+}, {
+  id: "general",
+  name: "ที่จัดเก็บข้อมูลทั่วไป",
+  desc: "เก็บหัวข้อ ข้อมูล รายละเอียด พร้อมรูป 8 รูป และไฟล์แนบ 5 ไฟล์",
+  icon: "fa-folder-open",
+  status: "ready",
+  startPage: "general-data"
 }, {
   id: "pc",
   name: "PC (Petty Cash)",
@@ -2193,6 +2272,14 @@ window.APP_FEATURES = [{
   roles: ["Admin", "Director", "Officer", "Engineer", "Technician"],
   addedLater: true
 }, {
+  key: "general-data",
+  sys: "general",
+  group: "ที่จัดเก็บข้อมูลทั่วไป",
+  label: "ที่จัดเก็บข้อมูลทั่วไป",
+  icon: "fa-folder-open",
+  roles: ["Admin", "Director", "Officer", "Engineer", "Technician", "Safety Officer", "Reporter"],
+  addedLater: true
+}, {
   key: "projects",
   sys: "manage",
   group: "ระบบการจัดการ",
@@ -2232,7 +2319,8 @@ window.SYSTEM_PAGES = {
   repairs: ["dashboard", "repairs", "spare-parts", "pm-plan", "machines", "r-dashboard", "r-new", "r-mine"],
   assets: ["machines", "pm-plan", "asset-registry", "asset-do", "doc-pj2", "transfer-history"],
   consume: ["withdrawals", "withdrawal-pending", "site-stock"],
-  manage: ["projects", "users", "categories", "login-logs", "permissions"]
+  manage: ["projects", "users", "categories", "login-logs", "permissions"],
+  general: ["general-data"]
 };
 window.defaultPagesFor = role => window.APP_FEATURES.filter(f => (f.roles || []).includes(role)).map(f => f.key);
 window.roleAllowList = (role, byRole) => {
@@ -2794,7 +2882,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2393) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2449) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -2949,7 +3037,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2523) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2579) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -3131,10 +3219,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2668) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2724) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2671) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2727) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3312,7 +3400,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2798) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2854) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3442,6 +3530,8 @@ window.applyDeleteLocally = function (action, payload = {}) {
       ...D.siteStock,
       items: byKey(D.siteStock.items)
     };
+  } else if (action === "deleteGeneralRecord") {
+    if (Array.isArray(D.generalRecords)) D.generalRecords = byKey(D.generalRecords);
   } else if (action === "deleteTransferEntry") {
     const m = (D.machines || []).find(x => x.id === payload.machineId);
     if (m) m.transferHistory = (m.transferHistory || []).filter(t => !(String(t.when || "") === String(payload.when || "") && String(t.to || "") === String(payload.to || "")));
@@ -4015,6 +4105,15 @@ window.buildDeleteSnapshot = function (action, payload = {}) {
       add("โครงการ / แผนก", w.department || w.project);
       add("ผู้ขอเบิก", w.requester);
       add("รายการ", (w.items || []).filter(x => x && x.name).slice(0, 10).map((x, i) => `${i + 1}. ${x.name} ${x.qty || ""} ${x.unit || ""}`).join("\n"));
+    } else if (action === "deleteGeneralRecord") {
+      const g = (D.generalRecords || []).find(x => String(x.key) === String(payload.key));
+      if (!g) return null;
+      add("ชื่อหัวข้อ", g.title);
+      add("ข้อมูล", g.info);
+      add("รายละเอียด", String(g.detail || "").slice(0, 300));
+      add("ไฟล์แนบ", (g.files || []).map(f => f.name));
+      add("ผู้บันทึก", g.createdByName);
+      photos = g.photos || [];
     } else if (action === "deleteStockItem") {
       const it = (D.siteStock && D.siteStock.items || []).find(x => String(x.key) === String(payload.key));
       if (!it) return null;
@@ -4155,7 +4254,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3296) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3358) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4724,7 +4823,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3562) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3624) ---- */
 const {
   useState,
   useEffect,
@@ -4973,7 +5072,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3665) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3727) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -5201,7 +5300,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3848) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3910) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -6272,7 +6371,12 @@ function Sidebar({
     icon: "fa-warehouse",
     label: "สต๊อก/เบิกจ่ายหน้างาน"
   }];
-  const navBySystem = systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "manage" ? manageNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
+  const generalNav = [{
+    key: "general-data",
+    icon: "fa-folder-open",
+    label: "ที่จัดเก็บข้อมูลทั่วไป"
+  }];
+  const navBySystem = systemId === "general" ? generalNav : systemId === "assets" ? isSafety ? safetyAssetNav : assetNav : systemId === "manage" ? manageNav : systemId === "consume" ? consumeNav : isSafety ? safetyNav : isAdminish ? adminNav : isTech ? techNav : reporterNav;
   const pmDueCount = window.machinesPmDue(user).total;
   const nav = navBySystem.filter(x => window.canAccessPage(user, x.key)).map(x => (x.key === "machines" || x.key === "pm-plan") && pmDueCount ? {
     ...x,
@@ -6293,7 +6397,7 @@ function Sidebar({
     className: `fa-solid ${user.activeErp?.icon || "fa-screwdriver-wrench"}`
   })), React.createElement("div", {
     className: "t"
-  }, user.activeErp?.name || "ระบบแจ้งซ่อม", React.createElement("small", null, systemId === "assets" ? "Asset Management" : systemId === "consume" ? "Consume / Stock" : "Machine Repair"))), React.createElement("nav", {
+  }, user.activeErp?.name || "ระบบแจ้งซ่อม", React.createElement("small", null, systemId === "assets" ? "Asset Management" : systemId === "consume" ? "Consume / Stock" : systemId === "general" ? "General Storage" : "Machine Repair"))), React.createElement("nav", {
     className: "nav"
   }, React.createElement("div", {
     className: "section"
@@ -6384,7 +6488,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4281) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4347) ---- */
 function Projects({
   user
 }) {
@@ -7021,7 +7125,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4534) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4600) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -7418,7 +7522,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4780) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4846) ---- */
 function Dashboard({
   user,
   goTo
@@ -9056,7 +9160,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5440) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5506) ---- */
 function Repairs({
   user
 }) {
@@ -9866,6 +9970,678 @@ function MachineQuickView({
   }), "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 \u0E23\u0E30\u0E1A\u0E1A Asset \u2192 \u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")));
 }
 window.MachineQuickView = MachineQuickView;
+window.REPAIR_METHODS = [{
+  key: "replace",
+  label: "เปลี่ยนอะไหล่",
+  icon: "fa-arrows-rotate"
+}, {
+  key: "fix",
+  label: "ซ่อมแซม / แก้ไข",
+  icon: "fa-screwdriver-wrench"
+}, {
+  key: "adjust",
+  label: "ปรับตั้ง / ตั้งค่า",
+  icon: "fa-sliders"
+}, {
+  key: "weld",
+  label: "เชื่อม / ต่อ / ประกอบ",
+  icon: "fa-fire-flame-curved"
+}, {
+  key: "clean",
+  label: "ทำความสะอาด / หล่อลื่น",
+  icon: "fa-spray-can-sparkles"
+}, {
+  key: "inspect",
+  label: "ตรวจเช็ค / ทดสอบ",
+  icon: "fa-magnifying-glass"
+}, {
+  key: "outsource",
+  label: "ส่งซ่อมภายนอก",
+  icon: "fa-truck-arrow-right"
+}, {
+  key: "other",
+  label: "อื่น ๆ (ระบุ)",
+  icon: "fa-ellipsis"
+}];
+window.getRepairMethod = key => window.REPAIR_METHODS.find(m => m.key === key) || null;
+window.repairMethodLabel = w => {
+  const m = window.getRepairMethod(w && w.method);
+  if (!m) return "";
+  return m.key === "other" && w.methodNote ? w.methodNote : m.label;
+};
+window.partsCatalog = () => {
+  const map = {};
+  (window.__DATA.repairs || []).forEach(r => {
+    const t = new Date(r.updatedAt || r.createdAt).getTime() || 0;
+    (Array.isArray(r.parts) ? r.parts : []).forEach(p => {
+      const name = String(p && p.name || "").trim();
+      if (!name) return;
+      const k = name.toLowerCase().replace(/\s+/g, " ");
+      if (!map[k] || t >= map[k].t) map[k] = {
+        name,
+        unitPrice: Number(p.unitPrice) || 0,
+        supplier: p.supplier || "",
+        t,
+        count: (map[k] ? map[k].count : 0) + 1
+      };else map[k].count++;
+    });
+  });
+  return Object.values(map).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "th"));
+};
+const rwPartKey = name => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+function RepairWorkEditor({
+  r,
+  initial,
+  onCancel,
+  onSave,
+  saving
+}) {
+  const ticketParts = (Array.isArray(r.parts) ? r.parts : []).filter(p => p && p.name);
+  const catalog = React.useMemo(() => window.partsCatalog(), []);
+  const [w, setW] = React.useState(() => initial ? {
+    ...initial,
+    parts: (initial.parts || []).map(p => ({
+      ...p
+    }))
+  } : {
+    what: "",
+    method: "",
+    methodNote: "",
+    parts: [],
+    note: ""
+  });
+  const [pick, setPick] = React.useState("");
+  const [pickQty, setPickQty] = React.useState(1);
+  const set = (k, v) => setW(x => ({
+    ...x,
+    [k]: v
+  }));
+  const inTicket = name => ticketParts.some(p => rwPartKey(p.name) === rwPartKey(name));
+  const addPart = (name, qty) => {
+    const nm = String(name || "").trim();
+    if (!nm) return;
+    const q = Math.max(1, Number(qty) || 1);
+    setW(x => {
+      const exist = x.parts.findIndex(p => rwPartKey(p.name) === rwPartKey(nm));
+      if (exist > -1) return {
+        ...x,
+        parts: x.parts.map((p, i) => i === exist ? {
+          ...p,
+          qty: (Number(p.qty) || 0) + q
+        } : p)
+      };
+      const known = ticketParts.find(p => rwPartKey(p.name) === rwPartKey(nm)) || catalog.find(c => rwPartKey(c.name) === rwPartKey(nm));
+      return {
+        ...x,
+        parts: [...x.parts, {
+          name: known ? known.name : nm,
+          qty: q
+        }]
+      };
+    });
+    setPick("");
+    setPickQty(1);
+  };
+  const submit = () => {
+    if (!String(w.what || "").trim()) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาระบุว่าซ่อมอะไร"
+      });
+      return;
+    }
+    if (!w.method) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาเลือกรูปแบบการซ่อม"
+      });
+      return;
+    }
+    if (w.method === "other" && !String(w.methodNote || "").trim()) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาระบุรูปแบบการซ่อม"
+      });
+      return;
+    }
+    onSave({
+      what: String(w.what).trim(),
+      method: w.method,
+      methodNote: w.method === "other" ? String(w.methodNote || "").trim() : "",
+      parts: (w.parts || []).filter(p => p.name).map(p => ({
+        name: p.name,
+        qty: Math.max(1, Number(p.qty) || 1)
+      })),
+      note: String(w.note || "").trim()
+    });
+  };
+  const listId = `rw-parts-${r.id}`;
+  const lbl = {
+    display: "block",
+    fontSize: 12.5,
+    color: "var(--muted)",
+    marginBottom: 5,
+    fontWeight: 500
+  };
+  const inp = {
+    width: "100%",
+    padding: "9px 11px",
+    border: "1px solid var(--line)",
+    borderRadius: 9,
+    background: "#fff",
+    outline: "none",
+    fontFamily: "Kanit",
+    fontSize: 14
+  };
+  return React.createElement("div", {
+    style: {
+      border: "1.5px solid var(--accent)",
+      borderRadius: 10,
+      padding: 14,
+      background: "#F8FAFF",
+      display: "grid",
+      gap: 12
+    }
+  }, React.createElement("div", null, React.createElement("label", {
+    style: lbl,
+    htmlFor: `rw-what-${r.id}`
+  }, "\u0E0B\u0E48\u0E2D\u0E21\u0E2D\u0E30\u0E44\u0E23 *"), React.createElement("input", {
+    id: `rw-what-${r.id}`,
+    style: inp,
+    value: w.what,
+    onChange: e => set("what", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E23\u0E30\u0E1A\u0E1A\u0E44\u0E2E\u0E14\u0E23\u0E2D\u0E25\u0E34\u0E01\u0E41\u0E02\u0E19\u0E1A\u0E39\u0E21, \u0E2A\u0E32\u0E22\u0E1E\u0E32\u0E19\u0E1E\u0E31\u0E14\u0E25\u0E21, \u0E44\u0E1F\u0E2B\u0E19\u0E49\u0E32",
+    list: `rw-what-list-${r.id}`
+  }), React.createElement("datalist", {
+    id: `rw-what-list-${r.id}`
+  }, window.getProblems(r).map((p, i) => React.createElement("option", {
+    key: i,
+    value: p.text
+  })))), React.createElement("div", null, React.createElement("div", {
+    style: lbl
+  }, "\u0E0B\u0E48\u0E2D\u0E21\u0E41\u0E1A\u0E1A\u0E44\u0E2B\u0E19 *"), React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 6
+    },
+    role: "radiogroup",
+    "aria-label": "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21"
+  }, window.REPAIR_METHODS.map(m => {
+    const on = w.method === m.key;
+    return React.createElement("button", {
+      key: m.key,
+      type: "button",
+      role: "radio",
+      "aria-checked": on,
+      onClick: () => set("method", m.key),
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "7px 11px",
+        borderRadius: 999,
+        fontSize: 13,
+        cursor: "pointer",
+        fontFamily: "Kanit",
+        border: `1.5px solid ${on ? "var(--primary)" : "var(--line)"}`,
+        background: on ? "var(--accent-soft)" : "#fff",
+        color: on ? "var(--primary)" : "var(--text)",
+        fontWeight: on ? 600 : 400
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${m.icon}`,
+      "aria-hidden": "true"
+    }), m.label);
+  })), w.method === "other" && React.createElement("input", {
+    style: {
+      ...inp,
+      marginTop: 8
+    },
+    value: w.methodNote,
+    onChange: e => set("methodNote", e.target.value),
+    placeholder: "\u0E23\u0E30\u0E1A\u0E38\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21",
+    "aria-label": "\u0E23\u0E30\u0E1A\u0E38\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21"
+  })), React.createElement("div", null, React.createElement("div", {
+    style: lbl
+  }, "\u0E43\u0E0A\u0E49\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E15\u0E31\u0E27\u0E44\u0E2B\u0E19"), w.parts.length > 0 && React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 6,
+      marginBottom: 8
+    }
+  }, w.parts.map((p, i) => React.createElement("div", {
+    key: i,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "6px 10px",
+      border: "1px solid var(--line)",
+      borderRadius: 9,
+      background: "#fff"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-gear",
+    style: {
+      color: "var(--muted)"
+    },
+    "aria-hidden": "true"
+  }), React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontWeight: 500
+    }
+  }, p.name, !inTicket(p.name) && React.createElement("span", {
+    className: "badge",
+    style: {
+      marginLeft: 6,
+      fontSize: 10.5,
+      background: "#ECFDF5",
+      color: "#047857"
+    }
+  }, "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48")), React.createElement("input", {
+    type: "number",
+    min: "1",
+    value: p.qty,
+    "aria-label": `จำนวน ${p.name}`,
+    onChange: e => setW(x => ({
+      ...x,
+      parts: x.parts.map((q, idx) => idx === i ? {
+        ...q,
+        qty: e.target.value
+      } : q)
+    })),
+    style: {
+      ...inp,
+      width: 70,
+      padding: "5px 8px",
+      textAlign: "center"
+    }
+  }), React.createElement("button", {
+    type: "button",
+    className: "ia danger",
+    title: "\u0E40\u0E2D\u0E32\u0E2D\u0E2D\u0E01",
+    "aria-label": `เอา ${p.name} ออก`,
+    onClick: () => setW(x => ({
+      ...x,
+      parts: x.parts.filter((_, idx) => idx !== i)
+    }))
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark"
+  }))))), ticketParts.length > 0 && React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 6,
+      marginBottom: 8
+    }
+  }, React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      alignSelf: "center"
+    }
+  }, "\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E02\u0E2D\u0E07\u0E43\u0E1A\u0E19\u0E35\u0E49:"), ticketParts.map((p, i) => {
+    const used = w.parts.some(x => rwPartKey(x.name) === rwPartKey(p.name));
+    return React.createElement("button", {
+      key: i,
+      type: "button",
+      disabled: used,
+      onClick: () => addPart(p.name, p.qty),
+      style: {
+        padding: "4px 10px",
+        borderRadius: 999,
+        border: "1px dashed var(--primary)",
+        background: used ? "var(--line-soft)" : "#fff",
+        color: used ? "var(--muted)" : "var(--primary)",
+        fontSize: 12.5,
+        cursor: used ? "default" : "pointer",
+        fontFamily: "Kanit"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${used ? "fa-check" : "fa-plus"}`,
+      "aria-hidden": "true"
+    }), " ", p.name);
+  })), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      flexWrap: "wrap"
+    }
+  }, React.createElement("input", {
+    style: {
+      ...inp,
+      flex: "1 1 200px"
+    },
+    value: pick,
+    onChange: e => setPick(e.target.value),
+    list: listId,
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addPart(pick, pickQty);
+      }
+    },
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32/\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48 \u0E2B\u0E23\u0E37\u0E2D\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48",
+    "aria-label": "\u0E0A\u0E37\u0E48\u0E2D\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48"
+  }), React.createElement("datalist", {
+    id: listId
+  }, catalog.map((c, i) => React.createElement("option", {
+    key: i,
+    value: c.name
+  }, c.supplier ? `${c.supplier} · ` : "", "\u0E3F", (c.unitPrice || 0).toLocaleString("th-TH")))), React.createElement("input", {
+    type: "number",
+    min: "1",
+    value: pickQty,
+    onChange: e => setPickQty(e.target.value),
+    style: {
+      ...inp,
+      width: 76,
+      textAlign: "center"
+    },
+    "aria-label": "\u0E08\u0E33\u0E19\u0E27\u0E19"
+  }), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    onClick: () => addPart(pick, pickQty),
+    disabled: !pick.trim()
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48")), React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginTop: 5
+    }
+  }, "\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E02\u0E2D\u0E07\u0E43\u0E1A\u0E19\u0E35\u0E49 \u0E08\u0E30\u0E16\u0E39\u0E01\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E02\u0E49\u0E32\u0E44\u0E1B\u0E43\u0E2B\u0E49 (\u0E43\u0E0A\u0E49\u0E23\u0E32\u0E04\u0E32/\u0E41\u0E2B\u0E25\u0E48\u0E07\u0E0B\u0E37\u0E49\u0E2D\u0E04\u0E23\u0E31\u0E49\u0E07\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14 \u0E16\u0E49\u0E32\u0E40\u0E1B\u0E47\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E23\u0E32\u0E04\u0E32\u0E40\u0E1B\u0E47\u0E19 0 \u2014 \u0E41\u0E01\u0E49\u0E23\u0E32\u0E04\u0E32\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 \"\u0E41\u0E01\u0E49\u0E44\u0E02\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\")")), React.createElement("div", null, React.createElement("label", {
+    style: lbl,
+    htmlFor: `rw-note-${r.id}`
+  }, "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38"), React.createElement("input", {
+    id: `rw-note-${r.id}`,
+    style: inp,
+    value: w.note,
+    onChange: e => set("note", e.target.value),
+    placeholder: "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E15\u0E34\u0E21 (\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E04\u0E31\u0E1A)"
+  })), React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "flex-end",
+      gap: 8
+    }
+  }, React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    onClick: onCancel,
+    disabled: saving
+  }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary btn-sm",
+    onClick: submit,
+    disabled: saving
+  }, saving ? React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 12,
+      height: 12,
+      borderWidth: 2
+    }
+  }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-floppy-disk"
+  }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01"))));
+}
+function RepairWorksSection({
+  r,
+  user,
+  onChanged
+}) {
+  const canEdit = ["Admin", "Officer", "Engineer", "Technician"].includes(user && user.role);
+  const works = Array.isArray(r.repairWorks) ? r.repairWorks.filter(Boolean) : Object.values(r.repairWorks || {}).filter(Boolean);
+  const [editIdx, setEditIdx] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  const persist = async (nextWorks, note) => {
+    const parts = (Array.isArray(r.parts) ? r.parts : []).map(p => ({
+      ...p
+    }));
+    const catalog = window.partsCatalog();
+    const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+    const added = [];
+    nextWorks.forEach(w => (w.parts || []).forEach(wp => {
+      if (parts.some(p => rwPartKey(p.name) === rwPartKey(wp.name))) return;
+      const c = catalog.find(x => rwPartKey(x.name) === rwPartKey(wp.name));
+      const qty = Math.max(1, Number(wp.qty) || 1);
+      const unitPrice = r2(c ? c.unitPrice : 0);
+      parts.push({
+        name: wp.name,
+        qty,
+        unitPrice,
+        total: r2(qty * unitPrice),
+        supplier: c && c.supplier || "",
+        photos: []
+      });
+      added.push(wp.name);
+    }));
+    const patch = {
+      repairWorks: nextWorks
+    };
+    let cost;
+    if (added.length) {
+      patch.parts = parts;
+      cost = r2(parts.reduce((s, p) => s + (Number(p.total) || 0), 0) + (Number(r.laborCost) || 0));
+    }
+    setSaving(true);
+    try {
+      const fullNote = note + (added.length ? ` · เพิ่มอะไหล่ ${added.join(", ")}` : "");
+      await window.api("updateRepairStatus", {
+        id: r.id,
+        status: r.status,
+        by: user.name,
+        note: fullNote,
+        cost,
+        patch
+      });
+      const tl = {
+        status: r.status,
+        when: new Date(),
+        by: user.name,
+        note: fullNote
+      };
+      const apply = x => {
+        x.repairWorks = nextWorks;
+        if (patch.parts) {
+          x.parts = parts;
+          x.cost = cost;
+        }
+        x.timeline = [...(x.timeline || []), tl];
+      };
+      const cached = (window.__DATA.repairs || []).find(x => x.id === r.id);
+      if (cached && cached !== r) apply(cached);
+      apply(r);
+      setEditIdx(null);
+      if (onChanged) onChanged();
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกรูปแบบการซ่อมแล้ว",
+        timer: 1300,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveOne = w => {
+    const next = editIdx === -1 ? [...works, w] : works.map((x, i) => i === editIdx ? w : x);
+    persist(next, editIdx === -1 ? `บันทึกการซ่อม: ${w.what}` : `แก้ไขการซ่อม: ${w.what}`);
+  };
+  const removeOne = async i => {
+    const w = works[i];
+    const ok = await Swal.fire({
+      icon: "warning",
+      title: "ลบรายการซ่อมนี้?",
+      text: `${w.what} · ${window.repairMethodLabel(w)}`,
+      showCancelButton: true,
+      confirmButtonText: "ลบ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#EF4444"
+    });
+    if (!ok.isConfirmed) return;
+    persist(works.filter((_, idx) => idx !== i), `ลบรายการซ่อม: ${w.what}`);
+  };
+  if (!canEdit && works.length === 0) return null;
+  return React.createElement("div", {
+    style: {
+      marginTop: 18,
+      border: "1px solid var(--line)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, React.createElement("div", {
+    style: {
+      padding: "12px 16px",
+      background: "#FAFBFC",
+      borderBottom: "1px solid var(--line)",
+      fontWeight: 500,
+      fontSize: 13,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8
+    }
+  }, React.createElement("span", null, React.createElement("i", {
+    className: "fa-solid fa-screwdriver-wrench",
+    style: {
+      color: "var(--primary)",
+      marginRight: 6
+    }
+  }), "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21 (", works.length, " \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)"), canEdit && editIdx === null && React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: () => setEditIdx(-1)
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E0B\u0E48\u0E2D\u0E21")), React.createElement("div", {
+    style: {
+      padding: 12,
+      display: "grid",
+      gap: 10
+    }
+  }, works.length === 0 && editIdx === null && React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13,
+      textAlign: "center",
+      padding: "6px 0"
+    }
+  }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E27\u0E48\u0E32\u0E0B\u0E48\u0E2D\u0E21\u0E2D\u0E30\u0E44\u0E23 \u0E0B\u0E48\u0E2D\u0E21\u0E41\u0E1A\u0E1A\u0E44\u0E2B\u0E19 \u0E41\u0E25\u0E30\u0E43\u0E0A\u0E49\u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48\u0E2D\u0E30\u0E44\u0E23"), works.map((w, i) => editIdx === i ? React.createElement(RepairWorkEditor, {
+    key: i,
+    r: r,
+    initial: w,
+    saving: saving,
+    onCancel: () => setEditIdx(null),
+    onSave: saveOne
+  }) : React.createElement("div", {
+    key: i,
+    style: {
+      display: "flex",
+      gap: 10,
+      alignItems: "flex-start",
+      padding: "10px 12px",
+      border: "1px solid var(--line-soft)",
+      borderRadius: 10,
+      background: "#fff"
+    }
+  }, React.createElement("span", {
+    style: {
+      width: 22,
+      height: 22,
+      borderRadius: 999,
+      background: "var(--accent-soft)",
+      color: "var(--primary)",
+      display: "grid",
+      placeItems: "center",
+      fontSize: 12,
+      fontWeight: 600,
+      flexShrink: 0
+    }
+  }, i + 1), React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 600
+    }
+  }, w.what), React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 4,
+      fontSize: 12.5,
+      color: "var(--primary)",
+      background: "var(--accent-soft)",
+      padding: "2px 9px",
+      borderRadius: 999
+    }
+  }, React.createElement("i", {
+    className: `fa-solid ${(window.getRepairMethod(w.method) || {}).icon || "fa-wrench"}`,
+    "aria-hidden": "true"
+  }), window.repairMethodLabel(w) || "—"), (w.parts || []).length > 0 && React.createElement("div", {
+    style: {
+      fontSize: 13,
+      marginTop: 6,
+      color: "var(--text)"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-gear",
+    style: {
+      color: "var(--muted)",
+      marginRight: 6
+    },
+    "aria-hidden": "true"
+  }), w.parts.map(p => `${p.name} × ${p.qty}`).join(" · ")), w.note && React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, w.note)), canEdit && editIdx === null && React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 2,
+      flexShrink: 0
+    }
+  }, React.createElement("button", {
+    className: "ia",
+    title: "\u0E41\u0E01\u0E49\u0E44\u0E02",
+    "aria-label": `แก้ไข ${w.what}`,
+    onClick: () => setEditIdx(i)
+  }, React.createElement("i", {
+    className: "fa-solid fa-pen"
+  })), React.createElement("button", {
+    className: "ia danger",
+    title: "\u0E25\u0E1A",
+    "aria-label": `ลบ ${w.what}`,
+    onClick: () => removeOne(i)
+  }, React.createElement("i", {
+    className: "fa-solid fa-trash"
+  }))))), editIdx === -1 && React.createElement(RepairWorkEditor, {
+    r: r,
+    saving: saving,
+    onCancel: () => setEditIdx(null),
+    onSave: saveOne
+  })));
+}
+window.RepairWorksSection = RepairWorksSection;
 function RepairDetail({
   r,
   onClose,
@@ -9876,6 +10652,7 @@ function RepairDetail({
   onProblems,
   onDeleted
 }) {
+  const [, bumpDetail] = React.useReducer(x => x + 1, 0);
   const [machineView, setMachineView] = React.useState(false);
   const canDelete = !!user && user.role !== "Safety Officer";
   const removeRepair = async () => {
@@ -10379,7 +11156,11 @@ function RepairDetail({
   }, "\u0E3F", Number(r.laborCost).toLocaleString("th-TH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  })))), Array.isArray(r.photos) && r.photos.filter(Boolean).length > 0 && React.createElement("div", {
+  })))), React.createElement(RepairWorksSection, {
+    r: r,
+    user: user,
+    onChanged: bumpDetail
+  }), Array.isArray(r.photos) && r.photos.filter(Boolean).length > 0 && React.createElement("div", {
     className: "detail-grid",
     style: {
       marginTop: 18
@@ -11635,7 +12416,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6408) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6720) ---- */
 function Users({
   user
 }) {
@@ -12207,7 +12988,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6592) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6904) ---- */
 function Categories({
   user
 }) {
@@ -12470,7 +13251,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6680) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 6992) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -15624,7 +16405,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7678) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 7990) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -19790,7 +20571,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 9040) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 9352) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -20890,7 +21671,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9347) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9659) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -23664,7 +24445,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10674) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 10986) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -23992,7 +24773,8 @@ function PinSetupModal({
       setMsg("");
       if (after === "off") {
         window.__PIN.disable();
-        done("ปิดการใช้ PIN แล้ว", "กลับไปใช้การหมดเวลาใช้งาน 15 นาทีตามเดิม");
+        if (window.markLogin) window.markLogin();
+        done("ปิดการใช้ PIN แล้ว", "กลับไปใช้การล็อกอินครั้งละ 4 ชั่วโมงตามเดิม");
         return true;
       }
       setMode("new");
@@ -24087,7 +24869,7 @@ function PinSetupModal({
       background: "#FEE2E2",
       color: "var(--danger)"
     }
-  }), React.createElement("span", null, "\u0E1B\u0E34\u0E14\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49 PIN", React.createElement("small", null, "\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E40\u0E14\u0E49\u0E07\u0E2D\u0E2D\u0E01\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19 15 \u0E19\u0E32\u0E17\u0E35")))) : React.createElement("div", {
+  }), React.createElement("span", null, "\u0E1B\u0E34\u0E14\u0E01\u0E32\u0E23\u0E43\u0E0A\u0E49 PIN", React.createElement("small", null, "\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E01\u0E32\u0E23\u0E25\u0E47\u0E2D\u0E01\u0E2D\u0E34\u0E19\u0E04\u0E23\u0E31\u0E49\u0E07\u0E25\u0E30 4 \u0E0A\u0E31\u0E48\u0E27\u0E42\u0E21\u0E07")))) : React.createElement("div", {
     className: "pin-ui on-light"
   }, React.createElement("div", {
     style: {
@@ -24137,7 +24919,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 11009) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 11322) ---- */
 function Permissions({
   user
 }) {
@@ -24757,7 +25539,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11362) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11675) ---- */
 function WorkspacePicker({
   user,
   onContinue,
@@ -24779,6 +25561,7 @@ function WorkspacePicker({
     if (sys.id === "production") return `เตรียมเชื่อม Asset ${stats.assets} รายการ`;
     if (sys.id === "consume") return `เตรียมเชื่อมสต๊อก/เบิกจ่าย ${stats.withdrawals} รายการ`;
     if (sys.id === "manage") return `${stats.users} ผู้ใช้งาน · ${(window.__DATA.projects || []).length} โครงการ`;
+    if (sys.id === "general") return Array.isArray(window.__DATA.generalRecords) ? `${window.__DATA.generalRecords.length} รายการ` : "รูป 8 รูป · ไฟล์แนบ 5 ไฟล์ ต่อรายการ";
     if (sys.id === "pc") return `เตรียมเชื่อมผู้ใช้งาน ${stats.users} คน`;
     if (sys.id === "hr-time") return `เชื่อมข้อมูลผู้ใช้งาน ${stats.users} คน`;
     return "พร้อมเชื่อมข้อมูล";
@@ -26672,6 +27455,795 @@ function PmPlan({
   }));
 }
 window.PmPlan = PmPlan;
+const GENERAL_MAX_PHOTOS = 8;
+const GENERAL_MAX_FILES = 5;
+const GENERAL_MAX_FILE_MB = 20;
+function generalNewKey() {
+  return "G" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function generalFileIcon(f) {
+  const n = String(f && (f.mimeType || f.name) || "").toLowerCase();
+  if (/pdf/.test(n)) return {
+    icon: "fa-file-pdf",
+    color: "#DC2626"
+  };
+  if (/sheet|excel|xls|csv/.test(n)) return {
+    icon: "fa-file-excel",
+    color: "#15803D"
+  };
+  if (/word|doc/.test(n)) return {
+    icon: "fa-file-word",
+    color: "#1D4ED8"
+  };
+  if (/presentation|powerpoint|ppt/.test(n)) return {
+    icon: "fa-file-powerpoint",
+    color: "#C2410C"
+  };
+  if (/image|jpe?g|png|gif|webp|heic/.test(n)) return {
+    icon: "fa-file-image",
+    color: "#7C3AED"
+  };
+  if (/zip|rar|7z/.test(n)) return {
+    icon: "fa-file-zipper",
+    color: "#92400E"
+  };
+  return {
+    icon: "fa-file",
+    color: "#64748B"
+  };
+}
+function generalFileSize(b) {
+  const n = Number(b) || 0;
+  if (!n) return "";
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function GeneralFilesField({
+  value,
+  onChange,
+  max = GENERAL_MAX_FILES,
+  tag
+}) {
+  const list = Array.isArray(value) ? value : [];
+  const [busy, setBusy] = React.useState(false);
+  const inputRef = React.useRef(null);
+  const full = list.length >= max;
+  const readRaw = file => new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const d = String(r.result || "");
+      res(d.includes(",") ? d.split(",").pop() : d);
+    };
+    r.onerror = () => rej(r.error || new Error("อ่านไฟล์ไม่สำเร็จ"));
+    r.readAsDataURL(file);
+  });
+  const onFiles = async files => {
+    const arr = Array.from(files || []);
+    if (!arr.length) return;
+    const room = max - list.length;
+    if (room <= 0) {
+      Swal.fire({
+        icon: "info",
+        title: `แนบไฟล์ได้สูงสุด ${max} ไฟล์`
+      });
+      return;
+    }
+    const tooBig = arr.filter(f => f.size > GENERAL_MAX_FILE_MB * 1024 * 1024);
+    if (tooBig.length) {
+      Swal.fire({
+        icon: "warning",
+        title: "ไฟล์ใหญ่เกินไป",
+        text: `แต่ละไฟล์ต้องไม่เกิน ${GENERAL_MAX_FILE_MB} MB: ${tooBig.map(f => f.name).join(", ")}`
+      });
+      return;
+    }
+    const take = arr.slice(0, room);
+    setBusy(true);
+    const added = [];
+    let failed = false;
+    try {
+      for (let i = 0; i < take.length; i++) {
+        const f = take[i];
+        Swal.fire({
+          title: `กำลังอัปโหลดไฟล์ ${i + 1}/${take.length}...`,
+          text: f.name,
+          allowOutsideClick: false,
+          didOpen: () => Swal.showLoading()
+        });
+        try {
+          const upload = {
+            name: f.name,
+            mimeType: f.type || "application/octet-stream",
+            data: await readRaw(f)
+          };
+          const saved = await window.api("uploadGeneralFile", {
+            tag,
+            upload
+          });
+          if (saved && saved.url) added.push({
+            name: f.name,
+            url: saved.url,
+            mimeType: f.type || "",
+            size: f.size || 0
+          });
+        } catch (err) {
+          failed = true;
+          Swal.close();
+          Swal.fire({
+            icon: "error",
+            title: "อัปโหลดไม่สำเร็จ",
+            text: err && err.message || String(err)
+          });
+          break;
+        }
+      }
+      if (added.length) onChange([...list, ...added]);
+      if (failed) return;
+      Swal.close();
+      if (arr.length > room) Swal.fire({
+        icon: "info",
+        title: `เพิ่มได้อีก ${room} ไฟล์เท่านั้น`,
+        timer: 1900,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });else if (added.length) Swal.fire({
+        icon: "success",
+        title: `แนบไฟล์แล้ว ${added.length} ไฟล์`,
+        timer: 1200,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 10
+    }
+  }, list.length > 0 && React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 6
+    }
+  }, list.map((f, i) => {
+    const ic = generalFileIcon(f);
+    return React.createElement("div", {
+      key: i,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        background: "#fff"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${ic.icon}`,
+      style: {
+        color: ic.color,
+        fontSize: 18,
+        width: 20,
+        textAlign: "center"
+      },
+      "aria-hidden": "true"
+    }), React.createElement("a", {
+      href: f.url,
+      target: "_blank",
+      rel: "noreferrer",
+      style: {
+        flex: 1,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        color: "var(--text)"
+      }
+    }, f.name), React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--muted)",
+        whiteSpace: "nowrap"
+      }
+    }, generalFileSize(f.size)), React.createElement("button", {
+      type: "button",
+      className: "ia danger",
+      title: "\u0E40\u0E2D\u0E32\u0E44\u0E1F\u0E25\u0E4C\u0E19\u0E35\u0E49\u0E2D\u0E2D\u0E01",
+      "aria-label": `เอาไฟล์ ${f.name} ออก`,
+      onClick: () => onChange(list.filter((_, idx) => idx !== i))
+    }, React.createElement("i", {
+      className: "fa-solid fa-xmark"
+    })));
+  })), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap",
+      alignItems: "center"
+    }
+  }, React.createElement("input", {
+    ref: inputRef,
+    type: "file",
+    multiple: true,
+    style: {
+      display: "none"
+    },
+    onChange: e => {
+      const fs = Array.from(e.target.files || []);
+      e.target.value = "";
+      onFiles(fs);
+    }
+  }), React.createElement("button", {
+    type: "button",
+    className: "btn btn-primary btn-sm",
+    onClick: () => inputRef.current && inputRef.current.click(),
+    disabled: full || busy
+  }, busy ? React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "spinner",
+    style: {
+      width: 13,
+      height: 13,
+      borderWidth: 2
+    }
+  }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E2D\u0E31\u0E1B\u0E42\u0E2B\u0E25\u0E14...") : React.createElement(React.Fragment, null, React.createElement("i", {
+    className: "fa-solid fa-paperclip"
+  }), " ", full ? `ครบ ${max} ไฟล์แล้ว` : "แนบไฟล์")), React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)"
+    }
+  }, "PDF, Word, Excel \u0E2F\u0E25\u0E2F \u0E44\u0E1F\u0E25\u0E4C\u0E25\u0E30\u0E44\u0E21\u0E48\u0E40\u0E01\u0E34\u0E19 ", GENERAL_MAX_FILE_MB, " MB \xB7 (", list.length, "/", max, ")")));
+}
+function GeneralRecordForm({
+  user,
+  initial,
+  onClose,
+  onSaved
+}) {
+  const isNew = !initial;
+  const [rec, setRec] = React.useState(() => initial ? {
+    ...initial
+  } : {
+    key: generalNewKey(),
+    title: "",
+    info: "",
+    detail: "",
+    photos: [],
+    files: []
+  });
+  const [saving, setSaving] = React.useState(false);
+  const set = (k, v) => setRec(r => ({
+    ...r,
+    [k]: v
+  }));
+  const save = async () => {
+    if (!String(rec.title || "").trim()) {
+      Swal.fire({
+        icon: "warning",
+        title: "กรุณาใส่ชื่อหัวข้อ"
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await window.api("saveGeneralRecord", {
+        record: rec,
+        isNew,
+        by: {
+          id: user.id,
+          name: user.name
+        }
+      });
+      onSaved(saved);
+      Swal.fire({
+        icon: "success",
+        title: "บันทึกแล้ว",
+        timer: 1200,
+        showConfirmButton: false,
+        toast: true,
+        position: "top-end"
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "บันทึกไม่สำเร็จ",
+        text: err.message
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+  return React.createElement(Modal, {
+    open: true,
+    onClose: saving ? () => {} : onClose,
+    size: "lg",
+    title: isNew ? "เพิ่มข้อมูลทั่วไป" : "แก้ไขข้อมูลทั่วไป",
+    footer: React.createElement(React.Fragment, null, React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: onClose,
+      disabled: saving
+    }, "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"), React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: save,
+      disabled: saving
+    }, saving ? React.createElement(React.Fragment, null, React.createElement("div", {
+      className: "spinner",
+      style: {
+        width: 13,
+        height: 13,
+        borderWidth: 2
+      }
+    }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
+      className: "fa-solid fa-floppy-disk"
+    }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")))
+  }, React.createElement("div", {
+    className: "form-grid"
+  }, React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", {
+    htmlFor: "gd-title"
+  }, "\u0E0A\u0E37\u0E48\u0E2D\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D *"), React.createElement("input", {
+    id: "gd-title",
+    value: rec.title || "",
+    onChange: e => set("title", e.target.value),
+    placeholder: "\u0E40\u0E0A\u0E48\u0E19 \u0E43\u0E1A\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E01\u0E48\u0E2D\u0E2A\u0E23\u0E49\u0E32\u0E07 \u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 A"
+  })), React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", {
+    htmlFor: "gd-info"
+  }, "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"), React.createElement("input", {
+    id: "gd-info",
+    value: rec.info || "",
+    onChange: e => set("info", e.target.value),
+    placeholder: "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E2A\u0E31\u0E49\u0E19 \u0E46 \u0E40\u0E0A\u0E48\u0E19 \u0E40\u0E25\u0E02\u0E17\u0E35\u0E48\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 / \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 / \u0E1C\u0E39\u0E49\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E02\u0E49\u0E2D\u0E07"
+  })), React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", {
+    htmlFor: "gd-detail"
+  }, "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14"), React.createElement("textarea", {
+    id: "gd-detail",
+    rows: 5,
+    value: rec.detail || "",
+    onChange: e => set("detail", e.target.value),
+    placeholder: "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E15\u0E34\u0E21"
+  })), React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", null, "\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E (\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14 ", GENERAL_MAX_PHOTOS, " \u0E23\u0E39\u0E1B)"), React.createElement(PhotosField, {
+    value: rec.photos || [],
+    onChange: v => set("photos", v),
+    max: GENERAL_MAX_PHOTOS,
+    uploadAction: "uploadGeneralFile",
+    uploadContext: {
+      tag: rec.key
+    }
+  })), React.createElement("div", {
+    className: "form-field full"
+  }, React.createElement("label", null, "\u0E44\u0E1F\u0E25\u0E4C\u0E41\u0E19\u0E1A (\u0E2A\u0E39\u0E07\u0E2A\u0E38\u0E14 ", GENERAL_MAX_FILES, " \u0E44\u0E1F\u0E25\u0E4C)"), React.createElement(GeneralFilesField, {
+    value: rec.files || [],
+    onChange: v => set("files", v),
+    tag: rec.key
+  }))));
+}
+function GeneralRecordView({
+  rec,
+  canEdit,
+  onEdit,
+  onDelete,
+  onClose
+}) {
+  return React.createElement(Modal, {
+    open: true,
+    onClose: onClose,
+    size: "lg",
+    title: rec.title,
+    footer: React.createElement(React.Fragment, null, canEdit && React.createElement("button", {
+      className: "btn btn-ghost",
+      style: {
+        color: "var(--danger)"
+      },
+      onClick: onDelete
+    }, React.createElement("i", {
+      className: "fa-solid fa-trash"
+    }), " \u0E25\u0E1A"), canEdit && React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: onEdit
+    }, React.createElement("i", {
+      className: "fa-solid fa-pen"
+    }), " \u0E41\u0E01\u0E49\u0E44\u0E02"), !canEdit && React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: onClose
+    }, "\u0E1B\u0E34\u0E14"))
+  }, React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 16
+    }
+  }, rec.info && React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 3
+    }
+  }, "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"), React.createElement("div", {
+    style: {
+      fontWeight: 500
+    }
+  }, rec.info)), rec.detail && React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 3
+    }
+  }, "\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14"), React.createElement("div", {
+    style: {
+      whiteSpace: "pre-wrap",
+      lineHeight: 1.6
+    }
+  }, rec.detail)), React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 6
+    }
+  }, "\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E (", (rec.photos || []).length, "/", GENERAL_MAX_PHOTOS, ")"), (rec.photos || []).length ? React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 10
+    }
+  }, rec.photos.map((u, i) => React.createElement(PhotoThumb, {
+    key: i,
+    url: u,
+    index: i,
+    size: 110
+  }))) : React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13
+    }
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E39\u0E1B")), React.createElement("div", null, React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 6
+    }
+  }, "\u0E44\u0E1F\u0E25\u0E4C\u0E41\u0E19\u0E1A (", (rec.files || []).length, "/", GENERAL_MAX_FILES, ")"), (rec.files || []).length ? React.createElement("div", {
+    style: {
+      display: "grid",
+      gap: 6
+    }
+  }, rec.files.map((f, i) => {
+    const ic = generalFileIcon(f);
+    return React.createElement("a", {
+      key: i,
+      href: f.url,
+      target: "_blank",
+      rel: "noreferrer",
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "9px 12px",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        color: "var(--text)",
+        background: "#fff"
+      }
+    }, React.createElement("i", {
+      className: `fa-solid ${ic.icon}`,
+      style: {
+        color: ic.color,
+        fontSize: 18,
+        width: 20,
+        textAlign: "center"
+      },
+      "aria-hidden": "true"
+    }), React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }
+    }, f.name), React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: "var(--muted)"
+      }
+    }, generalFileSize(f.size)), React.createElement("i", {
+      className: "fa-solid fa-arrow-up-right-from-square",
+      style: {
+        color: "var(--muted)",
+        fontSize: 12
+      },
+      "aria-hidden": "true"
+    }));
+  })) : React.createElement("div", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 13
+    }
+  }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E44\u0E1F\u0E25\u0E4C\u0E41\u0E19\u0E1A")), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)",
+      borderTop: "1px solid var(--line)",
+      paddingTop: 10
+    }
+  }, "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E42\u0E14\u0E22 ", rec.createdByName || "-", " \xB7 ", rec.createdAt ? window.__DATA.fmtDateTime(rec.createdAt) : "-", rec.updatedAt && rec.updatedAt !== rec.createdAt && React.createElement(React.Fragment, null, " \xB7 \u0E41\u0E01\u0E49\u0E44\u0E02\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E42\u0E14\u0E22 ", rec.updatedByName || "-", " ", window.__DATA.fmtDateTime(rec.updatedAt)))));
+}
+function GeneralCardThumb({
+  url
+}) {
+  const id = gdriveId(url);
+  const src = id ? `https://drive.google.com/thumbnail?id=${id}&sz=w200` : url;
+  return React.createElement("span", {
+    style: {
+      position: "relative",
+      width: 64,
+      height: 64,
+      borderRadius: 10,
+      overflow: "hidden",
+      border: "1px solid var(--line)",
+      background: "var(--bg)",
+      flexShrink: 0,
+      display: "block"
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-image",
+    "aria-hidden": "true",
+    style: {
+      position: "absolute",
+      inset: 0,
+      display: "grid",
+      placeItems: "center",
+      color: "#94A3B8",
+      fontSize: 20
+    }
+  }), React.createElement("img", {
+    src: src,
+    alt: "",
+    loading: "lazy",
+    style: {
+      position: "absolute",
+      inset: 0,
+      width: "100%",
+      height: "100%",
+      objectFit: "cover"
+    },
+    onError: e => {
+      e.target.style.display = "none";
+    }
+  }));
+}
+function GeneralData({
+  user
+}) {
+  const [list, setList] = React.useState(() => Array.isArray(window.__DATA.generalRecords) ? window.__DATA.generalRecords : null);
+  const [err, setErr] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const [form, setForm] = React.useState(null);
+  const [view, setView] = React.useState(null);
+  const sortList = arr => [...arr].sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  const commit = arr => {
+    const s = sortList(arr);
+    window.__DATA.generalRecords = s;
+    setList(s);
+  };
+  const load = async () => {
+    setErr("");
+    try {
+      commit(await window.api("loadGeneralRecords"));
+    } catch (e) {
+      setErr(e.message || String(e));
+      if (!list) setList([]);
+    }
+  };
+  React.useEffect(() => {
+    load();
+  }, []);
+  const canEdit = r => ["Admin", "Director", "Officer"].includes(user.role) || r && r.createdById === user.id;
+  const onSaved = saved => {
+    const rest = (list || []).filter(x => x.key !== saved.key);
+    commit([saved, ...rest]);
+    setForm(null);
+    setView(saved);
+  };
+  const remove = async r => {
+    const res = await window.deleteWithApproval({
+      user,
+      action: "deleteGeneralRecord",
+      payload: {
+        key: r.key
+      },
+      entityLabel: "ข้อมูลทั่วไป",
+      targetName: r.title,
+      targetInfo: [r.info, `รูป ${(r.photos || []).length} · ไฟล์ ${(r.files || []).length}`].filter(Boolean).join(" · "),
+      warnHtml: "ลบรายการนี้ออกจากระบบ · รูปและไฟล์ใน Google Drive ยังเก็บไว้"
+    });
+    if (!res) return;
+    commit((window.__DATA.generalRecords || []).filter(x => x.key !== r.key));
+    setView(null);
+  };
+  const kw = q.trim().toLowerCase();
+  const shown = (list || []).filter(r => !kw || [r.title, r.info, r.detail, r.createdByName, ...(r.files || []).map(f => f.name)].some(v => String(v || "").toLowerCase().includes(kw)));
+  return React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "card"
+  }, React.createElement("div", {
+    className: "filters",
+    style: {
+      display: "flex",
+      gap: 10,
+      flexWrap: "wrap",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, React.createElement("div", {
+    className: "search-input"
+  }, React.createElement("i", {
+    className: "fa-solid fa-magnifying-glass"
+  }), React.createElement("input", {
+    placeholder: "\u0E04\u0E49\u0E19\u0E2B\u0E32 \u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D / \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 / \u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14 / \u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E1F\u0E25\u0E4C...",
+    value: q,
+    onChange: e => setQ(e.target.value),
+    "aria-label": "\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E17\u0E31\u0E48\u0E27\u0E44\u0E1B"
+  })), React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8
+    }
+  }, React.createElement("button", {
+    className: "btn btn-ghost btn-sm",
+    onClick: load,
+    title: "\u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E43\u0E2B\u0E21\u0E48"
+  }, React.createElement("i", {
+    className: "fa-solid fa-rotate"
+  }), " \u0E23\u0E35\u0E40\u0E1F\u0E23\u0E0A"), React.createElement("button", {
+    className: "btn btn-primary",
+    onClick: () => setForm({
+      initial: null
+    })
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"))), err && React.createElement("div", {
+    style: {
+      margin: "0 16px 12px",
+      padding: "10px 12px",
+      borderRadius: 10,
+      background: "#FEF2F2",
+      color: "#B91C1C",
+      fontSize: 13
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-triangle-exclamation"
+  }), " \u0E42\u0E2B\u0E25\u0E14\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: ", err), list === null ? React.createElement("div", {
+    className: "empty"
+  }, React.createElement("div", {
+    className: "spinner",
+    style: {
+      margin: "0 auto 10px"
+    }
+  }), React.createElement("div", {
+    className: "t"
+  }, "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E42\u0E2B\u0E25\u0E14...")) : shown.length === 0 ? React.createElement("div", {
+    className: "empty"
+  }, React.createElement("i", {
+    className: "fa-solid fa-folder-open"
+  }), React.createElement("div", {
+    className: "t"
+  }, kw ? "ไม่พบข้อมูลที่ค้นหา" : "ยังไม่มีข้อมูล"), !kw && React.createElement("div", {
+    style: {
+      fontSize: 13,
+      marginTop: 4
+    }
+  }, "\u0E01\u0E14 \"\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\" \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E41\u0E23\u0E01")) : React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))",
+      gap: 12,
+      padding: 16
+    }
+  }, shown.map(r => React.createElement("button", {
+    key: r.key,
+    type: "button",
+    onClick: () => setView(r),
+    style: {
+      display: "flex",
+      gap: 12,
+      alignItems: "flex-start",
+      textAlign: "left",
+      padding: 12,
+      border: "1px solid var(--line)",
+      borderRadius: 12,
+      background: "#fff",
+      cursor: "pointer",
+      font: "inherit",
+      color: "inherit"
+    }
+  }, (r.photos || []).length ? React.createElement(GeneralCardThumb, {
+    url: r.photos[0]
+  }) : React.createElement("span", {
+    style: {
+      width: 64,
+      height: 64,
+      borderRadius: 10,
+      display: "grid",
+      placeItems: "center",
+      background: "var(--accent-soft)",
+      color: "var(--primary)",
+      fontSize: 22,
+      flexShrink: 0
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-folder-open",
+    "aria-hidden": "true"
+  })), React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, React.createElement("span", {
+    style: {
+      display: "block",
+      fontWeight: 600,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap"
+    }
+  }, r.title), r.info && React.createElement("span", {
+    style: {
+      display: "block",
+      fontSize: 12.5,
+      color: "var(--muted)",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      marginTop: 2
+    }
+  }, r.info), React.createElement("span", {
+    style: {
+      display: "flex",
+      gap: 10,
+      fontSize: 12,
+      color: "var(--muted)",
+      marginTop: 6
+    }
+  }, React.createElement("span", null, React.createElement("i", {
+    className: "fa-solid fa-image",
+    "aria-hidden": "true"
+  }), " ", (r.photos || []).length), React.createElement("span", null, React.createElement("i", {
+    className: "fa-solid fa-paperclip",
+    "aria-hidden": "true"
+  }), " ", (r.files || []).length), React.createElement("span", {
+    style: {
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap"
+    }
+  }, r.updatedAt ? window.__DATA.fmtDate(r.updatedAt) : ""))))))), view && !form && React.createElement(GeneralRecordView, {
+    rec: view,
+    canEdit: canEdit(view),
+    onClose: () => setView(null),
+    onEdit: () => setForm({
+      initial: view
+    }),
+    onDelete: () => remove(view)
+  }), form && React.createElement(GeneralRecordForm, {
+    user: user,
+    initial: form.initial,
+    onClose: () => setForm(null),
+    onSaved: onSaved
+  }));
+}
+window.GeneralData = GeneralData;
+const SESSION_HOURS = 4;
+const SESSION_LIMIT_MS = SESSION_HOURS * 60 * 60 * 1000;
+const LOGIN_AT_KEY = "rms_login_at";
 const IDLE_LIMIT_MS = 15 * 60 * 1000;
 const IDLE_KEY = "rms_last_active";
 function touchActivity() {
@@ -26679,16 +28251,34 @@ function touchActivity() {
     localStorage.setItem(IDLE_KEY, String(Date.now()));
   } catch (e) {}
 }
-function isSessionExpired() {
+function markLogin() {
+  try {
+    localStorage.setItem(LOGIN_AT_KEY, String(Date.now()));
+  } catch (e) {}
+}
+function isIdleTooLong() {
   const t = Number(localStorage.getItem(IDLE_KEY) || 0);
   return !t || Date.now() - t > IDLE_LIMIT_MS;
+}
+function isSessionExpired() {
+  let t = 0;
+  try {
+    t = Number(localStorage.getItem(LOGIN_AT_KEY) || 0);
+  } catch (e) {}
+  if (!t) {
+    markLogin();
+    return false;
+  }
+  return Date.now() - t > SESSION_LIMIT_MS;
 }
 function clearSession() {
   localStorage.removeItem("rms_user");
   localStorage.removeItem("rms_workspace");
   localStorage.removeItem(IDLE_KEY);
+  localStorage.removeItem(LOGIN_AT_KEY);
 }
 window.touchActivity = touchActivity;
+window.markLogin = markLogin;
 window.isSessionExpired = isSessionExpired;
 window.clearSession = clearSession;
 function App() {
@@ -26793,13 +28383,14 @@ function App() {
     if (!user) return;
     touchActivity();
     const checkIdle = () => {
-      if (!isSessionExpired()) return;
       if (window.__PIN.enabled()) {
+        if (!isIdleTooLong()) return;
         window.__PIN.lockNow();
         setLocked(true);
         touchActivity();
         return;
       }
+      if (!isSessionExpired()) return;
       clearSession();
       setUser(null);
       setWorkspace(null);
@@ -26808,7 +28399,7 @@ function App() {
       Swal.fire({
         icon: "info",
         title: "หมดเวลาใช้งาน",
-        text: "ไม่ได้ใช้งานเกิน 15 นาที กรุณาเข้าสู่ระบบใหม่",
+        text: `เข้าสู่ระบบครบ ${SESSION_HOURS} ชั่วโมงแล้ว กรุณาเข้าสู่ระบบใหม่`,
         confirmButtonText: "ตกลง"
       });
     };
@@ -26859,6 +28450,7 @@ function App() {
     setWorkspace(null);
     localStorage.removeItem("rms_workspace");
     touchActivity();
+    markLogin();
     setPage(window.defaultPageFor(u));
   };
   const enterWorkspace = ws => {
@@ -27098,6 +28690,10 @@ function App() {
       t: "ติดตามสถานะ",
       c: "รายการแจ้งซ่อมของฉัน"
     },
+    "general-data": {
+      t: "ที่จัดเก็บข้อมูลทั่วไป",
+      c: "หัวข้อ · ข้อมูล · รายละเอียด · รูป 8 รูป · ไฟล์แนบ 5 ไฟล์"
+    },
     "notifications": {
       t: "การแจ้งเตือน",
       c: "คำขออนุมัติลบ / แก้ไขข้อมูล · ต้องได้รับอนุมัติจากผู้ดูแลระบบ (Admin) ก่อนเสมอ"
@@ -27167,6 +28763,9 @@ function App() {
       goTo: setPage
     });
     if (safePage === "r-mine") return React.createElement(MyRepairs, {
+      user: activeUser
+    });
+    if (safePage === "general-data") return React.createElement(GeneralData, {
       user: activeUser
     });
     if (safePage === "notifications") return React.createElement(DeleteApprovals, {
