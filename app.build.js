@@ -1242,7 +1242,8 @@ async function api(action, payload = {}) {
         const all = snap.val() || {};
         const updates = {};
         const items = [];
-        (moves || []).forEach(mv => {
+        const isMc = mv => String(mv && mv.key || '').startsWith('MC:');
+        (moves || []).filter(mv => !isMc(mv)).forEach(mv => {
           const k = mv && mv.key;
           const a = k && all[k];
           if (!a) return;
@@ -1303,6 +1304,64 @@ async function api(action, payload = {}) {
             fromSubSite: fromSub
           });
         });
+        const mcMoves = (moves || []).filter(isMc);
+        const mcUpdates = {},
+          mcRevert = {},
+          machinesOut = {};
+        if (mcMoves.length) {
+          const mall = (await _db.ref('/machines').get()).val() || {};
+          const dd = String(doc && doc.docDate || '');
+          const moveWhen = /^\d{4}-\d{2}-\d{2}$/.test(dd) ? new Date(dd + 'T12:00:00').toISOString() : when;
+          mcMoves.forEach(mv => {
+            const id = String(mv.key).slice(3);
+            const mk = mall[id] ? id : Object.keys(mall).find(k => mall[k] && String(mall[k].id) === id);
+            const m = mk && mall[mk];
+            if (!m) return;
+            const from = m.project || '',
+              fromSub = m.subSite || '';
+            if (from === toProject && fromSub === dstSubSite) return;
+            const hist = Array.isArray(m.transferHistory) ? m.transferHistory.slice() : [];
+            const entry = {
+              from: from || 'ไม่ระบุ',
+              to: toProject,
+              fromSubSite: fromSub,
+              toSubSite: dstSubSite,
+              when: moveWhen,
+              recordedAt: when,
+              by: by || '',
+              note: note || '',
+              docNo: doc && doc.docNo || ''
+            };
+            const newHist = hist.concat([entry]);
+            mcUpdates['/machines/' + mk + '/project'] = toProject;
+            mcUpdates['/machines/' + mk + '/subSite'] = dstSubSite;
+            mcUpdates['/machines/' + mk + '/transferHistory'] = newHist;
+            mcRevert['/machines/' + mk + '/project'] = from;
+            mcRevert['/machines/' + mk + '/subSite'] = fromSub;
+            mcRevert['/machines/' + mk + '/transferHistory'] = hist;
+            machinesOut[m.id || mk] = {
+              project: toProject,
+              subSite: dstSubSite,
+              transferHistory: newHist
+            };
+            items.push({
+              key: 'MC:' + (m.id || mk),
+              kind: 'machine',
+              machineId: m.id || mk,
+              assetCode: m.code || '',
+              name: m.name || '',
+              brand: m.brand || '',
+              model: m.model || '',
+              serial: m.serial || '',
+              quantity: 1,
+              totalBefore: 1,
+              partial: false,
+              unit: 'เครื่อง',
+              from,
+              fromSubSite: fromSub
+            });
+          });
+        }
         if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
         const docKey = String(doc && doc.docNo || 'DO-' + when).replace(/[.#$/\[\]]/g, '-');
         if ((await _assetDb.ref('/deliveryOrders/' + docKey).get()).exists()) {
@@ -1319,11 +1378,22 @@ async function api(action, payload = {}) {
           items
         };
         updates['/deliveryOrders/' + docKey] = record;
-        await _assetDb.ref().update(updates);
+        if (Object.keys(mcUpdates).length) await _db.ref().update(mcUpdates);
+        try {
+          await _assetDb.ref().update(updates);
+        } catch (err) {
+          if (Object.keys(mcRevert).length) {
+            try {
+              await _db.ref().update(mcRevert);
+            } catch (e2) {}
+          }
+          throw err;
+        }
         return {
           doc: record,
           when,
-          items
+          items,
+          machines: machinesOut
         };
       }
     case 'loadDeliveryOrders':
@@ -1351,6 +1421,8 @@ async function api(action, payload = {}) {
         const updates = {};
         const warnings = [];
         let restoredSummary = [];
+        const mcRestore = {},
+          machinesOut = {};
         if (restoreStock) {
           const assets = aSnap.val() || {};
           const toArr = v => Array.isArray(v) ? v : v && typeof v === 'object' ? Object.values(v) : [];
@@ -1372,7 +1444,57 @@ async function api(action, payload = {}) {
             return String(a.assetCode || a.id || '') === String(code) && String(a.site || '') === String(site);
           });
           const restored = [];
+          const hasMc = items.some(it => it && it.kind === 'machine');
+          const mall = hasMc ? (await _db.ref('/machines').get()).val() || {} : {};
           items.forEach((it, i) => {
+            if (it && it.kind === 'machine') {
+              const id = String(it.machineId || String(it.key || '').replace(/^MC:/, ''));
+              const mk = mall[id] ? id : Object.keys(mall).find(k => mall[k] && String(mall[k].id) === id);
+              const m = mk && mall[mk];
+              const label = it.name || it.assetCode || 'เครื่องจักร';
+              if (!m) {
+                warnings.push(label + ': ไม่พบเครื่องจักรในทะเบียนแล้ว จึงย้ายกลับให้ไม่ได้');
+                return;
+              }
+              if (!it.from) {
+                warnings.push(label + ': ไม่ทราบโครงการต้นทาง จึงย้ายกลับให้ไม่ได้');
+                return;
+              }
+              if (String(m.project || '') !== String(destSite)) {
+                warnings.push(`${label}: ขณะนี้อยู่ที่ "${m.project || '-'}" ไม่ใช่ "${destSite}" (อาจถูกย้ายต่อไปแล้ว) จึงไม่ย้ายกลับให้อัตโนมัติ`);
+                return;
+              }
+              const hist = Array.isArray(m.transferHistory) ? m.transferHistory.slice() : [];
+              const newHist = hist.concat([{
+                from: destSite,
+                to: it.from,
+                fromSubSite: m.subSite || '',
+                toSubSite: it.fromSubSite || '',
+                when,
+                recordedAt: when,
+                by: by || '',
+                note: 'คืนจากการยกเลิกใบส่งของ',
+                docNo: old.docNo || '',
+                cancel: true
+              }]);
+              mcRestore['/machines/' + mk + '/project'] = it.from;
+              mcRestore['/machines/' + mk + '/subSite'] = it.fromSubSite || '';
+              mcRestore['/machines/' + mk + '/transferHistory'] = newHist;
+              machinesOut[m.id || mk] = {
+                project: it.from,
+                subSite: it.fromSubSite || '',
+                transferHistory: newHist
+              };
+              restored.push({
+                key: 'MC:' + (m.id || mk),
+                code: it.assetCode || '',
+                name: label,
+                qty: 1,
+                to: it.from,
+                mode: 'machine'
+              });
+              return;
+            }
             const need = Number(it.quantity) || 0;
             if (need <= 0) return;
             const code = it.assetCode || '';
@@ -1521,10 +1643,18 @@ async function api(action, payload = {}) {
           updates['/deliveryOrders/' + key + '/' + kk] = mark[kk];
         });
         await _assetDb.ref().update(updates);
+        if (Object.keys(mcRestore).length) {
+          try {
+            await _db.ref().update(mcRestore);
+          } catch (err) {
+            warnings.push('ย้ายเครื่องจักรกลับต้นทางไม่สำเร็จ: ' + (err && err.message));
+          }
+        }
         return {
           ok: true,
           warnings,
           restored: restoredSummary,
+          machines: machinesOut,
           ...mark
         };
       }
@@ -1563,6 +1693,10 @@ async function api(action, payload = {}) {
           });
           newItems.forEach((ni, i) => {
             const oi = oldItems[i] || {};
+            if ((oi.kind || ni.kind) === 'machine') {
+              if ((Number(ni.quantity) || 0) !== (Number(oi.quantity) || 0)) warnings.push((ni.name || oi.name || 'เครื่องจักร') + ': เครื่องจักรแก้จำนวนไม่ได้ (ย้ายทั้งคัน)');
+              return;
+            }
             const oldQty = Number(oi.quantity) || 0;
             const newQty = Number(ni.quantity) || 0;
             const delta = newQty - oldQty;
@@ -1710,6 +1844,10 @@ async function api(action, payload = {}) {
         };
         delete clean.key;
         delete clean.when;
+        if (Array.isArray(clean.items)) clean.items = clean.items.map(x => x && x.kind === 'machine' ? {
+          ...x,
+          quantity: 1
+        } : x);
         clean.updatedAt = when;
         clean.updatedBy = by || '';
         Object.keys(clean).forEach(kk => {
@@ -1998,7 +2136,7 @@ window.api = async function (action, payload = {}) {
   return res;
 };
 
-/* ---- block 2 (ต้นฉบับบรรทัด 1964) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 2035) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -2882,7 +3020,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2449) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2520) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -3037,7 +3175,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2579) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2650) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -3219,10 +3357,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2724) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2795) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2727) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2798) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3400,7 +3538,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2854) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2925) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -4254,7 +4392,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3358) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3429) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4823,7 +4961,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3624) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3695) ---- */
 const {
   useState,
   useEffect,
@@ -5072,7 +5210,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3727) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3798) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -5300,7 +5438,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3910) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3981) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -6488,7 +6626,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4347) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4418) ---- */
 function Projects({
   user
 }) {
@@ -7125,7 +7263,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4600) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4671) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -7522,7 +7660,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4846) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4917) ---- */
 function Dashboard({
   user,
   goTo
@@ -9160,7 +9298,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5506) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5577) ---- */
 function Repairs({
   user
 }) {
@@ -12416,7 +12554,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6720) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6791) ---- */
 function Users({
   user
 }) {
@@ -12988,7 +13126,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6904) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6975) ---- */
 function Categories({
   user
 }) {
@@ -13251,7 +13389,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 6992) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 7063) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -16393,19 +16531,26 @@ function MachineDetail({
     r: editRepair,
     onClose: () => setEditRepair(null),
     onSave: saveEdit
-  }), transferModal && React.createElement(TransferMachineModal, {
-    m: m,
+  }), transferModal && React.createElement(TransferAssetsModal, {
     user: user,
+    preset: {
+      fromProject: m.project || "",
+      fromSubSite: "",
+      pick: {
+        ["MC:" + m.id]: 1
+      }
+    },
     onClose: () => setTransferModal(false),
-    onSave: payload => {
+    onSaved: res => {
       setTransferModal(false);
-      onTransfer(payload);
+      const p = (res && res.machines || {})[m.id];
+      if (p && onPatchMachine) onPatchMachine(p, true);
     }
   }));
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 7990) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 8064) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -20571,7 +20716,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 9352) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 9426) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -21671,7 +21816,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9659) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9733) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -22069,7 +22214,24 @@ function AssetRegistry({
     className: "fa-solid fa-clock-rotate-left"
   }))), canEdit && React.createElement("td", null, React.createElement("div", {
     className: "row-actions"
-  }, r.__src === "machine" ? React.createElement("button", {
+  }, r.__src === "machine" ? React.createElement(React.Fragment, null, React.createElement("button", {
+    className: "ia",
+    title: "\u0E22\u0E49\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E2D\u0E2D\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07)",
+    style: {
+      color: "#7C3AED"
+    },
+    onClick: () => setMoveOpen({
+      preset: {
+        fromProject: r.site || "",
+        fromSubSite: "",
+        pick: {
+          [r.key]: 1
+        }
+      }
+    })
+  }, React.createElement("i", {
+    className: "fa-solid fa-right-left"
+  })), React.createElement("button", {
     className: "ia",
     title: "\u0E14\u0E39\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23",
     onClick: () => setMachineView(r.machineCode),
@@ -22078,7 +22240,7 @@ function AssetRegistry({
     }
   }, React.createElement("i", {
     className: "fa-solid fa-eye"
-  })) : React.createElement(React.Fragment, null, React.createElement("button", {
+  }))) : React.createElement(React.Fragment, null, React.createElement("button", {
     className: "ia",
     title: "\u0E22\u0E49\u0E32\u0E22\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23 (\u0E2D\u0E2D\u0E01\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07)",
     style: {
@@ -22583,7 +22745,10 @@ function AssetRegistry({
     user: user,
     preset: moveOpen.preset,
     onClose: () => setMoveOpen(null),
-    onSaved: () => setMoveOpen(null)
+    onSaved: () => {
+      setMoveOpen(null);
+      setRows(r => r ? r.slice() : r);
+    }
   }));
 }
 function AssetHistoryModal({
@@ -22657,6 +22822,13 @@ function AssetHistoryModal({
     }
   }, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22")));
 }
+window.applyMachinePatches = function (machines) {
+  if (!machines || !Object.keys(machines).length) return;
+  window.__DATA.machines = (window.__DATA.machines || []).map(m => machines[m.id] ? {
+    ...m,
+    ...machines[m.id]
+  } : m);
+};
 function TransferAssetsModal({
   user,
   onClose,
@@ -22666,6 +22838,20 @@ function TransferAssetsModal({
   const projects = React.useMemo(() => window.visibleProjects(user), [user]);
   const [assets, setAssets] = React.useState(() => window.__DATA.assetRegistry || null);
   const [loadErr, setLoadErr] = React.useState("");
+  const machineRows = React.useMemo(() => (window.__DATA.machines || []).filter(m => m.status !== "ส่งคืน").map(m => ({
+    key: "MC:" + m.id,
+    __src: "machine",
+    assetCode: m.code || "",
+    name: m.name || "",
+    brand: m.brand || "",
+    model: m.model || "",
+    serial: m.serial || "",
+    quantity: 1,
+    unit: "เครื่อง",
+    site: m.project || "",
+    subSite: m.subSite || ""
+  })), []);
+  const pool = React.useMemo(() => assets ? assets.concat(machineRows) : null, [assets, machineRows]);
   const [toProject, setToProject] = React.useState("");
   const [docNo, setDocNo] = React.useState("");
   const [docDate, setDocDate] = React.useState(() => window.__DATA.fmtDate(new Date()));
@@ -22726,10 +22912,10 @@ function TransferAssetsModal({
       alive = false;
     };
   }, [fromProject]);
-  const sites = React.useMemo(() => [...new Set((assets || []).map(a => a.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [assets]);
+  const sites = React.useMemo(() => [...new Set((pool || []).map(a => a.site).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "th")), [pool]);
   const fromOptions = React.useMemo(() => {
     const counts = {};
-    (assets || []).forEach(a => {
+    (pool || []).forEach(a => {
       if (a.site) counts[a.site] = (counts[a.site] || 0) + 1;
     });
     const named = projects.map(p => ({
@@ -22743,7 +22929,7 @@ function TransferAssetsModal({
       n: counts[s] || 0
     }));
     return named.concat(legacy);
-  }, [projects, sites, assets]);
+  }, [projects, sites, pool]);
   const changeFrom = v => {
     setFromProject(v);
     setFromSubSite("");
@@ -22756,14 +22942,14 @@ function TransferAssetsModal({
   const candidates = React.useMemo(() => {
     if (!fromProject) return [];
     const kw = q.trim().toLowerCase();
-    return (assets || []).filter(a => {
+    return (pool || []).filter(a => {
       if (a.site !== fromProject) return false;
       if (fromSubSite && (a.subSite || "") !== fromSubSite) return false;
       if (!kw) return true;
       return [a.assetCode, a.name, a.brand, a.model, a.serial, a.site, a.subSite].some(v => String(v || "").toLowerCase().includes(kw));
     });
-  }, [assets, q, fromProject, fromSubSite]);
-  const picked = React.useMemo(() => (assets || []).filter(a => qty[a.key] !== undefined && a.site === fromProject && (!fromSubSite || (a.subSite || "") === fromSubSite)), [assets, qty, fromProject, fromSubSite]);
+  }, [pool, q, fromProject, fromSubSite]);
+  const picked = React.useMemo(() => (pool || []).filter(a => qty[a.key] !== undefined && a.site === fromProject && (!fromSubSite || (a.subSite || "") === fromSubSite)), [pool, qty, fromProject, fromSubSite]);
   const totalMoving = picked.reduce((s, a) => s + (Number(qty[a.key]) || 0), 0);
   const toggle = a => setQty(prev => {
     const n = {
@@ -22858,6 +23044,7 @@ function TransferAssetsModal({
           fromProjectLabel: fromProject + (fromSubSite ? ` · ${fromSubSite}` : "")
         }
       });
+      window.applyMachinePatches(res.machines);
       window.__DATA.assetRegistry = null;
       window.__DATA.deliveryOrders = null;
       onSaved && onSaved(res);
@@ -23124,7 +23311,7 @@ function TransferAssetsModal({
       color: "#B91C1C",
       marginBottom: 8
     }
-  }, "\u0E42\u0E2B\u0E25\u0E14\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: ", loadErr), !assets ? React.createElement("div", {
+  }, "\u0E42\u0E2B\u0E25\u0E14\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E17\u0E23\u0E31\u0E1E\u0E22\u0E4C\u0E2A\u0E34\u0E19\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: ", loadErr), !pool ? React.createElement("div", {
     style: {
       padding: 20,
       textAlign: "center",
@@ -23181,7 +23368,20 @@ function TransferAssetsModal({
         color: "var(--muted)",
         fontSize: 12
       }
-    }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A")), React.createElement("td", null, a.name || "—"), React.createElement("td", {
+    }, "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A")), React.createElement("td", null, a.name || "—", a.__src === "machine" && React.createElement("span", {
+      style: {
+        marginLeft: 6,
+        padding: "1px 7px",
+        borderRadius: 999,
+        background: "#EDE9FE",
+        color: "#6D28D9",
+        fontSize: 10.5,
+        fontWeight: 600,
+        whiteSpace: "nowrap"
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-industry"
+    }), " \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23")), React.createElement("td", {
       style: {
         whiteSpace: "nowrap"
       }
@@ -23191,6 +23391,8 @@ function TransferAssetsModal({
       max: max,
       value: v,
       onChange: e => setQtyFor(a, e.target.value),
+      disabled: a.__src === "machine",
+      title: a.__src === "machine" ? "เครื่องจักรย้ายทั้งคัน" : undefined,
       style: {
         width: "100%",
         padding: "5px 8px",
@@ -23665,6 +23867,7 @@ function DeliveryOrders({
         reason: res.value.reason,
         restoreStock: res.value.restoreStock
       });
+      window.applyMachinePatches(out && out.machines);
       const patch = {
         cancelled: true,
         cancelledAt: out.cancelledAt,
@@ -24422,7 +24625,9 @@ function DeliveryOrderEdit({
     type: "number",
     min: "0",
     value: it.quantity,
-    onChange: e => setItem(i, "quantity", e.target.value)
+    onChange: e => setItem(i, "quantity", e.target.value),
+    disabled: it.kind === "machine",
+    title: it.kind === "machine" ? "เครื่องจักรย้ายทั้งคัน แก้จำนวนไม่ได้" : undefined
   })), React.createElement("td", null, React.createElement("input", {
     className: "inp",
     value: it.unit || "",
@@ -24445,7 +24650,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 10986) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 11076) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -24919,7 +25124,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 11322) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 11412) ---- */
 function Permissions({
   user
 }) {
@@ -25539,7 +25744,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11675) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11765) ---- */
 function WorkspacePicker({
   user,
   onContinue,

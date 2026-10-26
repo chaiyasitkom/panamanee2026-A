@@ -1511,7 +1511,9 @@ async function api(action, payload = {}) {
       const all = snap.val() || {};
       const updates = {};
       const items = [];
-      (moves || []).forEach(mv => {
+      // เครื่องจักรจากทะเบียนเครื่องจักร (key ขึ้นต้นด้วย "MC:") อยู่คนละฐานข้อมูล — แยกไปจัดการด้านล่าง
+      const isMc = (mv) => String((mv && mv.key) || '').startsWith('MC:');
+      (moves || []).filter(mv => !isMc(mv)).forEach(mv => {
         const k = mv && mv.key;
         const a = k && all[k];
         if (!a) return;
@@ -1546,6 +1548,37 @@ async function api(action, payload = {}) {
           quantity: qty, totalBefore: total, partial, unit: a.unit || '', from, fromSubSite: fromSub,
         });
       });
+      // ── เครื่องจักร: ย้ายทั้งคัน (จำนวน 1) · บันทึกประวัติการย้ายที่ตัวเครื่องพร้อมเลขที่ใบส่งของ ──
+      const mcMoves = (moves || []).filter(isMc);
+      const mcUpdates = {}, mcRevert = {}, machinesOut = {};
+      if (mcMoves.length) {
+        const mall = (await _db.ref('/machines').get()).val() || {};
+        const dd = String((doc && doc.docDate) || '');
+        const moveWhen = /^\d{4}-\d{2}-\d{2}$/.test(dd) ? new Date(dd + 'T12:00:00').toISOString() : when;
+        mcMoves.forEach(mv => {
+          const id = String(mv.key).slice(3);
+          const mk = mall[id] ? id : Object.keys(mall).find(k => mall[k] && String(mall[k].id) === id);
+          const m = mk && mall[mk];
+          if (!m) return;
+          const from = m.project || '', fromSub = m.subSite || '';
+          if (from === toProject && fromSub === dstSubSite) return;
+          const hist = Array.isArray(m.transferHistory) ? m.transferHistory.slice() : [];
+          const entry = { from: from || 'ไม่ระบุ', to: toProject, fromSubSite: fromSub, toSubSite: dstSubSite,
+            when: moveWhen, recordedAt: when, by: by || '', note: note || '', docNo: (doc && doc.docNo) || '' };
+          const newHist = hist.concat([entry]);
+          mcUpdates['/machines/' + mk + '/project'] = toProject;
+          mcUpdates['/machines/' + mk + '/subSite'] = dstSubSite;
+          mcUpdates['/machines/' + mk + '/transferHistory'] = newHist;
+          mcRevert['/machines/' + mk + '/project'] = from;
+          mcRevert['/machines/' + mk + '/subSite'] = fromSub;
+          mcRevert['/machines/' + mk + '/transferHistory'] = hist;
+          machinesOut[m.id || mk] = { project: toProject, subSite: dstSubSite, transferHistory: newHist };
+          items.push({ key: 'MC:' + (m.id || mk), kind: 'machine', machineId: m.id || mk, assetCode: m.code || '', name: m.name || '',
+            brand: m.brand || '', model: m.model || '', serial: m.serial || '',
+            quantity: 1, totalBefore: 1, partial: false, unit: 'เครื่อง', from, fromSubSite: fromSub });
+        });
+      }
+
       if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
       const docKey = String((doc && doc.docNo) || ('DO-' + when)).replace(/[.#$/\[\]]/g, '-');
       // เลขที่ซ้ำ (เช่น 2 คนออกใบพร้อมกันจากโครงการต้นทางเดียวกัน) — ห้ามเขียนทับใบเดิม
@@ -1554,8 +1587,15 @@ async function api(action, payload = {}) {
       }
       const record = { ...(doc || {}), key: docKey, toProject, toSubSite: dstSubSite, note: note || '', by: by || '', when, items };
       updates['/deliveryOrders/' + docKey] = record;
-      await _assetDb.ref().update(updates);
-      return { doc: record, when, items };
+      // ย้ายเครื่องจักร (ฐานข้อมูลหลัก) ก่อน แล้วค่อยเขียนใบส่งของ — ถ้าเขียนใบส่งของไม่สำเร็จ ย้อนเครื่องจักรกลับ
+      if (Object.keys(mcUpdates).length) await _db.ref().update(mcUpdates);
+      try {
+        await _assetDb.ref().update(updates);
+      } catch (err) {
+        if (Object.keys(mcRevert).length) { try { await _db.ref().update(mcRevert); } catch (e2) {} }
+        throw err;
+      }
+      return { doc: record, when, items, machines: machinesOut };
     }
 
     case 'loadDeliveryOrders': {
@@ -1582,6 +1622,7 @@ async function api(action, payload = {}) {
       const updates = {};
       const warnings = [];
       let restoredSummary = [];
+      const mcRestore = {}, machinesOut = {};
 
       if (restoreStock) {
         const assets = aSnap.val() || {};
@@ -1602,8 +1643,29 @@ async function api(action, payload = {}) {
           return String(a.assetCode || a.id || '') === String(code) && String(a.site || '') === String(site);
         });
         const restored = [];
+        const hasMc = items.some(it => it && it.kind === 'machine');
+        const mall = hasMc ? ((await _db.ref('/machines').get()).val() || {}) : {};
 
         items.forEach((it, i) => {
+          // เครื่องจักร: ย้ายกลับโครงการต้นทาง (เฉพาะถ้ายังอยู่ที่ปลายทางของใบนี้)
+          if (it && it.kind === 'machine') {
+            const id = String(it.machineId || String(it.key || '').replace(/^MC:/, ''));
+            const mk = mall[id] ? id : Object.keys(mall).find(k => mall[k] && String(mall[k].id) === id);
+            const m = mk && mall[mk];
+            const label = it.name || it.assetCode || 'เครื่องจักร';
+            if (!m) { warnings.push(label + ': ไม่พบเครื่องจักรในทะเบียนแล้ว จึงย้ายกลับให้ไม่ได้'); return; }
+            if (!it.from) { warnings.push(label + ': ไม่ทราบโครงการต้นทาง จึงย้ายกลับให้ไม่ได้'); return; }
+            if (String(m.project || '') !== String(destSite)) { warnings.push(`${label}: ขณะนี้อยู่ที่ "${m.project || '-'}" ไม่ใช่ "${destSite}" (อาจถูกย้ายต่อไปแล้ว) จึงไม่ย้ายกลับให้อัตโนมัติ`); return; }
+            const hist = Array.isArray(m.transferHistory) ? m.transferHistory.slice() : [];
+            const newHist = hist.concat([{ from: destSite, to: it.from, fromSubSite: m.subSite || '', toSubSite: it.fromSubSite || '',
+              when, recordedAt: when, by: by || '', note: 'คืนจากการยกเลิกใบส่งของ', docNo: old.docNo || '', cancel: true }]);
+            mcRestore['/machines/' + mk + '/project'] = it.from;
+            mcRestore['/machines/' + mk + '/subSite'] = it.fromSubSite || '';
+            mcRestore['/machines/' + mk + '/transferHistory'] = newHist;
+            machinesOut[m.id || mk] = { project: it.from, subSite: it.fromSubSite || '', transferHistory: newHist };
+            restored.push({ key: 'MC:' + (m.id || mk), code: it.assetCode || '', name: label, qty: 1, to: it.from, mode: 'machine' });
+            return;
+          }
           const need = Number(it.quantity) || 0;
           if (need <= 0) return;
           const code = it.assetCode || '';
@@ -1687,7 +1749,11 @@ async function api(action, payload = {}) {
       Object.keys(mark).forEach((kk) => { updates['/deliveryOrders/' + key + '/' + kk] = mark[kk]; });
 
       await _assetDb.ref().update(updates);
-      return { ok: true, warnings, restored: restoredSummary, ...mark };
+      if (Object.keys(mcRestore).length) {
+        try { await _db.ref().update(mcRestore); }
+        catch (err) { warnings.push('ย้ายเครื่องจักรกลับต้นทางไม่สำเร็จ: ' + (err && err.message)); }
+      }
+      return { ok: true, warnings, restored: restoredSummary, machines: machinesOut, ...mark };
     }
 
     // แก้ไขข้อมูลใบส่งของ (DO)
@@ -1729,6 +1795,10 @@ async function api(action, payload = {}) {
 
         newItems.forEach((ni, i) => {
           const oi = oldItems[i] || {};
+          if ((oi.kind || ni.kind) === 'machine') {   // เครื่องจักรย้ายทั้งคันเสมอ แก้จำนวนไม่ได้
+            if ((Number(ni.quantity) || 0) !== (Number(oi.quantity) || 0)) warnings.push((ni.name || oi.name || 'เครื่องจักร') + ': เครื่องจักรแก้จำนวนไม่ได้ (ย้ายทั้งคัน)');
+            return;
+          }
           const oldQty = Number(oi.quantity) || 0;
           const newQty = Number(ni.quantity) || 0;
           const delta = newQty - oldQty;
@@ -1794,6 +1864,7 @@ async function api(action, payload = {}) {
 
       const clean = { ...(patch || {}) };
       delete clean.key; delete clean.when;
+      if (Array.isArray(clean.items)) clean.items = clean.items.map(x => (x && x.kind === 'machine') ? { ...x, quantity: 1 } : x);
       clean.updatedAt = when;
       clean.updatedBy = by || '';
       Object.keys(clean).forEach((kk) => { updates['/deliveryOrders/' + key + '/' + kk] = clean[kk]; });
@@ -7980,7 +8051,10 @@ function MachineDetail({m,user,onClose,onEdit,onDelete,onTransfer,onPatchMachine
     </Modal>
     {viewRepair && <window.RepairDetail r={viewRepair} user={user} onClose={()=>setViewRepair(null)} onQuick={null} onEdit={canEditRepairs?(r)=>{setViewRepair(null);setEditRepair(r);}:null} onEditParts={null}/>}
     {editRepair && <window.EditRepairModal r={editRepair} onClose={()=>setEditRepair(null)} onSave={saveEdit}/>}
-    {transferModal && <TransferMachineModal m={m} user={user} onClose={()=>setTransferModal(false)} onSave={(payload)=>{setTransferModal(false);onTransfer(payload);}}/>}
+    {/* ย้ายเครื่องจักรต้องออกใบส่งของ (DO) เสมอ — ใช้หน้าต่างเดียวกับทะเบียนทรัพย์สิน */}
+    {transferModal && <TransferAssetsModal user={user} preset={{fromProject:m.project||"", fromSubSite:"", pick:{["MC:"+m.id]:1}}}
+      onClose={()=>setTransferModal(false)}
+      onSaved={(res)=>{ setTransferModal(false); const p=(res&&res.machines||{})[m.id]; if(p && onPatchMachine) onPatchMachine(p, true); }}/>}
     </>
   );
 }
@@ -9909,7 +9983,10 @@ function AssetRegistry({user}){
       </td>
       {canEdit && <td><div className="row-actions">
         {r.__src==="machine" ? (
-          <button className="ia" title="ดูข้อมูลเครื่องจักร" onClick={()=>setMachineView(r.machineCode)} style={{color:"#6D28D9"}}><i className="fa-solid fa-eye"></i></button>
+          <><button className="ia" title="ย้ายโครงการ (ออกใบส่งของ)" style={{color:"#7C3AED"}}
+            onClick={()=>setMoveOpen({preset:{fromProject:r.site||"", fromSubSite:"", pick:{[r.key]:1}}})}>
+            <i className="fa-solid fa-right-left"></i></button>
+          <button className="ia" title="ดูข้อมูลเครื่องจักร" onClick={()=>setMachineView(r.machineCode)} style={{color:"#6D28D9"}}><i className="fa-solid fa-eye"></i></button></>
         ) : (<>
           <button className="ia" title="ย้ายโครงการ (ออกใบส่งของ)" style={{color:"#7C3AED"}}
             onClick={()=>setMoveOpen({preset:{fromProject:r.site||"", fromSubSite:"", pick: (Number(r.quantity)||0)>0 ? {[r.key]:Number(r.quantity)||0} : {}}})}>
@@ -10127,7 +10204,7 @@ function AssetRegistry({user}){
     {edit && <AssetForm mode={edit.mode} initial={edit.data} sites={sites} owners={owners} user={user} onClose={()=>setEdit(null)} onSave={save}/>}
     {history && <AssetHistoryModal asset={history} onClose={()=>setHistory(null)}/>}
     {machineView && <window.MachineQuickView code={machineView} onClose={()=>setMachineView("")}/>}
-    {moveOpen && <TransferAssetsModal user={user} preset={moveOpen.preset} onClose={()=>setMoveOpen(null)} onSaved={()=>setMoveOpen(null)}/>}
+    {moveOpen && <TransferAssetsModal user={user} preset={moveOpen.preset} onClose={()=>setMoveOpen(null)} onSaved={()=>{ setMoveOpen(null); setRows(r=>r?r.slice():r); }}/>}
     </>
   );
 }
@@ -10163,11 +10240,22 @@ function AssetHistoryModal({asset,onClose}){
 
 // เลือกโครงการปลายทาง + ข้อมูลใบส่งของ
 // ย้ายโครงการ + ออกใบส่งของ — เลือกทรัพย์สินได้ในตัว (เรียกจากหน้าใบส่งของ)
+// เครื่องจักรที่ย้าย/คืนผ่านใบส่งของ — อัปเดตแคชเครื่องจักรในเครื่องตามที่ระบบส่งกลับมา
+window.applyMachinePatches = function(machines){
+  if(!machines || !Object.keys(machines).length) return;
+  window.__DATA.machines = (window.__DATA.machines||[]).map(m=>machines[m.id] ? {...m, ...machines[m.id]} : m);
+};
 // preset (ไม่บังคับ) = เปิดจากหน้าทะเบียนทรัพย์สิน: {fromProject, fromSubSite, pick:{assetKey: จำนวน}} — เลือกต้นทาง/รายการไว้ให้ก่อน
 function TransferAssetsModal({user,onClose,onSaved,preset}){
   const projects = React.useMemo(()=>window.visibleProjects(user),[user]);
   const [assets,setAssets] = React.useState(()=>window.__DATA.assetRegistry || null);
   const [loadErr,setLoadErr] = React.useState("");
+  // เครื่องจักรจากทะเบียนเครื่องจักร — ย้ายพร้อมทรัพย์สินในใบส่งของเดียวกันได้ (ย้ายทั้งคัน จำนวน 1)
+  const machineRows = React.useMemo(()=>(window.__DATA.machines||[]).filter(m=>m.status!=="ส่งคืน").map(m=>({
+    key:"MC:"+m.id, __src:"machine", assetCode:m.code||"", name:m.name||"", brand:m.brand||"", model:m.model||"", serial:m.serial||"",
+    quantity:1, unit:"เครื่อง", site:m.project||"", subSite:m.subSite||"",
+  })),[]);
+  const pool = React.useMemo(()=>assets ? assets.concat(machineRows) : null,[assets,machineRows]);
   const [toProject,setToProject] = React.useState("");
   const [docNo,setDocNo] = React.useState("");
   const [docDate,setDocDate] = React.useState(()=>window.__DATA.fmtDate(new Date()));
@@ -10216,16 +10304,16 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
     return ()=>{ alive=false; };
   },[fromProject]);
 
-  const sites = React.useMemo(()=>[...new Set((assets||[]).map(a=>a.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[assets]);
+  const sites = React.useMemo(()=>[...new Set((pool||[]).map(a=>a.site).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"th")),[pool]);
 
   // ตัวเลือกโครงการต้นทาง = โครงการที่มีสิทธิ์ + ชื่อสถานที่เดิมในทะเบียนที่ยังไม่ตรงกับชื่อโครงการ
   const fromOptions = React.useMemo(()=>{
     const counts = {};
-    (assets||[]).forEach(a=>{ if(a.site) counts[a.site] = (counts[a.site]||0)+1; });
+    (pool||[]).forEach(a=>{ if(a.site) counts[a.site] = (counts[a.site]||0)+1; });
     const named = projects.map(p=>({value:p.name, label:(p.code?`[${p.code}] `:"")+p.name, n:counts[p.name]||0}));
     const legacy = sites.filter(s=>!projects.some(p=>p.name===s)).map(s=>({value:s, label:s+" (ข้อมูลเดิม)", n:counts[s]||0}));
     return named.concat(legacy);
-  },[projects,sites,assets]);
+  },[projects,sites,pool]);
 
   // เปลี่ยนต้นทาง = ล้างรายการที่เลือกไว้ ไม่ให้ทรัพย์สินข้ามโครงการติดมาด้วย
   const changeFrom = (v) => { setFromProject(v); setFromSubSite(""); setQty({}); };
@@ -10235,16 +10323,16 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
   const candidates = React.useMemo(()=>{
     if(!fromProject) return [];
     const kw = q.trim().toLowerCase();
-    return (assets||[]).filter(a=>{
+    return (pool||[]).filter(a=>{
       if(a.site!==fromProject) return false;
       if(fromSubSite && (a.subSite||"")!==fromSubSite) return false;
       if(!kw) return true;
       return [a.assetCode,a.name,a.brand,a.model,a.serial,a.site,a.subSite].some(v=>String(v||"").toLowerCase().includes(kw));
     });
-  },[assets,q,fromProject,fromSubSite]);
+  },[pool,q,fromProject,fromSubSite]);
 
   // เฉพาะของที่ยังอยู่โครงการต้นทางจริง — ถ้าระหว่างเลือกมีคนย้ายออกไปแล้ว จะหลุดจากรายการอัตโนมัติ
-  const picked = React.useMemo(()=>(assets||[]).filter(a=>qty[a.key]!==undefined && a.site===fromProject && (!fromSubSite || (a.subSite||"")===fromSubSite)),[assets,qty,fromProject,fromSubSite]);
+  const picked = React.useMemo(()=>(pool||[]).filter(a=>qty[a.key]!==undefined && a.site===fromProject && (!fromSubSite || (a.subSite||"")===fromSubSite)),[pool,qty,fromProject,fromSubSite]);
   const totalMoving = picked.reduce((s,a)=>s+(Number(qty[a.key])||0),0);
 
   const toggle = (a) => setQty(prev=>{
@@ -10281,6 +10369,7 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
               fromProjectLabel: fromProject + (fromSubSite?` · ${fromSubSite}`:"") },
       });
       // ย้ายบางส่วนจะแตกรายการใหม่ที่ปลายทาง — ล้าง cache ให้ทั้งสองหน้าโหลดใหม่
+      window.applyMachinePatches(res.machines);
       window.__DATA.assetRegistry = null;
       window.__DATA.deliveryOrders = null;
       onSaved && onSaved(res);
@@ -10370,7 +10459,7 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
             <span>เลือกแล้ว <b style={{color:"var(--primary)"}}>{picked.length}</b> รายการ · รวม <b style={{color:"var(--primary)"}}>{totalMoving.toLocaleString("th-TH")}</b> หน่วย</span>
           </div>
           {loadErr && <div style={{fontSize:13,color:"#B91C1C",marginBottom:8}}>โหลดทะเบียนทรัพย์สินไม่สำเร็จ: {loadErr}</div>}
-          {!assets ? <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:13}}>กำลังโหลดทะเบียนทรัพย์สิน...</div> : (
+          {!pool ? <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:13}}>กำลังโหลดทะเบียนทรัพย์สิน...</div> : (
             <div style={{maxHeight:260,overflow:"auto",border:"1px solid var(--line)",borderRadius:8}}>
               <table className="data" style={{fontSize:13}}>
                 <thead><tr>
@@ -10387,11 +10476,11 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
                       <tr key={a.key} style={on?{background:"var(--accent-soft)"}:null}>
                         <td><input type="checkbox" checked={on} onChange={()=>toggle(a)} /></td>
                         <td>{a.assetCode ? <span className="ticket-id">{a.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
-                        <td>{a.name||"—"}</td>
+                        <td>{a.name||"—"}{a.__src==="machine" && <span style={{marginLeft:6,padding:"1px 7px",borderRadius:999,background:"#EDE9FE",color:"#6D28D9",fontSize:10.5,fontWeight:600,whiteSpace:"nowrap"}}><i className="fa-solid fa-industry"></i> เครื่องจักร</span>}</td>
                         <td style={{whiteSpace:"nowrap"}}>{max.toLocaleString("th-TH")} {a.unit||""}</td>
                         <td>
                           {on ? (<>
-                            <input type="number" min="0" max={max} value={v} onChange={e=>setQtyFor(a,e.target.value)}
+                            <input type="number" min="0" max={max} value={v} onChange={e=>setQtyFor(a,e.target.value)} disabled={a.__src==="machine"} title={a.__src==="machine"?"เครื่องจักรย้ายทั้งคัน":undefined}
                               style={{width:"100%",padding:"5px 8px",border:"1px solid var(--line)",borderRadius:6,fontFamily:"Kanit",fontSize:13}} />
                             {partial && <div style={{fontSize:11,color:"#B45309",marginTop:2}}>แบ่งย้าย · เหลือต้นทาง {(max-Number(v)).toLocaleString("th-TH")}</div>}
                           </>) : <span style={{color:"var(--muted)",fontSize:12}}>—</span>}
@@ -10678,6 +10767,7 @@ function DeliveryOrders({user}){
     if(!res.isConfirmed) return;
     try{
       const out = await window.api("cancelDeliveryOrder",{key:doc.key, by:user.name, reason:res.value.reason, restoreStock:res.value.restoreStock});
+      window.applyMachinePatches(out && out.machines);
       const patch = {cancelled:true, cancelledAt:out.cancelledAt, cancelledBy:out.cancelledBy, cancelReason:out.cancelReason, stockRestored:out.stockRestored};
       const upd = rows.map(x=>x.key===doc.key?{...x,...patch}:x);
       window.__DATA.deliveryOrders = upd; setRows(upd);
@@ -10967,7 +11057,7 @@ function DeliveryOrderEdit({doc,onClose,onSave}){
               <tr key={i}>
                 <td style={{whiteSpace:"nowrap"}}>{it.assetCode ? <span className="ticket-id">{it.assetCode}</span> : <span style={{color:"var(--muted)",fontSize:12}}>ไม่มีรหัส</span>}</td>
                 <td><input className="inp" value={it.name||""} onChange={e=>setItem(i,"name",e.target.value)} /></td>
-                <td><input className="inp" type="number" min="0" value={it.quantity} onChange={e=>setItem(i,"quantity",e.target.value)} /></td>
+                <td><input className="inp" type="number" min="0" value={it.quantity} onChange={e=>setItem(i,"quantity",e.target.value)} disabled={it.kind==="machine"} title={it.kind==="machine"?"เครื่องจักรย้ายทั้งคัน แก้จำนวนไม่ได้":undefined} /></td>
                 <td><input className="inp" value={it.unit||""} onChange={e=>setItem(i,"unit",e.target.value)} placeholder="เช่น ชิ้น" /></td>
               </tr>
             ))}
