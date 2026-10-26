@@ -619,6 +619,7 @@ table.data tr:last-child td{border-bottom:0}
 }
 @media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:38px;min-height:38px}.btn-sm{min-height:36px}input,select,textarea{font-size:16px !important}table.data td{padding:11px 10px}}
 @media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}}
+@media (max-width:640px){ .extra-row{grid-template-columns:1fr 1fr !important} .extra-row>input:first-child{grid-column:1/-1} }
 /* ── มือถือแนวนอน: จอเตี้ย — แถบหัวเรื่องแถวเดียวและเลื่อนหายไปกับหน้า ให้เหลือพื้นที่แสดงข้อมูลมากที่สุด ── */
 @media (orientation:landscape) and (max-height:520px) and (max-width:1024px){
   .main{padding:0 max(14px,env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left)) !important}
@@ -1579,6 +1580,16 @@ async function api(action, payload = {}) {
         });
       }
 
+      // รายการอื่นๆ ที่ไม่อยู่ในทะเบียน (ชิ้นส่วน อะไหล่ อุปกรณ์เสริม) — ลงในใบส่งของอย่างเดียว ไม่กระทบทะเบียน
+      (Array.isArray(payload.extras) ? payload.extras : []).forEach(x => {
+        const nm = String((x && x.name) || '').trim();
+        const q = Number(x && x.qty) || 0;
+        if (!nm || q <= 0) return;
+        items.push({ key: '', kind: 'custom', assetCode: String(x.code || '').trim(), name: nm, brand: '', model: '', serial: '',
+          quantity: q, totalBefore: q, partial: false, unit: String(x.unit || '').trim(), sendNote: String(x.note || '').trim(),
+          from: (doc && doc.fromProject) || '', fromSubSite: (doc && doc.fromSubSite) || '' });
+      });
+
       if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
       const docKey = String((doc && doc.docNo) || ('DO-' + when)).replace(/[.#$/\[\]]/g, '-');
       // เลขที่ซ้ำ (เช่น 2 คนออกใบพร้อมกันจากโครงการต้นทางเดียวกัน) — ห้ามเขียนทับใบเดิม
@@ -1647,6 +1658,7 @@ async function api(action, payload = {}) {
         const mall = hasMc ? ((await _db.ref('/machines').get()).val() || {}) : {};
 
         items.forEach((it, i) => {
+          if (it && it.kind === 'custom') return;   // รายการอื่นๆ ไม่ได้อยู่ในทะเบียน ไม่มีสต๊อกให้คืน
           // เครื่องจักร: ย้ายกลับโครงการต้นทาง (เฉพาะถ้ายังอยู่ที่ปลายทางของใบนี้)
           if (it && it.kind === 'machine') {
             const id = String(it.machineId || String(it.key || '').replace(/^MC:/, ''));
@@ -1795,6 +1807,7 @@ async function api(action, payload = {}) {
 
         newItems.forEach((ni, i) => {
           const oi = oldItems[i] || {};
+          if ((oi.kind || ni.kind) === 'custom') return;   // รายการอื่นๆ แก้จำนวนบนเอกสารได้ ไม่ปรับทะเบียน
           if ((oi.kind || ni.kind) === 'machine') {   // เครื่องจักรย้ายทั้งคันเสมอ แก้จำนวนไม่ได้
             if ((Number(ni.quantity) || 0) !== (Number(oi.quantity) || 0)) warnings.push((ni.name || oi.name || 'เครื่องจักร') + ': เครื่องจักรแก้จำนวนไม่ได้ (ย้ายทั้งคัน)');
             return;
@@ -10266,6 +10279,11 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
   const [vehiclePlate,setVehiclePlate] = React.useState("");
   const [driverName,setDriverName] = React.useState("");
   const [note,setNote] = React.useState("");
+  // รายการอื่นๆ ที่ไม่มีในทะเบียน — พิมพ์เพิ่มเองได้ (ชิ้นส่วน อะไหล่ อุปกรณ์เสริม)
+  const [extras,setExtras] = React.useState([]);
+  const addExtra = () => setExtras(p=>[...p,{name:"",code:"",qty:1,unit:"",note:""}]);
+  const upExtra = (i,k,v) => setExtras(p=>p.map((x,idx)=>idx===i?{...x,[k]:v}:x));
+  const delExtra = (i) => setExtras(p=>p.filter((_,idx)=>idx!==i));
   const [busy,setBusy] = React.useState(false);
   const [q,setQ] = React.useState("");
   const [fromProject,setFromProject] = React.useState((preset&&preset.fromProject)||"");   // โครงการต้นทาง — เลือกก่อน แล้วค่อยเลือกทรัพย์สินในโครงการนั้น
@@ -10358,11 +10376,13 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
     if(fromProject===toProject){ Swal.fire({icon:"warning",title:"ต้นทางกับปลายทางซ้ำกัน",text:"กรุณาเลือกโครงการปลายทางที่ต่างจากต้นทาง"}); return; }
     if(!docNo){ Swal.fire({icon:"warning",title:"ยังออกเลขที่ใบส่งของไม่สำเร็จ",text:"กรุณารอสักครู่แล้วลองใหม่"}); return; }
     const moves = picked.map(a=>({key:a.key, qty:Number(qty[a.key])||0})).filter(x=>x.qty>0);
-    if(!moves.length){ Swal.fire({icon:"warning",title:"ยังไม่ได้เลือกทรัพย์สิน",text:"เลือกรายการและระบุจำนวนที่จะย้ายอย่างน้อย 1 รายการ"}); return; }
+    const extraItems = extras.map(x=>({...x,name:String(x.name||"").trim(),qty:Number(x.qty)||0})).filter(x=>x.name);
+    if(extraItems.some(x=>x.qty<=0)){ Swal.fire({icon:"warning",title:"ระบุจำนวนรายการอื่นๆ ให้ครบ",text:"รายการที่พิมพ์เพิ่มต้องมีจำนวนมากกว่า 0"}); return; }
+    if(!moves.length && !extraItems.length){ Swal.fire({icon:"warning",title:"ยังไม่ได้เลือกทรัพย์สิน",text:"เลือกรายการและระบุจำนวนที่จะย้ายอย่างน้อย 1 รายการ"}); return; }
     setBusy(true);
     try{
       const res = await window.api("transferAssets",{
-        moves, toProject, toSubSite, note, by:user.name,
+        moves, extras: extraItems, toProject, toSubSite, note, by:user.name,
         doc:{ docNo, docDate, sender, receiver, approver, vehicleType, vehiclePlate, driverName, fromProject, fromSubSite, toSubSite,
               senderId: window.__SIG.resolve(sender,"","",user), receiverId: window.__SIG.resolve(receiver,"","",user),
               approverId: approver ? window.__SIG.resolve(approver,"","",user) : "",
@@ -10377,10 +10397,11 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
         icon:"success",
         title:"ย้ายโครงการสำเร็จ",
         html:"ย้าย <b>"+res.items.length+"</b> รายการ จาก <b>"+fromProject+(fromSubSite?" · "+fromSubSite:"")+"</b> ไปยัง <b>"+toProject+(toSubSite?" · "+toSubSite:"")+"</b><br/>ออกใบส่งของเลขที่ <b class='mono'>"+docNo+"</b>",
-        showCancelButton:true,
+        showCancelButton:true, showDenyButton:true,
         confirmButtonText:"<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลดใบส่งของ",
+        denyButtonText:"<i class='fa-solid fa-eye'></i> ดูตัวอย่าง", denyButtonColor:"#0E7490",
         cancelButtonText:"ปิด", confirmButtonColor:"#1E40AF"
-      });
+      }).then(r=>{ if(r.isDenied) window.previewDeliveryOrder(res.doc); return r; });
       if(isConfirmed) window.downloadDeliveryOrderPdf(res.doc);
     }catch(err){ Swal.fire({icon:"error",title:"ย้ายไม่สำเร็จ",text:err.message}); }
     finally{ setBusy(false); }
@@ -10497,6 +10518,25 @@ function TransferAssetsModal({user,onClose,onSaved,preset}){
               </table>
             </div>
           )}
+          {/* ── รายการอื่นๆ ที่ไม่มีในทะเบียน ── */}
+          <div style={{marginTop:14,border:"1px dashed #A5B4FC",borderRadius:10,padding:"10px 12px",background:"#F8FAFF"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:extras.length?8:0}}>
+              <div style={{fontWeight:600,fontSize:13.5}}><i className="fa-solid fa-boxes-packing" style={{color:"#4F46E5",marginRight:6}}></i>รายการอื่นๆ (ไม่มีในทะเบียน)</div>
+              <div style={{fontSize:12,color:"var(--muted)"}}>เช่น ชิ้นส่วน อะไหล่ อุปกรณ์ต่อเสริม · ลงในใบส่งของอย่างเดียว ไม่กระทบทะเบียน</div>
+              <div style={{flex:1}}></div>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addExtra}><i className="fa-solid fa-plus"></i> เพิ่มรายการ</button>
+            </div>
+            {extras.map((x,i)=>(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"minmax(150px,2fr) minmax(80px,1fr) 80px 80px minmax(100px,1.2fr) 32px",gap:6,marginBottom:6,alignItems:"center"}} className="extra-row">
+                <input value={x.name} onChange={e=>upExtra(i,"name",e.target.value)} placeholder="ชื่อรายการ *" style={inSt}/>
+                <input value={x.code} onChange={e=>upExtra(i,"code",e.target.value)} placeholder="รหัส (ถ้ามี)" style={inSt}/>
+                <input type="number" min="0" step="any" value={x.qty} onChange={e=>upExtra(i,"qty",e.target.value)} placeholder="จำนวน" style={{...inSt,textAlign:"center"}}/>
+                <input value={x.unit} onChange={e=>upExtra(i,"unit",e.target.value)} placeholder="หน่วย" style={inSt}/>
+                <input value={x.note} onChange={e=>upExtra(i,"note",e.target.value)} placeholder="หมายเหตุ" style={inSt}/>
+                <button type="button" className="ia danger" onClick={()=>delExtra(i)} title="ลบรายการนี้"><i className="fa-solid fa-xmark"></i></button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </Modal>
@@ -10642,7 +10682,7 @@ window.buildDeliveryOrderHtml = function(doc){
     </div>` : "";
   const fromTxt = doc.fromProjectLabel || [doc.fromProject, doc.fromSubSite].filter(Boolean).join(" · ");
   const toTxt = [doc.toProject, doc.toSubSite].filter(Boolean).join(" · ");
-  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
+  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:296mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
     <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:4mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:6.6mm;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{font-size:13px;font-weight:400;white-space:nowrap;height:5.5mm}table.sg{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:-1px}</style>
     <div style="position:relative;height:30mm;margin-bottom:2mm">
       <div style="position:absolute;left:4mm;top:0">${DO_LOGO_SVG}</div>
@@ -10676,20 +10716,112 @@ window.buildDeliveryOrderHtml = function(doc){
 };
 
 
-window.downloadDeliveryOrderPdf = async function(doc){
+// แปลงใบส่งของเป็นภาพ (canvas) ครั้งเดียว ใช้ทั้งดาวน์โหลด PDF และดูตัวอย่างเป็นรูปภาพ
+window.__renderDeliveryOrder = async function(doc){
+  Swal.fire({title:"กำลังเตรียมเอกสาร...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
   try{
-    Swal.fire({title:"กำลังเตรียมไฟล์ PDF...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()});
     await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId, doc.approverId])]);
-    Swal.close();
-  }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้าง PDF",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return; }
-  const name = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-")+".pdf";
+  }catch(e){ Swal.fire({icon:"error",title:"ไม่พบตัวสร้างเอกสาร",text:"โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"}); return null; }
   const el = document.createElement("div");
+  el.style.cssText = "position:fixed;left:-10000px;top:0";
   el.innerHTML = window.buildDeliveryOrderHtml(doc);
   document.body.appendChild(el);
-  await window.__waitImages(el);
   try{
-    await html2pdf().set({margin:0,filename:name,image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).save();
-  }finally{ el.remove(); }
+    await window.__waitImages(el);
+    const worker = html2pdf().set({margin:0,image:{type:"jpeg",quality:.98},html2canvas:{scale:2,useCORS:true,backgroundColor:"#ffffff"},
+      jsPDF:{unit:"mm",format:"a4",orientation:"portrait"}}).from(el.firstElementChild).toCanvas();
+    const canvas = await worker.get("canvas");
+    return { worker, canvas };
+  }catch(e){ Swal.fire({icon:"error",title:"สร้างเอกสารไม่สำเร็จ",text:e.message}); el.remove(); return null; }
+  finally{ setTimeout(()=>el.remove(), 0); }
+};
+
+// หน้าไหนของ canvas เป็นกระดาษเปล่า (ขาวล้วน) — ใช้ตัดหน้าว่างท้าย PDF ทิ้ง
+window.__blankPages = function(canvas){
+  const pageH = Math.round(canvas.width * 297 / 210);
+  const pages = Math.max(1, Math.ceil((canvas.height - 2) / pageH));
+  const ctx = canvas.getContext("2d");
+  const blank = [];
+  for(let p=0;p<pages;p++){
+    const y = p*pageH, h = Math.min(pageH, canvas.height - y);
+    if(h <= 4){ blank.push(p); continue; }
+    const data = ctx.getImageData(0, y, canvas.width, h).data;
+    let ink = 0;
+    for(let k=0;k<data.length;k+=4*37){ if(data[k]<235 || data[k+1]<235 || data[k+2]<235){ if(++ink>12) break; } }
+    if(ink<=12) blank.push(p);
+  }
+  return { pages, blank: blank.length===pages ? [] : blank };
+};
+
+// แถวล่างสุดที่มีหมึก (ไม่ใช่พื้นขาว) ใน canvas
+window.__inkBottom = function(canvas){
+  const ctx = canvas.getContext("2d"), w = canvas.width;
+  for(let y = canvas.height-1; y >= 0; y -= 2){
+    const d = ctx.getImageData(0, y, w, 1).data;
+    for(let k=0;k<d.length;k+=4*5){ if(d[k]<200 || d[k+1]<200 || d[k+2]<200) return y+1; }
+  }
+  return 0;
+};
+
+window.downloadDeliveryOrderPdf = async function(doc, ready){
+  const r = ready || await window.__renderDeliveryOrder(doc);
+  if(!r) return;
+  const name = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-")+".pdf";
+  try{
+    const pdf = await r.worker.toPdf().get("pdf");
+    const cv = r.canvas, pageH = Math.round(cv.width * 297 / 210);
+    const bottom = window.__inkBottom(cv);
+    if(bottom <= pageH * 1.12){
+      // เนื้อหาเกินหน้าเดียวมาเล็กน้อย (ฟอนต์บางเครื่องสูงกว่า) — ย่อให้พอดี A4 หน้าเดียว ไม่แตกเป็น 2 หน้า
+      // ใช้ไฟล์ PDF เดิม: เพิ่มหน้าใหม่ แล้วลบหน้าที่ตัดไว้ทั้งหมด เหลือหน้าเดียวสำหรับวางภาพที่ย่อแล้ว
+      const one = pdf, n0 = pdf.getNumberOfPages();
+      one.addPage("a4","portrait");
+      for(let i=0;i<n0;i++) one.deletePage(1);
+      one.setPage(1);
+      const h = Math.min(cv.height, Math.max(pageH, bottom + 8));
+      const crop = document.createElement("canvas"); crop.width = cv.width; crop.height = h;
+      const cx = crop.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0,0,crop.width,h); cx.drawImage(cv,0,0);
+      const scale = Math.min(1, pageH / h);
+      const wmm = 210*scale, hmm = h / cv.width * 210 * scale;
+      one.addImage(crop.toDataURL("image/jpeg",0.95), "JPEG", (210-wmm)/2, 0, wmm, hmm);
+      one.save(name);
+    } else {
+      // ลบหน้าว่าง: หน้าที่ขาวล้วน + หน้าที่เกินความยาวเนื้อหา (ตัวแบ่งหน้าของไลบรารีปัดเศษเกินมา)
+      const { pages, blank } = window.__blankPages(cv);
+      for(let pg = pdf.getNumberOfPages()-1; pg >= 0; pg--){
+        if((pg >= pages || blank.includes(pg)) && pdf.getNumberOfPages() > 1) pdf.deletePage(pg+1);
+      }
+      pdf.save(name);
+    }
+    Swal.close();
+  }catch(e){ Swal.fire({icon:"error",title:"สร้าง PDF ไม่สำเร็จ",text:e.message}); }
+};
+
+// ดูตัวอย่างใบส่งของเป็นรูปภาพ — บันทึกเป็น PNG หรือดาวน์โหลด PDF ต่อได้จากหน้าต่างเดียวกัน
+window.previewDeliveryOrder = async function(doc){
+  const r = await window.__renderDeliveryOrder(doc);
+  if(!r) return;
+  // ตัดส่วนว่างท้ายภาพทิ้ง (หน้าเปล่าที่เกินมา)
+  const pageH = Math.round(r.canvas.width * 297 / 210);
+  const h = Math.min(r.canvas.height, Math.max(pageH, window.__inkBottom(r.canvas) + 40));
+  const out = document.createElement("canvas");
+  out.width = r.canvas.width; out.height = h;
+  const c = out.getContext("2d"); c.fillStyle="#fff"; c.fillRect(0,0,out.width,h); c.drawImage(r.canvas,0,0);
+  const url = out.toDataURL("image/png");
+  const fname = String(doc.docNo||"delivery-order").replace(/[\\/:*?"<>|]/g,"-");
+  const res = await Swal.fire({
+    title:`ใบส่งของ ${doc.docNo||""}`,
+    html:`<div style="max-height:70vh;overflow:auto;border:1px solid #E2E8F0;border-radius:8px;background:#F1F5F9;padding:6px">
+            <img src="${url}" alt="ตัวอย่างใบส่งของ" style="width:100%;display:block;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15)"></div>
+          <div style="font-size:12px;color:#64748B;margin-top:6px">บนมือถือ กดค้างที่รูปเพื่อบันทึก/แชร์ได้</div>`,
+    width: Math.min(900, window.innerWidth - 16),
+    showDenyButton:true, showCancelButton:true,
+    confirmButtonText:"<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลด PDF",
+    denyButtonText:"<i class='fa-solid fa-image'></i> บันทึกรูปภาพ",
+    cancelButtonText:"ปิด", confirmButtonColor:"#1E40AF", denyButtonColor:"#0E7490",
+  });
+  if(res.isConfirmed){ Swal.fire({title:"กำลังสร้าง PDF...",allowOutsideClick:false,didOpen:()=>Swal.showLoading()}); await window.downloadDeliveryOrderPdf(doc, r); }
+  else if(res.isDenied){ const a=document.createElement("a"); a.href=url; a.download=fname+".png"; document.body.appendChild(a); a.click(); a.remove(); }
 };
 
 // หน้ารายการใบส่งของทั้งหมด
@@ -10885,7 +11017,10 @@ function DeliveryOrders({user}){
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.fromProjectLabel||"—"}</td>
                 <td style={{fontSize:13}}><ProjectLabel name={d.toProject}/>{d.toSubSite && <div style={{marginTop:3}}><SubSiteTag value={d.toSubSite} project={d.toProject}/></div>}</td>
                 <td className="hide-on-mobile" style={{fontSize:13}}>{d.sender||"—"}</td>
-                <td><button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)}><i className="fa-solid fa-file-pdf"></i> PDF</button></td>
+                <td style={{whiteSpace:"nowrap"}}>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>window.previewDeliveryOrder(d)} title="ดูตัวอย่างเป็นรูปภาพ"><i className="fa-solid fa-eye"></i> ดู</button>
+                  <button className="btn btn-sm btn-ghost" onClick={()=>window.downloadDeliveryOrderPdf(d)} title="ดาวน์โหลด PDF"><i className="fa-solid fa-file-pdf"></i> PDF</button>
+                </td>
                 {canEdit && <td><div className="row-actions">
                   {!d.cancelled && <button className="ia" title="แก้ไขข้อมูล" onClick={()=>setEdit(d)}><i className="fa-solid fa-pen"></i></button>}
                   {!d.cancelled && <button className="ia" title="ยกเลิกใบส่งของ" style={{color:"#D97706"}} onClick={()=>cancel(d)}><i className="fa-solid fa-ban"></i></button>}
@@ -10916,6 +11051,7 @@ function DeliveryOrderView({doc,onClose,onEdit}){
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
         {onEdit && !doc.cancelled && <button className="btn btn-ghost" onClick={()=>onEdit(doc)} style={{color:"#1E40AF"}}><i className="fa-solid fa-pen"></i> แก้ไขข้อมูล</button>}
+        <button className="btn btn-ghost" onClick={()=>window.previewDeliveryOrder(doc)}><i className="fa-solid fa-eye"></i> ดูตัวอย่าง</button>
         <button className="btn btn-primary" onClick={()=>window.downloadDeliveryOrderPdf(doc)}><i className="fa-solid fa-file-pdf"></i> ดาวน์โหลด PDF</button>
       </>}>
       {doc.cancelled && (

@@ -1,7 +1,7 @@
 /* สร้างอัตโนมัติโดย build.js — ห้ามแก้ไฟล์นี้ตรงๆ
    แก้ที่ ระบบแจ้งซ่อมเครื่องจักร.html แล้ว commit (hook จะ build ให้เอง) */
 
-/* ---- block 1 (ต้นฉบับบรรทัด 656) ---- */
+/* ---- block 1 (ต้นฉบับบรรทัด 657) ---- */
 const firebaseConfig = {
   apiKey: "AIzaSyBhcH8DyubFWzX93b7sD4GYuDK3TUTFI4Y",
   authDomain: "uesr-panamanee.firebaseapp.com",
@@ -1362,6 +1362,27 @@ async function api(action, payload = {}) {
             });
           });
         }
+        (Array.isArray(payload.extras) ? payload.extras : []).forEach(x => {
+          const nm = String(x && x.name || '').trim();
+          const q = Number(x && x.qty) || 0;
+          if (!nm || q <= 0) return;
+          items.push({
+            key: '',
+            kind: 'custom',
+            assetCode: String(x.code || '').trim(),
+            name: nm,
+            brand: '',
+            model: '',
+            serial: '',
+            quantity: q,
+            totalBefore: q,
+            partial: false,
+            unit: String(x.unit || '').trim(),
+            sendNote: String(x.note || '').trim(),
+            from: doc && doc.fromProject || '',
+            fromSubSite: doc && doc.fromSubSite || ''
+          });
+        });
         if (!items.length) throw new Error('ไม่พบทรัพย์สินที่เลือก หรือจำนวนที่ย้ายเป็น 0');
         const docKey = String(doc && doc.docNo || 'DO-' + when).replace(/[.#$/\[\]]/g, '-');
         if ((await _assetDb.ref('/deliveryOrders/' + docKey).get()).exists()) {
@@ -1447,6 +1468,7 @@ async function api(action, payload = {}) {
           const hasMc = items.some(it => it && it.kind === 'machine');
           const mall = hasMc ? (await _db.ref('/machines').get()).val() || {} : {};
           items.forEach((it, i) => {
+            if (it && it.kind === 'custom') return;
             if (it && it.kind === 'machine') {
               const id = String(it.machineId || String(it.key || '').replace(/^MC:/, ''));
               const mk = mall[id] ? id : Object.keys(mall).find(k => mall[k] && String(mall[k].id) === id);
@@ -1693,6 +1715,7 @@ async function api(action, payload = {}) {
           });
           newItems.forEach((ni, i) => {
             const oi = oldItems[i] || {};
+            if ((oi.kind || ni.kind) === 'custom') return;
             if ((oi.kind || ni.kind) === 'machine') {
               if ((Number(ni.quantity) || 0) !== (Number(oi.quantity) || 0)) warnings.push((ni.name || oi.name || 'เครื่องจักร') + ': เครื่องจักรแก้จำนวนไม่ได้ (ย้ายทั้งคัน)');
               return;
@@ -2136,7 +2159,7 @@ window.api = async function (action, payload = {}) {
   return res;
 };
 
-/* ---- block 2 (ต้นฉบับบรรทัด 2035) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 2048) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -3020,7 +3043,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2520) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2533) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -3175,7 +3198,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2650) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2663) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -3357,10 +3380,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2795) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2808) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2798) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2811) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3538,7 +3561,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2925) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2938) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -4392,7 +4415,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3429) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3442) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4961,7 +4984,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3695) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3708) ---- */
 const {
   useState,
   useEffect,
@@ -5210,7 +5233,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3798) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3811) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -5438,7 +5461,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3981) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 3994) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -6626,7 +6649,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4418) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4431) ---- */
 function Projects({
   user
 }) {
@@ -7263,7 +7286,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4671) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4684) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -7660,7 +7683,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4917) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4930) ---- */
 function Dashboard({
   user,
   goTo
@@ -9298,7 +9321,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5577) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5590) ---- */
 function Repairs({
   user
 }) {
@@ -12554,7 +12577,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6791) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6804) ---- */
 function Users({
   user
 }) {
@@ -13126,7 +13149,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6975) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 6988) ---- */
 function Categories({
   user
 }) {
@@ -13389,7 +13412,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 7063) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 7076) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -16550,7 +16573,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 8064) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 8077) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -20716,7 +20739,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 9426) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 9439) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -21816,7 +21839,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9733) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9746) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -22862,6 +22885,19 @@ function TransferAssetsModal({
   const [vehiclePlate, setVehiclePlate] = React.useState("");
   const [driverName, setDriverName] = React.useState("");
   const [note, setNote] = React.useState("");
+  const [extras, setExtras] = React.useState([]);
+  const addExtra = () => setExtras(p => [...p, {
+    name: "",
+    code: "",
+    qty: 1,
+    unit: "",
+    note: ""
+  }]);
+  const upExtra = (i, k, v) => setExtras(p => p.map((x, idx) => idx === i ? {
+    ...x,
+    [k]: v
+  } : x));
+  const delExtra = i => setExtras(p => p.filter((_, idx) => idx !== i));
   const [busy, setBusy] = React.useState(false);
   const [q, setQ] = React.useState("");
   const [fromProject, setFromProject] = React.useState(preset && preset.fromProject || "");
@@ -23010,7 +23046,20 @@ function TransferAssetsModal({
       key: a.key,
       qty: Number(qty[a.key]) || 0
     })).filter(x => x.qty > 0);
-    if (!moves.length) {
+    const extraItems = extras.map(x => ({
+      ...x,
+      name: String(x.name || "").trim(),
+      qty: Number(x.qty) || 0
+    })).filter(x => x.name);
+    if (extraItems.some(x => x.qty <= 0)) {
+      Swal.fire({
+        icon: "warning",
+        title: "ระบุจำนวนรายการอื่นๆ ให้ครบ",
+        text: "รายการที่พิมพ์เพิ่มต้องมีจำนวนมากกว่า 0"
+      });
+      return;
+    }
+    if (!moves.length && !extraItems.length) {
       Swal.fire({
         icon: "warning",
         title: "ยังไม่ได้เลือกทรัพย์สิน",
@@ -23022,6 +23071,7 @@ function TransferAssetsModal({
     try {
       const res = await window.api("transferAssets", {
         moves,
+        extras: extraItems,
         toProject,
         toSubSite,
         note,
@@ -23055,9 +23105,15 @@ function TransferAssetsModal({
         title: "ย้ายโครงการสำเร็จ",
         html: "ย้าย <b>" + res.items.length + "</b> รายการ จาก <b>" + fromProject + (fromSubSite ? " · " + fromSubSite : "") + "</b> ไปยัง <b>" + toProject + (toSubSite ? " · " + toSubSite : "") + "</b><br/>ออกใบส่งของเลขที่ <b class='mono'>" + docNo + "</b>",
         showCancelButton: true,
+        showDenyButton: true,
         confirmButtonText: "<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลดใบส่งของ",
+        denyButtonText: "<i class='fa-solid fa-eye'></i> ดูตัวอย่าง",
+        denyButtonColor: "#0E7490",
         cancelButtonText: "ปิด",
         confirmButtonColor: "#1E40AF"
+      }).then(r => {
+        if (r.isDenied) window.previewDeliveryOrder(res.doc);
+        return r;
       });
       if (isConfirmed) window.downloadDeliveryOrderPdf(res.doc);
     } catch (err) {
@@ -23426,7 +23482,97 @@ function TransferAssetsModal({
     }
   }, React.createElement("div", {
     className: "t"
-  }, fromProject ? fromSubSite ? `ไม่พบทรัพย์สินในไซต์ ${fromSubSite}` : "ไม่พบทรัพย์สินในโครงการต้นทาง" : "ยังไม่ได้เลือกโครงการต้นทาง"), React.createElement("div", null, fromProject ? "ลองเปลี่ยนคำค้น เลือกไซต์งานย่อยอื่น หรือเลือกโครงการต้นทางอื่น" : "เลือกโครงการต้นทางด้านบนก่อน แล้วรายการทรัพย์สินจะแสดงที่นี่"))))))))));
+  }, fromProject ? fromSubSite ? `ไม่พบทรัพย์สินในไซต์ ${fromSubSite}` : "ไม่พบทรัพย์สินในโครงการต้นทาง" : "ยังไม่ได้เลือกโครงการต้นทาง"), React.createElement("div", null, fromProject ? "ลองเปลี่ยนคำค้น เลือกไซต์งานย่อยอื่น หรือเลือกโครงการต้นทางอื่น" : "เลือกโครงการต้นทางด้านบนก่อน แล้วรายการทรัพย์สินจะแสดงที่นี่"))))))), React.createElement("div", {
+    style: {
+      marginTop: 14,
+      border: "1px dashed #A5B4FC",
+      borderRadius: 10,
+      padding: "10px 12px",
+      background: "#F8FAFF"
+    }
+  }, React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      flexWrap: "wrap",
+      marginBottom: extras.length ? 8 : 0
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      fontSize: 13.5
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-boxes-packing",
+    style: {
+      color: "#4F46E5",
+      marginRight: 6
+    }
+  }), "\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2D\u0E37\u0E48\u0E19\u0E46 (\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E19\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19)"), React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, "\u0E40\u0E0A\u0E48\u0E19 \u0E0A\u0E34\u0E49\u0E19\u0E2A\u0E48\u0E27\u0E19 \u0E2D\u0E30\u0E44\u0E2B\u0E25\u0E48 \u0E2D\u0E38\u0E1B\u0E01\u0E23\u0E13\u0E4C\u0E15\u0E48\u0E2D\u0E40\u0E2A\u0E23\u0E34\u0E21 \xB7 \u0E25\u0E07\u0E43\u0E19\u0E43\u0E1A\u0E2A\u0E48\u0E07\u0E02\u0E2D\u0E07\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27 \u0E44\u0E21\u0E48\u0E01\u0E23\u0E30\u0E17\u0E1A\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19"), React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), React.createElement("button", {
+    type: "button",
+    className: "btn btn-ghost btn-sm",
+    onClick: addExtra
+  }, React.createElement("i", {
+    className: "fa-solid fa-plus"
+  }), " \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23")), extras.map((x, i) => React.createElement("div", {
+    key: i,
+    style: {
+      display: "grid",
+      gridTemplateColumns: "minmax(150px,2fr) minmax(80px,1fr) 80px 80px minmax(100px,1.2fr) 32px",
+      gap: 6,
+      marginBottom: 6,
+      alignItems: "center"
+    },
+    className: "extra-row"
+  }, React.createElement("input", {
+    value: x.name,
+    onChange: e => upExtra(i, "name", e.target.value),
+    placeholder: "\u0E0A\u0E37\u0E48\u0E2D\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 *",
+    style: inSt
+  }), React.createElement("input", {
+    value: x.code,
+    onChange: e => upExtra(i, "code", e.target.value),
+    placeholder: "\u0E23\u0E2B\u0E31\u0E2A (\u0E16\u0E49\u0E32\u0E21\u0E35)",
+    style: inSt
+  }), React.createElement("input", {
+    type: "number",
+    min: "0",
+    step: "any",
+    value: x.qty,
+    onChange: e => upExtra(i, "qty", e.target.value),
+    placeholder: "\u0E08\u0E33\u0E19\u0E27\u0E19",
+    style: {
+      ...inSt,
+      textAlign: "center"
+    }
+  }), React.createElement("input", {
+    value: x.unit,
+    onChange: e => upExtra(i, "unit", e.target.value),
+    placeholder: "\u0E2B\u0E19\u0E48\u0E27\u0E22",
+    style: inSt
+  }), React.createElement("input", {
+    value: x.note,
+    onChange: e => upExtra(i, "note", e.target.value),
+    placeholder: "\u0E2B\u0E21\u0E32\u0E22\u0E40\u0E2B\u0E15\u0E38",
+    style: inSt
+  }), React.createElement("button", {
+    type: "button",
+    className: "ia danger",
+    onClick: () => delExtra(i),
+    title: "\u0E25\u0E1A\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E19\u0E35\u0E49"
+  }, React.createElement("i", {
+    className: "fa-solid fa-xmark"
+  }))))))));
 }
 function AssetForm({
   mode,
@@ -23682,7 +23828,7 @@ window.buildDeliveryOrderHtml = function (doc) {
     </div>` : "";
   const fromTxt = doc.fromProjectLabel || [doc.fromProject, doc.fromSubSite].filter(Boolean).join(" · ");
   const toTxt = [doc.toProject, doc.toSubSite].filter(Boolean).join(" · ");
-  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:297mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
+  return `<div style="position:relative;font-family:'TH Sarabun PSK','TH Sarabun New','Sarabun','Kanit',Arial,sans-serif;color:#000;width:210mm;min-height:296mm;padding:12mm 12mm 10mm;background:#fff;box-sizing:border-box">${cancelStamp}
     <style>table.do{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;margin-top:4mm}table.do th,table.do td{border:1px solid #000;padding:1px 4px;height:6.6mm;line-height:1.05;text-align:center;vertical-align:middle;overflow:hidden}table.do th{font-size:13px;font-weight:400;white-space:nowrap;height:5.5mm}table.sg{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:-1px}</style>
     <div style="position:relative;height:30mm;margin-bottom:2mm">
       <div style="position:absolute;left:4mm;top:0">${DO_LOGO_SVG}</div>
@@ -23710,48 +23856,188 @@ window.buildDeliveryOrderHtml = function (doc) {
     </table>
   </div>`;
 };
-window.downloadDeliveryOrderPdf = async function (doc) {
+window.__renderDeliveryOrder = async function (doc) {
+  Swal.fire({
+    title: "กำลังเตรียมเอกสาร...",
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
   try {
-    Swal.fire({
-      title: "กำลังเตรียมไฟล์ PDF...",
-      allowOutsideClick: false,
-      didOpen: () => Swal.showLoading()
-    });
     await Promise.all([window.__loadPdf(), window.__SIG.preload([doc.senderId, doc.receiverId, doc.approverId])]);
-    Swal.close();
   } catch (e) {
     Swal.fire({
       icon: "error",
-      title: "ไม่พบตัวสร้าง PDF",
+      title: "ไม่พบตัวสร้างเอกสาร",
       text: "โหลดไลบรารีไม่สำเร็จ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต"
     });
-    return;
+    return null;
   }
-  const name = String(doc.docNo || "delivery-order").replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
   const el = document.createElement("div");
+  el.style.cssText = "position:fixed;left:-10000px;top:0";
   el.innerHTML = window.buildDeliveryOrderHtml(doc);
   document.body.appendChild(el);
-  await window.__waitImages(el);
   try {
-    await html2pdf().set({
+    await window.__waitImages(el);
+    const worker = html2pdf().set({
       margin: 0,
-      filename: name,
       image: {
         type: "jpeg",
         quality: .98
       },
       html2canvas: {
         scale: 2,
-        useCORS: true
+        useCORS: true,
+        backgroundColor: "#ffffff"
       },
       jsPDF: {
         unit: "mm",
         format: "a4",
         orientation: "portrait"
       }
-    }).from(el.firstElementChild).save();
-  } finally {
+    }).from(el.firstElementChild).toCanvas();
+    const canvas = await worker.get("canvas");
+    return {
+      worker,
+      canvas
+    };
+  } catch (e) {
+    Swal.fire({
+      icon: "error",
+      title: "สร้างเอกสารไม่สำเร็จ",
+      text: e.message
+    });
     el.remove();
+    return null;
+  } finally {
+    setTimeout(() => el.remove(), 0);
+  }
+};
+window.__blankPages = function (canvas) {
+  const pageH = Math.round(canvas.width * 297 / 210);
+  const pages = Math.max(1, Math.ceil((canvas.height - 2) / pageH));
+  const ctx = canvas.getContext("2d");
+  const blank = [];
+  for (let p = 0; p < pages; p++) {
+    const y = p * pageH,
+      h = Math.min(pageH, canvas.height - y);
+    if (h <= 4) {
+      blank.push(p);
+      continue;
+    }
+    const data = ctx.getImageData(0, y, canvas.width, h).data;
+    let ink = 0;
+    for (let k = 0; k < data.length; k += 4 * 37) {
+      if (data[k] < 235 || data[k + 1] < 235 || data[k + 2] < 235) {
+        if (++ink > 12) break;
+      }
+    }
+    if (ink <= 12) blank.push(p);
+  }
+  return {
+    pages,
+    blank: blank.length === pages ? [] : blank
+  };
+};
+window.__inkBottom = function (canvas) {
+  const ctx = canvas.getContext("2d"),
+    w = canvas.width;
+  for (let y = canvas.height - 1; y >= 0; y -= 2) {
+    const d = ctx.getImageData(0, y, w, 1).data;
+    for (let k = 0; k < d.length; k += 4 * 5) {
+      if (d[k] < 200 || d[k + 1] < 200 || d[k + 2] < 200) return y + 1;
+    }
+  }
+  return 0;
+};
+window.downloadDeliveryOrderPdf = async function (doc, ready) {
+  const r = ready || (await window.__renderDeliveryOrder(doc));
+  if (!r) return;
+  const name = String(doc.docNo || "delivery-order").replace(/[\\/:*?"<>|]/g, "-") + ".pdf";
+  try {
+    const pdf = await r.worker.toPdf().get("pdf");
+    const cv = r.canvas,
+      pageH = Math.round(cv.width * 297 / 210);
+    const bottom = window.__inkBottom(cv);
+    if (bottom <= pageH * 1.12) {
+      const one = pdf,
+        n0 = pdf.getNumberOfPages();
+      one.addPage("a4", "portrait");
+      for (let i = 0; i < n0; i++) one.deletePage(1);
+      one.setPage(1);
+      const h = Math.min(cv.height, Math.max(pageH, bottom + 8));
+      const crop = document.createElement("canvas");
+      crop.width = cv.width;
+      crop.height = h;
+      const cx = crop.getContext("2d");
+      cx.fillStyle = "#fff";
+      cx.fillRect(0, 0, crop.width, h);
+      cx.drawImage(cv, 0, 0);
+      const scale = Math.min(1, pageH / h);
+      const wmm = 210 * scale,
+        hmm = h / cv.width * 210 * scale;
+      one.addImage(crop.toDataURL("image/jpeg", 0.95), "JPEG", (210 - wmm) / 2, 0, wmm, hmm);
+      one.save(name);
+    } else {
+      const {
+        pages,
+        blank
+      } = window.__blankPages(cv);
+      for (let pg = pdf.getNumberOfPages() - 1; pg >= 0; pg--) {
+        if ((pg >= pages || blank.includes(pg)) && pdf.getNumberOfPages() > 1) pdf.deletePage(pg + 1);
+      }
+      pdf.save(name);
+    }
+    Swal.close();
+  } catch (e) {
+    Swal.fire({
+      icon: "error",
+      title: "สร้าง PDF ไม่สำเร็จ",
+      text: e.message
+    });
+  }
+};
+window.previewDeliveryOrder = async function (doc) {
+  const r = await window.__renderDeliveryOrder(doc);
+  if (!r) return;
+  const pageH = Math.round(r.canvas.width * 297 / 210);
+  const h = Math.min(r.canvas.height, Math.max(pageH, window.__inkBottom(r.canvas) + 40));
+  const out = document.createElement("canvas");
+  out.width = r.canvas.width;
+  out.height = h;
+  const c = out.getContext("2d");
+  c.fillStyle = "#fff";
+  c.fillRect(0, 0, out.width, h);
+  c.drawImage(r.canvas, 0, 0);
+  const url = out.toDataURL("image/png");
+  const fname = String(doc.docNo || "delivery-order").replace(/[\\/:*?"<>|]/g, "-");
+  const res = await Swal.fire({
+    title: `ใบส่งของ ${doc.docNo || ""}`,
+    html: `<div style="max-height:70vh;overflow:auto;border:1px solid #E2E8F0;border-radius:8px;background:#F1F5F9;padding:6px">
+            <img src="${url}" alt="ตัวอย่างใบส่งของ" style="width:100%;display:block;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15)"></div>
+          <div style="font-size:12px;color:#64748B;margin-top:6px">บนมือถือ กดค้างที่รูปเพื่อบันทึก/แชร์ได้</div>`,
+    width: Math.min(900, window.innerWidth - 16),
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: "<i class='fa-solid fa-file-pdf'></i> ดาวน์โหลด PDF",
+    denyButtonText: "<i class='fa-solid fa-image'></i> บันทึกรูปภาพ",
+    cancelButtonText: "ปิด",
+    confirmButtonColor: "#1E40AF",
+    denyButtonColor: "#0E7490"
+  });
+  if (res.isConfirmed) {
+    Swal.fire({
+      title: "กำลังสร้าง PDF...",
+      allowOutsideClick: false,
+      didOpen: () => Swal.showLoading()
+    });
+    await window.downloadDeliveryOrderPdf(doc, r);
+  } else if (res.isDenied) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fname + ".png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 };
 function DeliveryOrders({
@@ -24160,9 +24446,20 @@ function DeliveryOrders({
     style: {
       fontSize: 13
     }
-  }, d.sender || "—"), React.createElement("td", null, React.createElement("button", {
+  }, d.sender || "—"), React.createElement("td", {
+    style: {
+      whiteSpace: "nowrap"
+    }
+  }, React.createElement("button", {
     className: "btn btn-sm btn-ghost",
-    onClick: () => window.downloadDeliveryOrderPdf(d)
+    onClick: () => window.previewDeliveryOrder(d),
+    title: "\u0E14\u0E39\u0E15\u0E31\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E"
+  }, React.createElement("i", {
+    className: "fa-solid fa-eye"
+  }), " \u0E14\u0E39"), React.createElement("button", {
+    className: "btn btn-sm btn-ghost",
+    onClick: () => window.downloadDeliveryOrderPdf(d),
+    title: "\u0E14\u0E32\u0E27\u0E19\u0E4C\u0E42\u0E2B\u0E25\u0E14 PDF"
   }, React.createElement("i", {
     className: "fa-solid fa-file-pdf"
   }), " PDF")), canEdit && React.createElement("td", null, React.createElement("div", {
@@ -24249,6 +24546,11 @@ function DeliveryOrderView({
     }, React.createElement("i", {
       className: "fa-solid fa-pen"
     }), " \u0E41\u0E01\u0E49\u0E44\u0E02\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25"), React.createElement("button", {
+      className: "btn btn-ghost",
+      onClick: () => window.previewDeliveryOrder(doc)
+    }, React.createElement("i", {
+      className: "fa-solid fa-eye"
+    }), " \u0E14\u0E39\u0E15\u0E31\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07"), React.createElement("button", {
       className: "btn btn-primary",
       onClick: () => window.downloadDeliveryOrderPdf(doc)
     }, React.createElement("i", {
@@ -24650,7 +24952,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 11076) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 11212) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -25124,7 +25426,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 11412) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 11548) ---- */
 function Permissions({
   user
 }) {
@@ -25744,7 +26046,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11765) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11901) ---- */
 function WorkspacePicker({
   user,
   onContinue,

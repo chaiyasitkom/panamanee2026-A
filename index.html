@@ -617,6 +617,7 @@ table.data tr:last-child td{border-bottom:0}
 }
 @media (hover:none) and (pointer:coarse){.btn,.nav-item,.quick-action{min-height:44px}.ia{min-width:38px;min-height:38px}.btn-sm{min-height:36px}input,select,textarea{font-size:16px !important}table.data td{padding:11px 10px}}
 @media (min-width:641px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)}.charts-grid{grid-template-columns:1fr}.machines-grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}}
+@media (max-width:640px){ .extra-row{grid-template-columns:1fr 1fr !important} .extra-row>input:first-child{grid-column:1/-1} }
 /* ── มือถือแนวนอน: จอเตี้ย — แถบหัวเรื่องแถวเดียวและเลื่อนหายไปกับหน้า ให้เหลือพื้นที่แสดงข้อมูลมากที่สุด ── */
 @media (orientation:landscape) and (max-height:520px) and (max-width:1024px){
   .main{padding:0 max(14px,env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left)) !important}
