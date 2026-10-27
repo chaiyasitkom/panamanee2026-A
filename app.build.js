@@ -330,6 +330,29 @@ const _CHANGE_OPS = {
     key: 'key'
   }
 };
+function _whoNow(by) {
+  let cur = window.__ACT && window.__ACT.user || null;
+  if (!cur) {
+    try {
+      cur = JSON.parse(localStorage.getItem('rms_user') || 'null');
+    } catch (e) {
+      cur = null;
+    }
+  }
+  cur = cur || {};
+  if (by && typeof by === 'object' && (by.id || by.name)) return {
+    id: String(by.id || ''),
+    name: String(by.name || '')
+  };
+  if (typeof by === 'string' && by.trim()) return {
+    id: by.trim() === String(cur.name || '').trim() ? String(cur.id || '') : '',
+    name: by.trim()
+  };
+  return {
+    id: String(cur.id || ''),
+    name: String(cur.name || '')
+  };
+}
 function _cleanSnapshot(snap) {
   if (!snap || typeof snap !== 'object') return null;
   const fields = (Array.isArray(snap.fields) ? snap.fields : []).slice(0, 24).map(f => ({
@@ -1052,6 +1075,10 @@ async function api(action, payload = {}) {
           m
         } = payload;
         if (!m.id) m.id = await _nextId('machines', 'M', 3);
+        const w = _whoNow(payload.by);
+        m.createdById = m.createdById || w.id;
+        m.createdByName = m.createdByName || w.name;
+        m.createdAt = m.createdAt || new Date().toISOString();
         await _db.ref('/machines/' + m.id).set(m);
         return m;
       }
@@ -1061,9 +1088,23 @@ async function api(action, payload = {}) {
           id,
           patch
         } = payload;
+        let stamp = null;
+        if (patch && (patch.name !== undefined || patch.code !== undefined)) {
+          const w = _whoNow(payload.by);
+          stamp = {
+            updatedById: w.id,
+            updatedByName: w.name,
+            updatedAt: new Date().toISOString()
+          };
+          Object.assign(patch, stamp);
+          delete patch.createdById;
+          delete patch.createdByName;
+          delete patch.createdAt;
+        }
         await _db.ref('/machines/' + id).update(patch);
         return {
-          updated: true
+          updated: true,
+          stamp
         };
       }
     case 'uploadPJ2Document':
@@ -1212,9 +1253,19 @@ async function api(action, payload = {}) {
           }
           clean.transferHistory = hist;
           if (cur.splitFrom) clean.splitFrom = cur.splitFrom;else delete clean.splitFrom;
+          ['createdById', 'createdByName', 'createdAt'].forEach(f => {
+            if (cur[f]) clean[f] = cur[f];else delete clean[f];
+          });
+          const w = _whoNow(payload.by);
+          clean.updatedById = w.id;
+          clean.updatedByName = w.name;
         } else {
           delete clean.transferHistory;
           delete clean.splitFrom;
+          const w = _whoNow(payload.by);
+          clean.createdById = w.id;
+          clean.createdByName = w.name;
+          clean.createdAt = new Date().toISOString();
         }
         clean.id = clean.id || clean.assetCode || id;
         clean.quantity = Number(clean.quantity) || 0;
@@ -2159,7 +2210,7 @@ window.api = async function (action, payload = {}) {
   return res;
 };
 
-/* ---- block 2 (ต้นฉบับบรรทัด 2048) ---- */
+/* ---- block 2 (ต้นฉบับบรรทัด 2076) ---- */
 const STATUSES = [{
   key: "new",
   label: "ใหม่",
@@ -3043,7 +3094,7 @@ window.extractKeywords = function (text) {
   return found.concat(out);
 };
 
-/* ---- block 3 (ต้นฉบับบรรทัด 2533) ---- */
+/* ---- block 3 (ต้นฉบับบรรทัด 2561) ---- */
 const DELREQ_SEEN_KEY = "rms_delreq_seen";
 window.__DELREQ = {
   list: [],
@@ -3198,7 +3249,7 @@ window.__DELREQ = {
   }
 };
 
-/* ---- block 4 (ต้นฉบับบรรทัด 2663) ---- */
+/* ---- block 4 (ต้นฉบับบรรทัด 2691) ---- */
 const JOBALERT_ROLES = ["Admin", "Technician"];
 const JOBALERT_HOURS = [8, 11, 13, 17];
 const JOBALERT_SEEN = "rms_jobalert_seen";
@@ -3380,10 +3431,10 @@ window.__JOBALERT = {
   }
 };
 
-/* ---- block 5 (ต้นฉบับบรรทัด 2808) ---- */
+/* ---- block 5 (ต้นฉบับบรรทัด 2836) ---- */
 
 
-/* ---- block 6 (ต้นฉบับบรรทัด 2811) ---- */
+/* ---- block 6 (ต้นฉบับบรรทัด 2839) ---- */
 const FCM_VAPID_KEY = "";
 const FCM_ON_KEY = "rms_fcm_on";
 window.__FCM = {
@@ -3561,7 +3612,7 @@ window.__FCM = {
   }
 };
 
-/* ---- block 7 (ต้นฉบับบรรทัด 2938) ---- */
+/* ---- block 7 (ต้นฉบับบรรทัด 2966) ---- */
 window.NOTIFY_ROLES = ["Admin", "Technician"];
 window.askNotifyPermission = function (user) {
   try {
@@ -3655,6 +3706,13 @@ window.__ASSETSYNC = {
     this.orders = null;
     this.live = false;
   }
+};
+window.recordByText = function (r, short) {
+  if (!r) return "";
+  const d = v => v ? window.__DATA.fmtDate ? window.__DATA.fmtDate(v) : String(v).slice(0, 10) : "";
+  const add = r.createdByName ? `เพิ่มโดย ${r.createdByName}${!short && r.createdAt ? ` · ${d(r.createdAt)}` : ""}` : "";
+  const upd = r.updatedByName && (!short || !r.createdByName || r.updatedByName !== r.createdByName) ? `แก้ไขล่าสุดโดย ${r.updatedByName}${!short && r.updatedAt ? ` · ${d(r.updatedAt)}` : ""}` : "";
+  return [add, upd].filter(Boolean).join(" · ");
 };
 window.AssetSyncBadge = function () {
   const live = window.__ASSETSYNC.live;
@@ -4415,7 +4473,7 @@ window.deleteWithApproval = async function (opts) {
   return false;
 };
 
-/* ---- block 8 (ต้นฉบับบรรทัด 3442) ---- */
+/* ---- block 8 (ต้นฉบับบรรทัด 3479) ---- */
 const DELREQ_STATUS = {
   pending: {
     label: "รออนุมัติ",
@@ -4984,7 +5042,7 @@ function DeleteApprovals({
 }
 window.DeleteApprovals = DeleteApprovals;
 
-/* ---- block 9 (ต้นฉบับบรรทัด 3708) ---- */
+/* ---- block 9 (ต้นฉบับบรรทัด 3745) ---- */
 const {
   useState,
   useEffect,
@@ -5233,7 +5291,7 @@ Object.assign(window, {
   simulate
 });
 
-/* ---- block 10 (ต้นฉบับบรรทัด 3811) ---- */
+/* ---- block 10 (ต้นฉบับบรรทัด 3848) ---- */
 function InstallAppButton() {
   const [, force] = React.useReducer(x => x + 1, 0);
   const [busy, setBusy] = React.useState(false);
@@ -5461,7 +5519,7 @@ function Login({
 }
 window.Login = Login;
 
-/* ---- block 11 (ต้นฉบับบรรทัด 3994) ---- */
+/* ---- block 11 (ต้นฉบับบรรทัด 4031) ---- */
 function sigCanvasToDataUrl(src, dropWhite) {
   const w = src.width,
     h = src.height;
@@ -6649,7 +6707,7 @@ function Sidebar({
 }
 window.Sidebar = Sidebar;
 
-/* ---- block 12 (ต้นฉบับบรรทัด 4431) ---- */
+/* ---- block 12 (ต้นฉบับบรรทัด 4468) ---- */
 function Projects({
   user
 }) {
@@ -7286,7 +7344,7 @@ function ProjectForm({
 }
 window.Projects = Projects;
 
-/* ---- block 13 (ต้นฉบับบรรทัด 4684) ---- */
+/* ---- block 13 (ต้นฉบับบรรทัด 4721) ---- */
 window.parseLatLng = function (text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -7683,7 +7741,7 @@ function JobCard({
 }
 window.JobCard = JobCard;
 
-/* ---- block 14 (ต้นฉบับบรรทัด 4930) ---- */
+/* ---- block 14 (ต้นฉบับบรรทัด 4967) ---- */
 function Dashboard({
   user,
   goTo
@@ -9321,7 +9379,7 @@ function Dashboard({
 }
 window.Dashboard = Dashboard;
 
-/* ---- block 15 (ต้นฉบับบรรทัด 5590) ---- */
+/* ---- block 15 (ต้นฉบับบรรทัด 5627) ---- */
 function Repairs({
   user
 }) {
@@ -12577,7 +12635,7 @@ window.RepairDetail = RepairDetail;
 window.EditRepairModal = EditRepairModal;
 window.AssessModal = AssessModal;
 
-/* ---- block 16 (ต้นฉบับบรรทัด 6804) ---- */
+/* ---- block 16 (ต้นฉบับบรรทัด 6841) ---- */
 function Users({
   user
 }) {
@@ -13149,7 +13207,7 @@ function UserForm({
 }
 window.Users = Users;
 
-/* ---- block 17 (ต้นฉบับบรรทัด 6988) ---- */
+/* ---- block 17 (ต้นฉบับบรรทัด 7025) ---- */
 function Categories({
   user
 }) {
@@ -13412,7 +13470,7 @@ function CatForm({
 }
 window.Categories = Categories;
 
-/* ---- block 18 (ต้นฉบับบรรทัด 7076) ---- */
+/* ---- block 18 (ต้นฉบับบรรทัด 7113) ---- */
 function gdriveThumb(url, sz = 600) {
   if (!url) return null;
   let m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -13921,6 +13979,9 @@ async function exportMachinesExcel(list) {
       "ปีที่ผลิต": m.year || "",
       "ขนาด": m.size || "",
       "หมายเลขเครื่อง (Serial)": m.serial || "",
+      "เพิ่มข้อมูลโดย": m.createdByName || "",
+      "วันที่เพิ่มข้อมูล": String(m.createdAt || "").slice(0, 10),
+      "แก้ไขล่าสุดโดย": m.updatedByName || "",
       "โครงการ": m.project || "",
       "ไซต์งานย่อย": m.subSite || "",
       "สถานที่": m.location || "",
@@ -14299,7 +14360,11 @@ function Machines({
             action: "updateMachine",
             payload: {
               id: form.id,
-              patch: form
+              patch: form,
+              by: {
+                id: user.id,
+                name: user.name
+              }
             },
             entityLabel: "เครื่องจักร",
             targetName: `${form.name || ""} (${form.code || ""})`.trim(),
@@ -14310,15 +14375,29 @@ function Machines({
           if (sent) setEdit(null);
           return;
         }
-        await window.api("updateMachine", {
+        const res = await window.api("updateMachine", {
           id: form.id,
-          patch: form
+          patch: {
+            ...form
+          },
+          by: {
+            id: user.id,
+            name: user.name
+          }
         });
-        setRows(rows.map(x => x.id === form.id ? form : x));
-        syncCache(all => all.map(x => x.id === form.id ? form : x));
+        const saved = {
+          ...form,
+          ...(res && res.stamp || {})
+        };
+        setRows(rows.map(x => x.id === form.id ? saved : x));
+        syncCache(all => all.map(x => x.id === form.id ? saved : x));
       } else {
         const nu = await window.api("createMachine", {
-          m: form
+          m: form,
+          by: {
+            id: user.id,
+            name: user.name
+          }
         });
         setRows([...rows, nu]);
         syncCache(all => [...all, nu]);
@@ -14650,7 +14729,19 @@ function Machines({
         marginTop: 1,
         opacity: .75
       }
-    }, m.serial), React.createElement("div", {
+    }, m.serial), m.createdByName && React.createElement("div", {
+      className: "m",
+      style: {
+        fontSize: 11,
+        marginTop: 1,
+        opacity: .7
+      }
+    }, React.createElement("i", {
+      className: "fa-solid fa-user-pen",
+      style: {
+        marginRight: 4
+      }
+    }), "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E42\u0E14\u0E22 ", m.createdByName), React.createElement("div", {
       className: "meta"
     }, React.createElement("span", null, React.createElement("i", {
       className: "fa-solid fa-diagram-project"
@@ -15911,7 +16002,29 @@ function MachineDetail({
     className: "k"
   }, "\u0E1E\u0E19\u0E31\u0E01\u0E07\u0E32\u0E19\u0E02\u0E31\u0E1A / \u0E1C\u0E39\u0E49\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21"), React.createElement("div", {
     className: "v"
-  }, m.driverName || "—"))), React.createElement("div", {
+  }, m.driverName || "—")), React.createElement("div", null, React.createElement("div", {
+    className: "k"
+  }, "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E42\u0E14\u0E22"), React.createElement("div", {
+    className: "v"
+  }, m.createdByName ? React.createElement(React.Fragment, null, m.createdByName, m.createdAt ? React.createElement("span", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 12
+    }
+  }, " \xB7 ", window.__DATA.fmtDate(m.createdAt)) : null) : React.createElement("span", {
+    style: {
+      color: "var(--muted)"
+    }
+  }, "\u2014 (\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E40\u0E14\u0E34\u0E21)"))), React.createElement("div", null, React.createElement("div", {
+    className: "k"
+  }, "\u0E41\u0E01\u0E49\u0E44\u0E02\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E42\u0E14\u0E22"), React.createElement("div", {
+    className: "v"
+  }, m.updatedByName ? React.createElement(React.Fragment, null, m.updatedByName, m.updatedAt ? React.createElement("span", {
+    style: {
+      color: "var(--muted)",
+      fontSize: 12
+    }
+  }, " \xB7 ", window.__DATA.fmtDate(m.updatedAt)) : null) : "—"))), React.createElement("div", {
     style: {
       marginTop: 12,
       padding: "10px 14px",
@@ -16573,7 +16686,7 @@ function MachineDetail({
 }
 window.Machines = Machines;
 
-/* ---- block 19 (ต้นฉบับบรรทัด 8077) ---- */
+/* ---- block 19 (ต้นฉบับบรรทัด 8120) ---- */
 function WithdrawalLogo() {
   return React.createElement("svg", {
     className: "paper-logo",
@@ -20739,7 +20852,7 @@ function MachineTransferHistory({
   }, "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22"), React.createElement("div", null, "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E32\u0E23\u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E01\u0E23\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E42\u0E04\u0E23\u0E07\u0E01\u0E32\u0E23"))))))));
 }
 
-/* ---- block 20 (ต้นฉบับบรรทัด 9439) ---- */
+/* ---- block 20 (ต้นฉบับบรรทัด 9482) ---- */
 function ReporterDashboard({
   user,
   goTo
@@ -21839,7 +21952,7 @@ Object.assign(window, {
   MyRepairs
 });
 
-/* ---- block 21 (ต้นฉบับบรรทัด 9746) ---- */
+/* ---- block 21 (ต้นฉบับบรรทัด 9789) ---- */
 const ASSET_NO_NAME = "— ไม่ระบุชื่อ —";
 const fmtQtyUnits = byUnit => Object.entries(byUnit).map(([u, n]) => `${n.toLocaleString("th-TH")}${u ? " " + u : ""}`).join(" + ") || "0";
 function summarizeAssetsByName(list) {
@@ -21896,6 +22009,10 @@ async function exportAssetsExcel(list) {
         "ยี่ห้อ": r.brand || "",
         "รุ่น": r.model || "",
         "Serial No.": r.serial || "",
+        "เพิ่มข้อมูลโดย": r.createdByName || "",
+        "วันที่เพิ่มข้อมูล": String(r.createdAt || "").slice(0, 10),
+        "แก้ไขล่าสุดโดย": r.updatedByName || "",
+        "วันที่แก้ไขล่าสุด": r.updatedByName ? String(r.updatedAt || "").slice(0, 10) : "",
         "ขนาด": r.size || "",
         "จำนวน": Number(r.quantity) || 0,
         "หน่วย": r.unit || "",
@@ -22020,6 +22137,10 @@ function AssetRegistry({
     site: m.project || "",
     subSite: m.subSite || "",
     note: m.note || "",
+    createdByName: m.createdByName || "",
+    createdAt: m.createdAt || "",
+    updatedByName: m.updatedByName || "",
+    updatedAt: m.updatedAt || "",
     photos: window.machinePhotos(m),
     transferHistory: m.transferHistory || []
   })), [rows]);
@@ -22148,7 +22269,19 @@ function AssetRegistry({
     className: "desc"
   }, React.createElement("span", {
     className: "mono"
-  }, "S/N ", r.serial))), (r.photos || []).filter(Boolean).length > 0 && React.createElement("div", {
+  }, "S/N ", r.serial)), (r.createdByName || r.updatedByName) && React.createElement("div", {
+    className: "desc",
+    style: {
+      fontSize: 11,
+      opacity: .8
+    },
+    title: window.recordByText(r)
+  }, React.createElement("i", {
+    className: "fa-solid fa-user-pen",
+    style: {
+      marginRight: 4
+    }
+  }), window.recordByText(r, true))), (r.photos || []).filter(Boolean).length > 0 && React.createElement("div", {
     style: {
       display: "flex",
       gap: 4,
@@ -23663,7 +23796,22 @@ function AssetForm({
     }), " \u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...") : React.createElement(React.Fragment, null, React.createElement("i", {
       className: "fa-solid fa-floppy-disk"
     }), " \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")))
-  }, React.createElement("form", {
+  }, mode === "edit" && (initial.createdByName || initial.updatedByName) && React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: "var(--muted)",
+      marginBottom: 10,
+      padding: "7px 10px",
+      background: "#F8FAFC",
+      border: "1px solid var(--line-soft)",
+      borderRadius: 8
+    }
+  }, React.createElement("i", {
+    className: "fa-solid fa-user-pen",
+    style: {
+      marginRight: 6
+    }
+  }), window.recordByText(initial)), React.createElement("form", {
     onSubmit: submit
   }, React.createElement("div", {
     className: "form-grid"
@@ -24952,7 +25100,7 @@ function DeliveryOrderEdit({
 window.AssetRegistry = AssetRegistry;
 window.DeliveryOrders = DeliveryOrders;
 
-/* ---- block 22 (ต้นฉบับบรรทัด 11212) ---- */
+/* ---- block 22 (ต้นฉบับบรรทัด 11261) ---- */
 const PIN_LEN = 6;
 const PIN_MAX_FAIL = 5;
 const PIN_GRACE_MS = 60 * 1000;
@@ -25426,7 +25574,7 @@ function PinSetupModal({
 window.PinLockScreen = PinLockScreen;
 window.PinSetupModal = PinSetupModal;
 
-/* ---- block 23 (ต้นฉบับบรรทัด 11548) ---- */
+/* ---- block 23 (ต้นฉบับบรรทัด 11597) ---- */
 function Permissions({
   user
 }) {
@@ -26046,7 +26194,7 @@ function Permissions({
 }
 window.Permissions = Permissions;
 
-/* ---- block 24 (ต้นฉบับบรรทัด 11901) ---- */
+/* ---- block 24 (ต้นฉบับบรรทัด 11950) ---- */
 function WorkspacePicker({
   user,
   onContinue,
